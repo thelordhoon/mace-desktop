@@ -426,15 +426,18 @@ export default function PartManagement() {
                         )}
                       </td>
 
-                      {/* 2) '업체별 특가' 칸에 업체명과 가격을 나란히 표시 */}
-          
+                      {/* 💡 업체명은 왼쪽, 가격은 오른쪽 끝으로 정렬 */}
                       <td style={{ padding: '14px 16px' }}>
                         {parsedCompanyPrices.length > 0 ? (
                           <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                             {parsedCompanyPrices.map((cp, cIdx) => (
-                              <div key={cIdx} style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-start', gap: '12px', fontSize: '13px' }}>
-                                <span style={{ fontWeight: '600', color: '#2563EB', wordBreak: 'break-all' }}>{cp.company_name}</span>
-                                <span style={{ fontWeight: '700', color: '#0F172A', whiteSpace: 'nowrap' }}>{Number(cp.price).toLocaleString()} 원</span>
+                              <div key={cIdx} style={{ display: 'flex', justifyContent: 'flex-start', alignItems: 'center', gap: '20px', fontSize: '13px' }}>
+                                <span style={{ fontWeight: '600', color: '#2563EB', wordBreak: 'break-all', minWidth: '200px' }}>
+                                  {cp.company_name}
+                                </span>
+                                <span style={{ fontWeight: '700', color: '#0F172A', whiteSpace: 'nowrap' }}>
+                                  {Number(cp.price).toLocaleString()} 원
+                                </span>
                               </div>
                             ))}
                           </div>
