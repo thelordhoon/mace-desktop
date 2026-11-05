@@ -1,0 +1,137 @@
+import React, { useState, useEffect } from 'react'
+import { supabase } from '../supabaseClient'
+
+export default function PartManagement() {
+  const [partsList, setPartsList] = useState([])
+  const [partSearchTerm, setPartSearchTerm] = useState('')
+  const [showAddPartForm, setShowAddPartForm] = useState(false)
+
+  const [partName, setPartName] = useState('')
+  const [partCode, setPartCode] = useState('')
+  const [partCategory, setPartCategory] = useState('일반부품')
+  const [dealerPrice, setDealerPrice] = useState(0)
+  const [customerPrice, setCustomerPrice] = useState(0)
+  const [stock, setStock] = useState(0)
+  const [uploading, setUploading] = useState(false)
+
+  useEffect(() => {
+    fetchParts()
+  }, [])
+
+  const fetchParts = async () => {
+    const { data, error } = await supabase.from('parts').select('*').order('created_at', { ascending: false })
+    if (!error) setPartsList(data || [])
+  }
+
+  const handleAddPart = async (e) => {
+    e.preventDefault()
+    if (!partName.trim()) return alert('부품명을 입력해주세요!')
+    if (!partCode.trim()) return alert('부품 코드/품번을 입력해주세요!')
+
+    setUploading(true)
+    const { error } = await supabase.from('parts').insert([{
+      name: partName, code: partCode, category: partCategory,
+      dealer_price: Number(dealerPrice), customer_price: Number(customerPrice),
+      stock: Number(stock)
+    }])
+    setUploading(false)
+
+    if (error) alert('부품 저장 실패: ' + error.message)
+    else {
+      alert('신규 부품이 등록되었습니다.')
+      setPartName(''); setPartCode(''); setPartCategory('일반부품'); setDealerPrice(0); setCustomerPrice(0); setStock(0);
+      setShowAddPartForm(false); fetchParts()
+    }
+  }
+
+  const handleDeletePart = async (partId) => {
+    if (!window.confirm('이 부품을 삭제하시겠습니까?')) return
+    const { error } = await supabase.from('parts').delete().eq('id', partId)
+    if (!error) { alert('부품이 삭제되었습니다.'); fetchParts() }
+  }
+
+  const filteredParts = partSearchTerm.trim() === '' ? partsList : partsList.filter(p => 
+    (p.name && p.name.toLowerCase().includes(partSearchTerm.toLowerCase())) ||
+    (p.code && p.code.toLowerCase().includes(partSearchTerm.toLowerCase()))
+  )
+
+  const inputStyle = { width: '100%', padding: '10px 12px', fontSize: '14px', borderRadius: '8px', border: '1px solid #CBD5E1', backgroundColor: '#F8FAFC', outline: 'none', boxSizing: 'border-box' }
+  const labelStyle = { fontSize: '13px', fontWeight: '600', color: '#64748B', marginBottom: '4px', display: 'block' }
+
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+        <div>
+          <h2 style={{ margin: 0, fontSize: '22px', color: '#0F172A', fontWeight: '800' }}>🔧 자재 및 부품 재고 관리</h2>
+          <p style={{ margin: '4px 0 0 0', fontSize: '13px', color: '#64748B' }}>전체 부품 목록, 기본 단가, 재고를 관리합니다.</p>
+        </div>
+        <button onClick={() => setShowAddPartForm(!showAddPartForm)} style={{ padding: '10px 18px', background: '#2563EB', color: 'white', border: 'none', borderRadius: '8px', fontWeight: '700', cursor: 'pointer', fontSize: '14px' }}>
+          {showAddPartForm ? '✕ 닫기' : '+ 신규 부품 등록'}
+        </button>
+      </div>
+
+      {showAddPartForm && (
+        <div style={{ backgroundColor: '#ffffff', borderRadius: '12px', padding: '20px', border: '1px solid #E2E8F0', marginBottom: '20px' }}>
+          <h4 style={{ margin: '0 0 14px 0', fontSize: '16px', color: '#1E293B' }}>🔧 신규 부품 등록</h4>
+          <form onSubmit={handleAddPart} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: '10px' }}>
+              <div><label style={labelStyle}>부품 코드/품번*</label><input placeholder="예: E55-0000000" value={partCode} onChange={(e) => setPartCode(e.target.value)} style={inputStyle} required /></div>
+              <div><label style={labelStyle}>부품명*</label><input placeholder="예: Service KIT" value={partName} onChange={(e) => setPartName(e.target.value)} style={inputStyle} required /></div>
+              <div>
+                <label style={labelStyle}>카테고리</label>
+                <select value={partCategory} onChange={(e) => setPartCategory(e.target.value)} style={inputStyle}>
+                  <option value="일반부품">일반부품</option><option value="소모품">소모품</option><option value="필터류">Overhaul</option><option value="기타">기타</option>
+                </select>
+              </div>
+              <div><label style={labelStyle}>초기 재고 수량</label><input type="number" value={stock} onChange={(e) => setStock(e.target.value)} style={inputStyle} /></div>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+              <div><label style={labelStyle}>소비자 기본가 (원)</label><input type="number" value={customerPrice} onChange={(e) => setCustomerPrice(e.target.value)} style={inputStyle} /></div>
+              <div><label style={labelStyle}>딜러 기본가 (원)</label><input type="number" value={dealerPrice} onChange={(e) => setDealerPrice(e.target.value)} style={inputStyle} /></div>
+            </div>
+
+            <button type="submit" disabled={uploading} style={{ padding: '12px', background: '#2563EB', color: 'white', border: 'none', borderRadius: '8px', fontWeight: '700', cursor: 'pointer' }}>
+              {uploading ? '저장 중...' : '부품 등록 저장'}
+            </button>
+          </form>
+        </div>
+      )}
+
+      <div style={{ marginBottom: '16px' }}>
+        <input type="text" placeholder="🔍 부품명 또는 품번으로 검색..." value={partSearchTerm} onChange={(e) => setPartSearchTerm(e.target.value)} style={{ ...inputStyle, padding: '12px', maxWidth: '400px' }} />
+      </div>
+
+      <div style={{ backgroundColor: '#ffffff', borderRadius: '12px', border: '1px solid #E2E8F0', overflow: 'hidden' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '14px' }}>
+          <thead>
+            <tr style={{ backgroundColor: '#F8FAFC', borderBottom: '1px solid #E2E8F0', color: '#475569' }}>
+              <th style={{ padding: '14px 16px' }}>카테고리</th>
+              <th style={{ padding: '14px 16px' }}>품번 / 코드</th>
+              <th style={{ padding: '14px 16px' }}>부품명</th>
+              <th style={{ padding: '14px 16px' }}>재고 수량</th>
+              <th style={{ padding: '14px 16px' }}>소비자 기본가</th>
+              <th style={{ padding: '14px 16px' }}>딜러 기본가</th>
+              <th style={{ padding: '14px 16px', textAlign: 'center' }}>관리</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filteredParts.map((p) => (
+              <tr key={p.id} style={{ borderBottom: '1px solid #F1F5F9' }}>
+                <td style={{ padding: '14px 16px' }}><span style={{ padding: '4px 8px', backgroundColor: '#EFF6FF', color: '#2563EB', borderRadius: '6px', fontSize: '12px', fontWeight: '700' }}>{p.category || '일반부품'}</span></td>
+                <td style={{ padding: '14px 16px', fontWeight: '600', color: '#475569' }}>{p.code || '-'}</td>
+                <td style={{ padding: '14px 16px', fontWeight: '700', color: '#0F172A' }}>{p.name}</td>
+                <td style={{ padding: '14px 16px', fontWeight: '700', color: '#10B981' }}>{p.stock ?? 0} 개</td>
+                <td style={{ padding: '14px 16px', fontWeight: '700', color: '#2563EB' }}>{p.customer_price ? Number(p.customer_price).toLocaleString() : 0} 원</td>
+                <td style={{ padding: '14px 16px', fontWeight: '700', color: '#334155' }}>{p.dealer_price ? Number(p.dealer_price).toLocaleString() : 0} 원</td>
+                <td style={{ padding: '14px 16px', textAlign: 'center' }}>
+                  <button onClick={() => handleDeletePart(p.id)} style={{ border: 'none', background: '#FEE2E2', color: '#EF4444', padding: '6px 10px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600', fontSize: '12px' }}>삭제</button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+}

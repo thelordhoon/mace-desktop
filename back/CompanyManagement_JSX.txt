@@ -1,0 +1,494 @@
+import React, { useState, useEffect } from 'react'
+import { supabase } from '../supabaseClient'
+
+export default function CompanyManagement({ partsList }) {
+  const [companies, setCompanies] = useState([])
+  const [searchName, setSearchName] = useState('')
+  const [sortOrder, setSortOrder] = useState('recent') // 'recent' | 'alphabet'
+
+  // 모달 팝업 제어 상태
+  const [isModalOpen, setIsModalOpen] = useState(false)
+  const [modalMode, setModalMode] = useState('detail') // 'detail', 'report'
+  const [selectedCompany, setSelectedCompany] = useState(null)
+  const [showAddForm, setShowAddForm] = useState(false)
+  const [uploading, setUploading] = useState(false)
+
+  // 신규 등록 폼 상태
+  const [name, setName] = useState('')
+  const [managers, setManagers] = useState([{ name: '', phone: '', role: '', email: '' }])
+  const [address, setAddress] = useState('')
+  const [note, setNote] = useState('')
+  const [ink, setInk] = useState('')
+  const [solvent, setSolvent] = useState('')
+
+  // 수정 모드 상태
+  const [isEditing, setIsEditing] = useState(false)
+  const [editData, setEditData] = useState({ name: '', managers: [], address: '', note: '', ink: '', solvent: '' })
+
+  // 서비스 리포트 상태
+  const [workDate, setWorkDate] = useState(() => new Date().toISOString().split('T')[0])
+  const [startHour, setStartHour] = useState('09')
+  const [startMin, setStartMin] = useState('00')
+  const [endHour, setEndHour] = useState('18')
+  const [endMin, setEndMin] = useState('00')
+  const [sn, setSn] = useState('')
+  const [modelName, setModelName] = useState('JET2Neo')
+  const [workContent, setWorkContent] = useState('')
+  const [selectedManager, setSelectedManager] = useState('')
+  const [usedParts, setUsedParts] = useState([{ name: '', quantity: 1 }])
+  const [historyList, setHistoryList] = useState([])
+
+  useEffect(() => {
+    fetchCompanies()
+  }, [])
+
+  const fetchCompanies = async () => {
+    const { data } = await supabase.from('companies').select('*').order('created_at', { ascending: false })
+    setCompanies(data || [])
+  }
+
+  const fetchServiceHistory = async (companyId) => {
+    const { data } = await supabase.from('service_history').select('*').eq('company_id', companyId).order('created_at', { ascending: false })
+    setHistoryList(data || [])
+  }
+
+  const parseManagers = (managerData, phoneData, defaultEmail) => {
+    if (!managerData) return [{ name: '', phone: '', role: '', email: defaultEmail || '' }]
+    try {
+      const parsed = typeof managerData === 'string' ? JSON.parse(managerData) : managerData
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed
+    } catch (e) {}
+    return [{ name: managerData || '', phone: phoneData || '', role: '', email: defaultEmail || '' }]
+  }
+
+  const getPartPriceInfo = (itemCodeOrName, companyName) => {
+    if (!partsList || !itemCodeOrName || !itemCodeOrName.trim()) return null
+    const query = itemCodeOrName.trim().toLowerCase()
+    const matchedPart = partsList.find(p => (p.code && p.code.toLowerCase() === query) || (p.name && p.name.toLowerCase() === query))
+    if (!matchedPart) return { found: false }
+
+    let companySpecialPrice = null
+    try {
+      if (matchedPart.company_prices) {
+        const cpList = typeof matchedPart.company_prices === 'string' ? JSON.parse(matchedPart.company_prices) : matchedPart.company_prices
+        if (Array.isArray(cpList)) {
+          const matchedCp = cpList.find(cp => cp.company_name && cp.company_name.toLowerCase() === companyName.toLowerCase())
+          if (matchedCp && matchedCp.price) companySpecialPrice = Number(matchedCp.price)
+        }
+      }
+    } catch (e) {}
+
+    return {
+      found: true,
+      finalPrice: companySpecialPrice !== null ? companySpecialPrice : (matchedPart.customer_price || 0),
+      isSpecial: companySpecialPrice !== null
+    }
+  }
+
+  const handleAddCompany = async (e) => {
+    e.preventDefault()
+    if (!name) return alert('업체명을 입력해주세요!')
+    setUploading(true)
+    const { error } = await supabase.from('companies').insert([{
+      name, manager: JSON.stringify(managers), phone: managers[0]?.phone || '', email: managers[0]?.email || '', address, card_url: note, ink, solvent
+    }])
+    setUploading(false)
+    if (error) alert('등록 실패: ' + error.message)
+    else {
+      alert('업체가 등록되었습니다.')
+      setName(''); setAddress(''); setNote(''); setInk(''); setSolvent(''); setManagers([{ name: '', phone: '', role: '', email: '' }])
+      setShowAddForm(false); fetchCompanies()
+    }
+  }
+
+  // 모달 팝업 열기
+  const handleOpenModal = (company) => {
+    const parsedManagers = parseManagers(company.manager, company.phone, company.email)
+    setSelectedCompany({ ...company, managersList: parsedManagers })
+    setSelectedManager(parsedManagers[0]?.name || '')
+    setIsEditing(false)
+    setEditData({ name: company.name || '', managers: parsedManagers, address: company.address || '', note: company.card_url || '', ink: company.ink || '', solvent: company.solvent || '' })
+    setModalMode('detail')
+    setIsModalOpen(true)
+    fetchServiceHistory(company.id)
+  }
+
+  const handleSaveCompanyEdit = async () => {
+    if (!editData.name.trim()) return alert('업체명을 입력해주세요.')
+    setUploading(true)
+    const { data, error } = await supabase.from('companies').update({
+      name: editData.name, manager: JSON.stringify(editData.managers), phone: editData.managers[0]?.phone || '', email: editData.managers[0]?.email || '',
+      address: editData.address, card_url: editData.note, ink: editData.ink, solvent: editData.solvent
+    }).eq('id', selectedCompany.id).select()
+    setUploading(false)
+
+    if (error) alert('수정 실패: ' + error.message)
+    else {
+      alert('업체 정보가 수정되었습니다.')
+      const updated = data && data[0] ? data[0] : { ...selectedCompany, ...editData, card_url: editData.note }
+      setSelectedCompany({ ...updated, managersList: parseManagers(updated.manager, updated.phone, updated.email) })
+      setIsEditing(false); fetchCompanies()
+    }
+  }
+
+  const handleDeleteCompany = async (id) => {
+    if (!window.confirm('해당 업체의 모든 정보와 서비스 이력이 삭제됩니다. 정말 삭제하시겠습니까?')) return
+    await supabase.from('service_history').delete().eq('company_id', id)
+    await supabase.from('companies').delete().eq('id', id)
+    alert('삭제되었습니다.')
+    setIsModalOpen(false); setSelectedCompany(null); fetchCompanies()
+  }
+
+  const handleSaveReport = async (e) => {
+    e.preventDefault()
+    if (!selectedManager) return alert('담당자를 선택해주세요.')
+    setUploading(true)
+    const formattedParts = usedParts.filter(p => p.name && p.name.trim() !== '').map(p => `${p.name.trim()} (${p.quantity}개)`)
+    const { error } = await supabase.from('service_history').insert([{
+      company_id: selectedCompany.id, work_date: workDate, start_time: `${startHour}:${startMin}`, end_time: `${endHour}:${endMin}`,
+      sn, model_name: modelName, work_content: workContent, parts: JSON.stringify(formattedParts), confirmor: `박남준 (담당자: ${selectedManager})`
+    }])
+    setUploading(false)
+    if (error) alert('저장 실패: ' + error.message)
+    else {
+      alert('서비스 리포트가 저장되었습니다.')
+      setWorkContent(''); setSn(''); setUsedParts([{ name: '', quantity: 1 }])
+      fetchServiceHistory(selectedCompany.id); setModalMode('detail')
+    }
+  }
+
+  // 필터 및 정렬 데이터
+ const cleanCompanyName = (name) => {
+    if (!name) return ''
+    return name.replace(/\(주\)|주식회사|\(유\)|유한회사/g, '').trim()
+  }
+
+  // 필터 및 정렬 데이터
+  let processedCompanies = companies.filter(c => !searchName.trim() || c.name.toLowerCase().includes(searchName.trim().toLowerCase()))
+
+  if (sortOrder === 'alphabet') {
+    processedCompanies.sort((a, b) => {
+      const nameA = cleanCompanyName(a.name)
+      const nameB = cleanCompanyName(b.name)
+      return nameA.localeCompare(nameB, 'ko-KR')
+    })
+  } else {
+    processedCompanies.sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0))
+  }
+
+  const inputStyle = { width: '100%', padding: '8px 10px', fontSize: '13px', borderRadius: '4px', border: '1px solid #CBD5E1', backgroundColor: '#FFFFFF', outline: 'none', boxSizing: 'border-box' }
+
+  return (
+    <div style={{ width: '100%', boxSizing: 'border-box' }}>
+      
+      {/* 🚀 상단 컨트롤 바 (정렬 버튼 2개 + 등록 버튼 + 우측 소형 검색박스) */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '12px' }}>
+        
+        {/* 좌측 버튼 그룹 (동일한 사이즈 디자인) */}
+        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+          <button 
+            onClick={() => setSortOrder('alphabet')}
+            style={{ 
+              padding: '8px 16px', 
+              background: sortOrder === 'alphabet' ? '#2563EB' : '#FFFFFF', 
+              color: sortOrder === 'alphabet' ? '#FFFFFF' : '#475569', 
+              border: sortOrder === 'alphabet' ? 'none' : '1px solid #CBD5E1', 
+              borderRadius: '6px', 
+              fontWeight: '700', 
+              cursor: 'pointer', 
+              fontSize: '13px' 
+            }}
+          >
+            ㄱㄴㄷ순 정렬
+          </button>
+
+          <button 
+            onClick={() => setSortOrder('recent')}
+            style={{ 
+              padding: '8px 16px', 
+              background: sortOrder === 'recent' ? '#2563EB' : '#FFFFFF', 
+              color: sortOrder === 'recent' ? '#FFFFFF' : '#475569', 
+              border: sortOrder === 'recent' ? 'none' : '1px solid #CBD5E1', 
+              borderRadius: '6px', 
+              fontWeight: '700', 
+              cursor: 'pointer', 
+              fontSize: '13px' 
+            }}
+          >
+            최근 등록순 정렬
+          </button>
+
+          <button 
+            onClick={() => setShowAddForm(!showAddForm)} 
+            style={{ padding: '8px 16px', background: '#0F172A', color: 'white', border: 'none', borderRadius: '6px', fontWeight: '700', cursor: 'pointer', fontSize: '13px' }}
+          >
+            {showAddForm ? '✕ 닫기' : '+ 신규 거래처 등록'}
+          </button>
+        </div>
+
+        {/* 우측 소형 업체명 검색 박스 */}
+        <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+          <input 
+            type="text" 
+            placeholder="업체명 검색..." 
+            value={searchName} 
+            onChange={(e) => setSearchName(e.target.value)} 
+            style={{ ...inputStyle, width: '180px' }} 
+          />
+          <button 
+            onClick={() => {}} 
+            style={{ padding: '8px 14px', background: '#475569', color: 'white', border: 'none', borderRadius: '4px', fontWeight: '600', fontSize: '13px', cursor: 'pointer' }}
+          >
+            검색
+          </button>
+        </div>
+
+      </div>
+
+     {/* 신규 등록 폼 (너무 퍼지지 않도록 max-width 적용 및 깔끔한 정돈) */}
+      {showAddForm && (
+        <div style={{ backgroundColor: '#ffffff', borderRadius: '10px', padding: '24px', border: '1px solid #CBD5E1', marginBottom: '24px', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)' }}>
+          <h4 style={{ margin: '0 0 16px 0', fontSize: '16px', color: '#1E293B', fontWeight: '700' }}>➕ 신규 거래처 등록</h4>
+          <form onSubmit={handleAddCompany} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+              <div>
+                <label style={{ fontSize: '12px', fontWeight: '600', color: '#64748B', marginBottom: '6px', display: 'block' }}>🏢 업체명*</label>
+                <input placeholder="업체명" value={name} onChange={(e) => setName(e.target.value)} style={inputStyle} required />
+              </div>
+              <div>
+                <label style={{ fontSize: '12px', fontWeight: '600', color: '#64748B', marginBottom: '6px', display: 'block' }}>📍 주소</label>
+                <input placeholder="주소" value={address} onChange={(e) => setAddress(e.target.value)} style={inputStyle} />
+              </div>
+            </div>
+
+            <div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                <label style={{ fontSize: '12px', fontWeight: '600', color: '#64748B', margin: 0 }}>👤 담당자 목록</label>
+                <button type="button" onClick={() => setManagers([...managers, { name: '', phone: '', role: '', email: '' }])} style={{ border: 'none', background: '#EFF6FF', color: '#2563EB', padding: '4px 10px', borderRadius: '4px', fontSize: '11px', fontWeight: '600', cursor: 'pointer' }}>+ 담당자 추가</button>
+              </div>
+              {managers.map((m, idx) => (
+                <div key={idx} style={{ padding: '10px', backgroundColor: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: '6px', marginBottom: '8px', display: 'grid', gridTemplateColumns: '1.2fr 1.2fr 1.8fr 2fr auto', gap: '10px', alignItems: 'center' }}>
+                  <input placeholder="이름" value={m.name} onChange={(e) => { const n = [...managers]; n[idx].name = e.target.value; setManagers(n); }} style={inputStyle} />
+                  <input placeholder="부서/직책" value={m.role} onChange={(e) => { const n = [...managers]; n[idx].role = e.target.value; setManagers(n); }} style={inputStyle} />
+                  <input placeholder="연락처" value={m.phone} onChange={(e) => { const n = [...managers]; n[idx].phone = e.target.value; setManagers(n); }} style={inputStyle} />
+                  <input placeholder="이메일" value={m.email} onChange={(e) => { const n = [...managers]; n[idx].email = e.target.value; setManagers(n); }} style={inputStyle} />
+                  {managers.length > 1 && <button type="button" onClick={() => setManagers(managers.filter((_, i) => i !== idx))} style={{ border: 'none', background: 'none', color: '#EF4444', cursor: 'pointer', fontSize: '16px', fontWeight: 'bold' }}>✕</button>}
+                </div>
+              ))}
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+              <div>
+                <label style={{ fontSize: '12px', fontWeight: '600', color: '#64748B', marginBottom: '6px', display: 'block' }}>🧪 잉크 품번</label>
+                <input placeholder="예: 70000-00030" value={ink} onChange={(e) => setInk(e.target.value)} style={inputStyle} />
+              </div>
+              <div>
+                <label style={{ fontSize: '12px', fontWeight: '600', color: '#64748B', marginBottom: '6px', display: 'block' }}>💧 희석제 품번</label>
+                <input placeholder="예: 77001-00030" value={solvent} onChange={(e) => setSolvent(e.target.value)} style={inputStyle} />
+              </div>
+            </div>
+
+            <div>
+              <label style={{ fontSize: '12px', fontWeight: '600', color: '#64748B', marginBottom: '6px', display: 'block' }}>📌 비고</label>
+              <textarea rows="2" placeholder="비고 입력" value={note} onChange={(e) => setNote(e.target.value)} style={inputStyle} />
+            </div>
+
+            <button type="submit" disabled={uploading} style={{ padding: '12px', background: '#2563EB', color: 'white', border: 'none', borderRadius: '6px', fontWeight: '700', cursor: 'pointer', fontSize: '14px', marginTop: '6px' }}>
+              등록 완료
+            </button>
+          </form>
+        </div>
+      )}
+
+      {/* 📊 와이드 풀스크린 대형 테이블 */}
+      <div style={{ backgroundColor: '#ffffff', borderRadius: '8px', border: '1px solid #CBD5E1', overflow: 'hidden', boxShadow: '0 1px 3px rgba(0,0,0,0.05)', width: '100%' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '13px', tableLayout: 'fixed' }}>
+          <thead>
+            <tr style={{ backgroundColor: '#64748B', color: '#FFFFFF', borderBottom: '1px solid #475569' }}>
+              <th style={{ padding: '12px 18px', width: '25%' }}>업체명</th>
+              <th style={{ padding: '12px 16px', width: '15%' }}>대표 담당자</th>
+              <th style={{ padding: '12px 16px', width: '20%' }}>연락처</th>
+              <th style={{ padding: '12px 16px', width: '30%' }}>주소 (상세)</th>
+              <th style={{ padding: '12px 16px', width: '10%', textAlign: 'center' }}>관리</th>
+            </tr>
+          </thead>
+          <tbody>
+            {processedCompanies.length === 0 ? (
+              <tr>
+                <td colSpan="5" style={{ padding: '40px', textAlign: 'center', color: '#94A3B8' }}>
+                  등록되었거나 검색 조건에 맞는 거래처가 없습니다.
+                </td>
+              </tr>
+            ) : (
+              processedCompanies.map((c, index) => {
+                const mList = parseManagers(c.manager, c.phone, c.email)
+                const primaryManager = mList[0] || {}
+
+                return (
+                  <tr key={c.id} style={{ borderBottom: '1px solid #E2E8F0', backgroundColor: index % 2 === 0 ? '#FFFFFF' : '#F8FAFC' }}>
+                    <td 
+                      onClick={() => handleOpenModal(c)}
+                      style={{ padding: '12px 18px', fontWeight: '700', color: '#2563EB', cursor: 'pointer', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textDecoration: 'underline' }}
+                      title="클릭하여 상세 정보 팝업 열기"
+                    >
+                      {c.name}
+                    </td>
+                    <td style={{ padding: '12px 16px', color: '#334155', fontWeight: '600', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {primaryManager.name || '-'} {primaryManager.role ? `(${primaryManager.role})` : ''}
+                    </td>
+                    <td style={{ padding: '12px 16px', color: '#0F172A', fontWeight: '600', fontFamily: 'monospace' }}>
+                      {primaryManager.phone || c.phone || '-'}
+                    </td>
+                    <td style={{ padding: '12px 16px', color: '#475569', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {c.address || '-'}
+                    </td>
+                    <td style={{ padding: '12px 16px', textAlign: 'center' }}>
+                      <button 
+                        onClick={() => handleOpenModal(c)} 
+                        style={{ padding: '5px 12px', background: '#3B82F6', color: 'white', border: 'none', borderRadius: '4px', fontWeight: '600', cursor: 'pointer', fontSize: '12px' }}
+                      >
+                        상세/수정
+                      </button>
+                    </td>
+                  </tr>
+                )
+              })
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      {/* 🚀 팝업 모달 (모달 팝업 오버레이) */}
+      {isModalOpen && selectedCompany && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          backgroundColor: 'rgba(15, 23, 42, 0.65)',
+          display: 'flex', justifyContent: 'center', alignItems: 'center',
+          zIndex: 1000, padding: '20px'
+        }}>
+          <div style={{
+            backgroundColor: '#ffffff', borderRadius: '12px', width: '100%', maxWidth: '900px',
+            maxHeight: '90vh', overflowY: 'auto', padding: '24px', boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.2)'
+          }}>
+            
+            {/* 모달 상단 헤더 */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', borderBottom: '1px solid #E2E8F0', paddingBottom: '14px' }}>
+              <h3 style={{ margin: 0, fontSize: '20px', color: '#0F172A' }}>
+                🏢 {selectedCompany.name} {modalMode === 'report' ? '서비스 리포트 작성' : '상세 정보'}
+              </h3>
+              <button 
+                onClick={() => setIsModalOpen(false)} 
+                style={{ border: 'none', background: 'none', fontSize: '20px', color: '#64748B', cursor: 'pointer' }}
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* A. 상세 모드 */}
+            {modalMode === 'detail' && (
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginBottom: '16px' }}>
+                  <button onClick={() => setIsEditing(!isEditing)} style={{ padding: '8px 14px', background: isEditing ? '#64748B' : '#0F172A', color: 'white', border: 'none', borderRadius: '6px', fontWeight: '700', cursor: 'pointer', fontSize: '12px' }}>
+                    {isEditing ? '수정 취소' : '✏️ 업체 정보 수정'}
+                  </button>
+                  <button onClick={() => setModalMode('report')} style={{ padding: '8px 14px', background: '#2563EB', color: 'white', border: 'none', borderRadius: '6px', fontWeight: '700', cursor: 'pointer', fontSize: '12px' }}>
+                    📄 서비스 리포트 작성
+                  </button>
+                  <button onClick={() => handleDeleteCompany(selectedCompany.id)} style={{ padding: '8px 14px', background: '#FEE2E2', color: '#EF4444', border: 'none', borderRadius: '6px', fontWeight: '700', cursor: 'pointer', fontSize: '12px' }}>
+                    삭제
+                  </button>
+                </div>
+
+                {!isEditing ? (
+                  <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '20px' }}>
+                    <div>
+                      <h4 style={{ margin: '0 0 10px 0', color: '#334155' }}>👤 담당자 정보</h4>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginBottom: '20px' }}>
+                        {selectedCompany.managersList.map((m, idx) => (
+                          <div key={idx} style={{ padding: '12px', backgroundColor: '#F8FAFC', borderRadius: '6px', border: '1px solid #E2E8F0', fontSize: '13px' }}>
+                            <div style={{ fontWeight: '700', color: '#0F172A' }}>{m.name || '미입력'} ({m.role || '직책 없음'})</div>
+                            <div style={{ color: '#64748B', marginTop: '4px' }}>📞 {m.phone || '-'}</div>
+                            <div style={{ color: '#64748B' }}>✉️ {m.email || '-'}</div>
+                          </div>
+                        ))}
+                      </div>
+
+                      <h4 style={{ margin: '0 0 10px 0', color: '#334155' }}>📌 기본 정보 및 비고</h4>
+                      <div style={{ backgroundColor: '#F8FAFC', padding: '14px', borderRadius: '6px', border: '1px solid #E2E8F0', fontSize: '13px', color: '#334155' }}>
+                        <div>📍 주소: {selectedCompany.address || '-'}</div>
+                        <div style={{ marginTop: '8px' }}>비고: {selectedCompany.card_url || '없음'}</div>
+                      </div>
+                    </div>
+
+                    <div>
+                      <h4 style={{ margin: '0 0 10px 0', color: '#334155' }}>🧪 지정 소모품 정보</h4>
+                      {(() => {
+                        const inkInfo = getPartPriceInfo(selectedCompany.ink, selectedCompany.name)
+                        const solventInfo = getPartPriceInfo(selectedCompany.solvent, selectedCompany.name)
+                        return (
+                          <div style={{ backgroundColor: '#EFF6FF', padding: '16px', borderRadius: '8px', border: '1px solid #DBEAFE', fontSize: '13px' }}>
+                            <div style={{ marginBottom: '12px' }}>
+                              <span style={{ color: '#1E40AF', fontWeight: '700' }}>🧪 잉크: {selectedCompany.ink || '미등록'}</span>
+                              <div style={{ fontWeight: '800', color: '#2563EB', fontSize: '16px', marginTop: '2px' }}>
+                                {inkInfo && inkInfo.found ? `${inkInfo.finalPrice.toLocaleString()} 원` : '단가 정보 없음'}
+                              </div>
+                            </div>
+                            <div style={{ borderTop: '1px solid #BFDBFE', paddingTop: '12px' }}>
+                              <span style={{ color: '#1E40AF', fontWeight: '700' }}>💧 희석제: {selectedCompany.solvent || '미등록'}</span>
+                              <div style={{ fontWeight: '800', color: '#2563EB', fontSize: '16px', marginTop: '2px' }}>
+                                {solventInfo && solventInfo.found ? `${solventInfo.finalPrice.toLocaleString()} 원` : '단가 정보 없음'}
+                              </div>
+                            </div>
+                          </div>
+                        )
+                      })()}
+                    </div>
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                    <div><label style={{ fontSize: '12px', fontWeight: '600', color: '#64748B' }}>업체명</label><input value={editData.name} onChange={(e) => setEditData({ ...editData, name: e.target.value })} style={inputStyle} /></div>
+                    <div><label style={{ fontSize: '12px', fontWeight: '600', color: '#64748B' }}>주소</label><input value={editData.address} onChange={(e) => setEditData({ ...editData, address: e.target.value })} style={inputStyle} /></div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
+                      <div><label style={{ fontSize: '12px', fontWeight: '600', color: '#64748B' }}>잉크 품번</label><input value={editData.ink} onChange={(e) => setEditData({ ...editData, ink: e.target.value })} style={inputStyle} /></div>
+                      <div><label style={{ fontSize: '12px', fontWeight: '600', color: '#64748B' }}>희석제 품번</label><input value={editData.solvent} onChange={(e) => setEditData({ ...editData, solvent: e.target.value })} style={inputStyle} /></div>
+                    </div>
+                    <div><label style={{ fontSize: '12px', fontWeight: '600', color: '#64748B' }}>비고</label><textarea rows="3" value={editData.note} onChange={(e) => setEditData({ ...editData, note: e.target.value })} style={inputStyle} /></div>
+                    <button onClick={handleSaveCompanyEdit} disabled={uploading} style={{ padding: '10px', background: '#2563EB', color: 'white', border: 'none', borderRadius: '6px', fontWeight: '700', cursor: 'pointer' }}>수정 사항 저장</button>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* B. 리포트 모드 */}
+            {modalMode === 'report' && (
+              <div>
+                <button onClick={() => setModalMode('detail')} style={{ border: 'none', background: 'none', color: '#2563EB', fontWeight: '700', cursor: 'pointer', marginBottom: '12px' }}>← 상세 보기로 돌아가기</button>
+                <form onSubmit={handleSaveReport} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '14px' }}>
+                    <div><label style={{ fontSize: '12px', fontWeight: '600', color: '#64748B' }}>작업 일자</label><input type="date" value={workDate} onChange={(e) => setWorkDate(e.target.value)} style={inputStyle} required /></div>
+                    <div>
+                      <label style={{ fontSize: '12px', fontWeight: '600', color: '#64748B' }}>담당자 선택*</label>
+                      <select value={selectedManager} onChange={(e) => setSelectedManager(e.target.value)} style={inputStyle} required>
+                        {selectedCompany.managersList.map((m, idx) => <option key={idx} value={m.name}>{m.name} ({m.role || '담당'})</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label style={{ fontSize: '12px', fontWeight: '600', color: '#64748B' }}>장비 모델</label>
+                      <select value={modelName} onChange={(e) => setModelName(e.target.value)} style={inputStyle}>
+                        <option value="JET1Neo">JET1Neo</option><option value="JET2Neo">JET2Neo</option><option value="JET3">JET3</option><option value="JET3up">JET3up</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div><label style={{ fontSize: '12px', fontWeight: '600', color: '#64748B' }}>🛠️ 작업 내용</label><textarea rows="4" value={workContent} onChange={(e) => setWorkContent(e.target.value)} style={inputStyle} placeholder="점검 및 수리 내용 입력" /></div>
+                  <button type="submit" disabled={uploading} style={{ padding: '12px', background: '#2563EB', color: 'white', border: 'none', borderRadius: '6px', fontWeight: '700', cursor: 'pointer' }}>서비스 리포트 저장</button>
+                </form>
+              </div>
+            )}
+
+          </div>
+        </div>
+      )}
+
+    </div>
+  )
+}

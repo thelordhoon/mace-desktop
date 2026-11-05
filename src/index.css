@@ -1,0 +1,13 @@
+/* 기본 브라우저 여백 제거 및 풀스크린 설정 */
+html, body, #root {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  overflow-x: hidden;
+}
+
+*, *:before, *:after {
+  box-sizing: border-box;
+}

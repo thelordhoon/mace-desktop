@@ -1,0 +1,211 @@
+import React, { useState } from 'react'
+import { supabase } from '../supabaseClient'
+
+export default function LoginForm({ onLoginSuccess }) {
+  const [isSignUp, setIsSignUp] = useState(false)
+  const [username, setUsername] = useState('')
+  const [password, setPassword] = useState('')
+  const [fullName, setFullName] = useState('')
+  const [loading, setLoading] = useState(false)
+
+  const handleLogin = async (e) => {
+    e.preventDefault()
+    setLoading(true)
+
+    const cleanUser = username.trim().toLowerCase()
+    const companyEmail = `${cleanUser}@mace-inkjet.co.kr`
+
+    // 1. Supabase Auth 로그인 시도 (Auth 사용 시)
+    let { data: authData } = await supabase.auth.signInWithPassword({
+      email: companyEmail,
+      password,
+    })
+
+    // 2. profiles 테이블에서 아이디로 전체 조회 (중복 대비 array로 처리)
+    const { data: profiles, error: profileError } = await supabase
+      .from('profiles')
+      .select('*')
+      .ilike('username', cleanUser)
+
+    if (profileError || !profiles || profiles.length === 0) {
+      alert('존재하지 않는 사원 아이디입니다.')
+      setLoading(false)
+      return
+    }
+
+    // 💡 여러 개일 경우 승인 완료(is_approved=true)된 계정을 우선 선택, 없으면 첫 번째 선택
+    const profile = profiles.find(p => p.is_approved) || profiles[0]
+
+    // Auth 로그인 실패 시 DB 직접 저장 비밀번호 비교
+    if (!authData?.user && profile.password !== password) {
+      alert('로그인 실패: 비밀번호가 일치하지 않습니다.')
+      setLoading(false)
+      return
+    }
+
+    if (!profile.is_approved) {
+      alert('🔒 관리자 승인 대기 중인 계정입니다. 관리자 승인 후 로그인해 주세요.')
+      setLoading(false)
+      return
+    }
+
+    alert(`🎉 환영합니다, ${profile.full_name || cleanUser} 님!`)
+
+    const loggedInUser = {
+      id: profile.id || crypto.randomUUID(),
+      username: profile.username,
+      email: profile.email || companyEmail,
+      full_name: profile.full_name,
+      role: profile.role || (cleanUser === 'bae' ? 'admin' : 'user')
+    }
+
+    if (onLoginSuccess) {
+      onLoginSuccess(loggedInUser)
+    } else {
+      window.location.reload()
+    }
+
+    setLoading(false)
+  }
+
+  const handleSignUp = async (e) => {
+    e.preventDefault()
+    setLoading(true)
+
+    if (password.length < 6) {
+      alert('비밀번호는 최소 6자리 이상이어야 합니다.')
+      setLoading(false)
+      return
+    }
+
+    const cleanUser = username.trim().toLowerCase()
+
+    const { error } = await supabase.from('profiles').insert([
+      {
+        id: crypto.randomUUID(),
+        username: cleanUser,
+        email: `${cleanUser}@mace-inkjet.co.kr`,
+        full_name: fullName,
+        password: password,
+        role: 'user',
+        is_approved: false,
+      }
+    ])
+
+    if (error) {
+      alert('가입 신청 실패: ' + error.message)
+      setLoading(false)
+      return
+    }
+
+    alert('🎉 가입 신청이 완료되었습니다!\n관리자 승인 후 로그인하실 수 있습니다.')
+    setIsSignUp(false)
+    setPassword('')
+    setLoading(false)
+  }
+
+  return (
+    <div style={styles.container}>
+      <div style={styles.card}>
+        <div style={styles.header}>
+          <div style={styles.badge}>MACE DESK</div>
+          <h2 style={styles.title}>{isSignUp ? '직원 가입 신청' : '사무 관리 시스템'}</h2>
+          <p style={styles.subtitle}>
+            {isSignUp ? '신규 직원 정보를 입력하여 승인을 요청하세요.' : '사원 아이디와 비밀번호를 입력하세요.'}
+          </p>
+        </div>
+
+        <form onSubmit={isSignUp ? handleSignUp : handleLogin} style={styles.form} autoComplete="off">
+          {isSignUp && (
+            <div style={styles.inputGroup}>
+              <label style={styles.label}>이름 (성함)</label>
+              <input 
+                type="text" 
+                placeholder="이름 입력"
+                value={fullName} 
+                onChange={(e) => setFullName(e.target.value)} 
+                required 
+                autoComplete="off"
+                style={styles.input}
+              />
+            </div>
+          )}
+
+          <div style={styles.inputGroup}>
+            <label style={styles.label}>사원 아이디</label>
+            <div style={styles.emailWrapper}>
+              <input 
+                type="text" 
+                placeholder="아이디"
+                value={username} 
+                onChange={(e) => setUsername(e.target.value)} 
+                required 
+                autoComplete="off"
+                name="no-remember-id"
+                style={styles.emailInput}
+              />
+              <span style={styles.domainSuffix}>@mace-inkjet.co.kr</span>
+            </div>
+          </div>
+
+          <div style={styles.inputGroup}>
+            <label style={styles.label}>비밀번호 (6자리 이상)</label>
+            <input 
+              type="password" 
+              placeholder="••••••••"
+              value={password} 
+              onChange={(e) => setPassword(e.target.value)} 
+              required 
+              autoComplete="new-password"
+              style={styles.input}
+            />
+          </div>
+
+          <button 
+            type="submit" 
+            disabled={loading}
+            style={{
+              ...styles.button,
+              opacity: loading ? 0.7 : 1,
+              cursor: loading ? 'not-allowed' : 'pointer',
+            }}
+          >
+            {loading ? '처리 중...' : isSignUp ? '가입 신청하기' : '로그인하기'}
+          </button>
+        </form>
+
+        <div style={styles.toggleBox}>
+          {isSignUp ? (
+            <span>이미 계정이 있으신가요? <button type="button" onClick={() => setIsSignUp(false)} style={styles.toggleBtn}>로그인하기</button></span>
+          ) : (
+            <span>신규 직원이신가요? <button type="button" onClick={() => setIsSignUp(true)} style={styles.toggleBtn}>회원가입 신청</button></span>
+          )}
+        </div>
+
+        <div style={styles.footer}>
+          <span>사내 전용 보안 접속 모드 🔒</span>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+const styles = {
+  container: { display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '100vh', backgroundColor: '#f1f5f9', fontFamily: '-apple-system, sans-serif' },
+  card: { width: '100%', maxWidth: '420px', padding: '40px 36px', backgroundColor: '#ffffff', borderRadius: '16px', boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.05)', border: '1px solid #e2e8f0', boxSizing: 'border-box' },
+  header: { marginBottom: '28px', textAlign: 'center' },
+  badge: { display: 'inline-block', padding: '4px 10px', fontSize: '11px', fontWeight: '700', color: '#2563eb', backgroundColor: '#eff6ff', borderRadius: '20px', marginBottom: '12px' },
+  title: { fontSize: '22px', fontWeight: '700', color: '#0f172a', margin: '0 0 6px 0' },
+  subtitle: { fontSize: '13px', color: '#64748b', margin: 0 },
+  form: { display: 'flex', flexDirection: 'column', gap: '18px' },
+  inputGroup: { display: 'flex', flexDirection: 'column', gap: '6px' },
+  label: { fontSize: '12px', fontWeight: '600', color: '#334155' },
+  emailWrapper: { display: 'flex', alignItems: 'center', backgroundColor: '#f8fafc', border: '1px solid #cbd5e1', borderRadius: '8px', paddingRight: '12px', overflow: 'hidden' },
+  emailInput: { flex: 1, padding: '12px 14px', fontSize: '14px', border: 'none', outline: 'none', backgroundColor: 'transparent', minWidth: 0 },
+  domainSuffix: { fontSize: '13px', fontWeight: '600', color: '#64748b', whiteSpace: 'nowrap', flexShrink: 0 },
+  input: { padding: '12px 14px', fontSize: '14px', borderRadius: '8px', border: '1px solid #cbd5e1', outline: 'none', backgroundColor: '#f8fafc' },
+  button: { marginTop: '6px', padding: '12px', fontSize: '14px', fontWeight: '600', color: '#ffffff', backgroundColor: '#2563eb', border: 'none', borderRadius: '8px' },
+  toggleBox: { marginTop: '20px', textAlign: 'center', fontSize: '13px', color: '#64748b' },
+  toggleBtn: { background: 'none', border: 'none', color: '#2563eb', fontWeight: '600', cursor: 'pointer', padding: '0 4px', textDecoration: 'underline' },
+  footer: { marginTop: '20px', paddingTop: '16px', borderTop: '1px solid #f1f5f9', textAlign: 'center', fontSize: '12px', color: '#94a3b8' },
+}
