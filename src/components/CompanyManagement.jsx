@@ -373,7 +373,7 @@ export default function CompanyManagement({ partsList }) {
 
             <div>
               <label style={{ fontSize: '12px', fontWeight: '600', color: '#64748B', marginBottom: '6px', display: 'block' }}>📌 비고</label>
-              <textarea rows="5" placeholder="비고 입력 (엔터키로 줄바꿈 가능)" value={note} onChange={(e) => setNote(e.target.value)} style={inputStyle} />
+              <textarea rows="5" placeholder="비고 입력" value={note} onChange={(e) => setNote(e.target.value)} style={inputStyle} />
             </div>
 
             <button type="submit" disabled={uploading} style={{ padding: '12px', background: '#2563EB', color: 'white', border: 'none', borderRadius: '6px', fontWeight: '700', cursor: 'pointer', fontSize: '14px', marginTop: '6px' }}>
