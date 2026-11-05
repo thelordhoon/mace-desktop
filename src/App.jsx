@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { supabase } from './supabaseClient'
-import Header from './components/Header'
+import Header from './components/header'
 import Sidebar from './components/Sidebar'
 import LoginForm from './components/LoginForm'
 import CompanyManagement from './components/CompanyManagement'
