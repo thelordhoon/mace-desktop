@@ -14,7 +14,22 @@ export default function CompanyManagement({ partsList }) {
 
   const [selectedReportImage, setSelectedReportImage] = useState(null)
 
-  // 신규 등록 폼 상태
+  // 출고증 작성/조회 모달 상태
+  const [isDeliveryModalOpen, setIsDeliveryModalOpen] = useState(false)
+  const [deliveryTargetHistory, setDeliveryTargetHistory] = useState(null)
+  
+  const [deliveryIssuer, setDeliveryIssuer] = useState('배진철')
+  const [customIssuer, setCustomIssuer] = useState('')
+  const [deliveryDate, setDeliveryDate] = useState('')
+  const [deliverySnList, setDeliverySnList] = useState([''])
+  
+  const [deliveryItems, setDeliveryItems] = useState([
+    { partId: '', partSn: '', name: '', qty: 1 }
+  ])
+  const [deliveryNote, setDeliveryNote] = useState('')
+
+  const [issuerOptions, setIssuerOptions] = useState(['배진철', '직접 입력'])
+
   const [name, setName] = useState('')
   const [managers, setManagers] = useState([{ name: '', phone: '', role: '', email: '' }])
   const [address, setAddress] = useState('')
@@ -22,7 +37,6 @@ export default function CompanyManagement({ partsList }) {
   const [inks, setInks] = useState([''])
   const [solvents, setSolvents] = useState([''])
 
-  // 수정 모드 상태
   const [isEditing, setIsEditing] = useState(false)
   const [editData, setEditData] = useState({ 
     name: '', 
@@ -39,7 +53,19 @@ export default function CompanyManagement({ partsList }) {
   useEffect(() => {
     fetchCompanies()
     fetchAllServiceHistories()
+    fetchProfiles()
   }, [])
+
+  const fetchProfiles = async () => {
+    const { data, error } = await supabase.from('profiles').select('full_name')
+    if (!error && data) {
+      const names = data.map(p => p.full_name).filter(Boolean)
+      if (names.length > 0) {
+        const uniqueNames = Array.from(new Set(['배진철', ...names]))
+        setIssuerOptions([...uniqueNames, '직접 입력'])
+      }
+    }
+  }
 
   const fetchCompanies = async () => {
     const { data } = await supabase.from('companies').select('*').order('created_at', { ascending: false })
@@ -230,6 +256,137 @@ export default function CompanyManagement({ partsList }) {
     }
   }
 
+  const handleOpenDeliveryModal = (history) => {
+    setDeliveryTargetHistory(history)
+    setDeliveryDate(history.work_date || new Date().toISOString().split('T')[0])
+    
+    const matchedComp = companies.find(c => c.id === history.company_id)
+    if (matchedComp) {
+      const parsedManagers = parseManagers(matchedComp.manager, matchedComp.phone, matchedComp.email)
+      setSelectedCompany({
+        ...matchedComp,
+        managersList: parsedManagers,
+        inkList: parseItemList(matchedComp.ink),
+        solventList: parseItemList(matchedComp.solvent)
+      })
+    }
+    
+    if (history.delivery_data) {
+      try {
+        const savedData = typeof history.delivery_data === 'string' ? JSON.parse(history.delivery_data) : history.delivery_data
+        setDeliveryIssuer(savedData.issuer || '배진철')
+        setCustomIssuer(savedData.customIssuer || '')
+        setDeliverySnList(savedData.snList || (history.sn ? history.sn.split(',').map(s => s.trim()) : ['']))
+        setDeliveryItems(savedData.items || [])
+        setDeliveryNote(savedData.note || history.work_content || '')
+        setIsDeliveryModalOpen(true)
+        return
+      } catch (e) {}
+    }
+
+    setDeliveryIssuer('배진철')
+    setCustomIssuer('')
+    setDeliverySnList(history.sn ? history.sn.split(',').map(s => s.trim()) : [''])
+    setDeliveryNote(history.work_content || '')
+
+    let parsedParts = []
+    try {
+      if (history.parts) {
+        const temp = typeof history.parts === 'string' ? JSON.parse(history.parts) : history.parts
+        if (Array.isArray(temp)) {
+          parsedParts = temp.map(p => {
+            let rawStr = ''
+            let qtyVal = 1
+            if (typeof p === 'object') {
+              rawStr = p.name || p.code || p.part_id || ''
+              qtyVal = p.qty || 1
+            } else {
+              rawStr = String(p).replace(/\(\d+개\)/g, '').trim()
+            }
+
+            let matched = null
+            if (partsList && partsList.length > 0) {
+              const query = rawStr.toLowerCase()
+              matched = partsList.find(pt => (pt.code && pt.code.toLowerCase() === query) || (pt.name && pt.name.toLowerCase() === query))
+              if (!matched) {
+                matched = partsList.find(pt => (pt.name && pt.name.toLowerCase().includes(query)) || (query.includes(pt.name && pt.name.toLowerCase())))
+              }
+            }
+
+            if (matched) {
+              return { partId: matched.code || '', partSn: '', name: matched.name || '', qty: qtyVal }
+            } else {
+              return { partId: '', partSn: '', name: rawStr, qty: qtyVal }
+            }
+          })
+        }
+      }
+    } catch (e) {}
+
+    if (parsedParts.length === 0) {
+      parsedParts = [{ partId: '', partSn: '', name: '', qty: 1 }]
+    }
+
+    setDeliveryItems(parsedParts)
+    setIsDeliveryModalOpen(true)
+  }
+
+  const handleSaveDeliveryNote = async () => {
+    if (!deliveryTargetHistory) return
+    const finalIssuer = deliveryIssuer === '직접 입력' ? customIssuer : deliveryIssuer
+    if (!finalIssuer.trim()) return alert('발행자(작성자)명을 입력해주세요.')
+
+    const payload = {
+      issuer: finalIssuer,
+      customIssuer,
+      snList: deliverySnList.filter(s => s.trim() !== ''),
+      items: deliveryItems,
+      note: deliveryNote,
+      issuedAt: new Date().toISOString()
+    }
+
+    const { error } = await supabase.from('service_history').update({
+      delivery_issued: true,
+      delivery_data: JSON.stringify(payload)
+    }).eq('id', deliveryTargetHistory.id)
+
+    if (error) {
+      alert('출고증 발행 상태 저장 실패: ' + error.message)
+    } else {
+      alert('출고증이 성공적으로 저장 및 발행 완료 처리되었습니다!')
+      setIsDeliveryModalOpen(false)
+      fetchAllServiceHistories()
+      if (selectedCompany) fetchServiceHistory(selectedCompany.id)
+    }
+  }
+
+  const handleSendOutlookMail = () => {
+    if (!selectedCompany) return
+    const primaryManager = selectedCompany.managersList[0] || {}
+    const recipientEmail = primaryManager.email || selectedCompany.email || ''
+    const subject = `[출고증] (주)메이쓰 - ${selectedCompany.name} 자재/부품 출고명세`
+    
+    const finalIssuer = deliveryIssuer === '직접 입력' ? customIssuer : deliveryIssuer
+    const bodyText = `안녕하세요, (주)메이쓰입니다.
+
+요청하신 장비 서비스 교체 부품에 대한 출고증 정보 발송드립니다.
+
+- 업체명: ${selectedCompany.name}
+- 발행일자: ${deliveryDate}
+- 작성자: ${finalIssuer}
+- 장비 S/N: ${deliverySnList.join(', ')}
+- 출고 부품: ${deliveryItems.map(i => `${i.name || i.partId} (${i.qty}개)`).join(', ')}
+
+자세한 내용은 첨부 및 전달드린 출고 명세서를 참고해주시기 바랍니다.
+감사합니다.
+`
+
+    navigator.clipboard.writeText(bodyText).catch(() => {})
+    const mailtoUrl = `mailto:${recipientEmail}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(bodyText)}`
+    window.location.href = mailtoUrl
+    alert('메일 내용이 클립보드에 복사되었으며, Outlook 메일 창을 호출합니다.')
+  }
+
   const cleanCompanyName = (name) => {
     if (!name) return ''
     return name.replace(/\(주\)|주식회사|\(유\)|유한회사/g, '').trim()
@@ -265,6 +422,35 @@ export default function CompanyManagement({ partsList }) {
   return (
     <div style={{ width: '100%', boxSizing: 'border-box' }}>
       
+      <style>{`
+        @media print {
+          body * {
+            visibility: hidden;
+          }
+          .printable-delivery-area, .printable-delivery-area * {
+            visibility: visible;
+          }
+          .printable-delivery-area {
+            position: absolute;
+            left: 0;
+            top: 0;
+            width: 100%;
+            margin: 0 !important;
+            padding: 10px !important;
+            background: #FFFFFF !important;
+            box-shadow: none !important;
+          }
+          .no-print {
+            display: none !important;
+          }
+          @page {
+            size: A4;
+            margin: 10mm 15mm;
+          }
+        }
+      `}</style>
+
+      {/* 상단 컨트롤 영역 */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '12px' }}>
         <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
           <button 
@@ -312,24 +498,25 @@ export default function CompanyManagement({ partsList }) {
         </div>
       </div>
 
+      {/* 신규 거래처 등록 폼 */}
       {showAddForm && (
         <div style={{ backgroundColor: '#ffffff', borderRadius: '10px', padding: '24px', border: '1px solid #CBD5E1', marginBottom: '24px', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)' }}>
-          <h4 style={{ margin: '0 0 16px 0', fontSize: '16px', color: '#1E293B', fontWeight: '700' }}>➕ 신규 거래처 등록</h4>
+          <h4 style={{ margin: '0 0 16px 0', fontSize: '16px', color: '#1E293B', fontWeight: '700' }}>신규 거래처 등록</h4>
           <form onSubmit={handleAddCompany} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
               <div>
-                <label style={{ fontSize: '12px', fontWeight: '600', color: '#64748B', marginBottom: '6px', display: 'block' }}>🏢 업체명*</label>
+                <label style={{ fontSize: '12px', fontWeight: '600', color: '#64748B', marginBottom: '6px', display: 'block' }}>업체명*</label>
                 <input placeholder="업체명" value={name} onChange={(e) => setName(e.target.value)} style={inputStyle} required />
               </div>
               <div>
-                <label style={{ fontSize: '12px', fontWeight: '600', color: '#64748B', marginBottom: '6px', display: 'block' }}>📍 주소</label>
+                <label style={{ fontSize: '12px', fontWeight: '600', color: '#64748B', marginBottom: '6px', display: 'block' }}>주소</label>
                 <input placeholder="주소" value={address} onChange={(e) => setAddress(e.target.value)} style={inputStyle} />
               </div>
             </div>
 
             <div>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-                <label style={{ fontSize: '12px', fontWeight: '600', color: '#64748B', margin: 0 }}>👤 담당자 목록</label>
+                <label style={{ fontSize: '12px', fontWeight: '600', color: '#64748B', margin: 0 }}>담당자 목록</label>
                 <button type="button" onClick={() => setManagers([...managers, { name: '', phone: '', role: '', email: '' }])} style={{ border: 'none', background: '#EFF6FF', color: '#2563EB', padding: '4px 10px', borderRadius: '4px', fontSize: '11px', fontWeight: '600', cursor: 'pointer' }}>+ 담당자 추가</button>
               </div>
               {managers.map((m, idx) => (
@@ -346,7 +533,7 @@ export default function CompanyManagement({ partsList }) {
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
               <div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-                  <label style={{ fontSize: '12px', fontWeight: '600', color: '#64748B', margin: 0 }}>🧪 잉크 품번 목록</label>
+                  <label style={{ fontSize: '12px', fontWeight: '600', color: '#64748B', margin: 0 }}>잉크 품번 목록</label>
                   <button type="button" onClick={() => setInks([...inks, ''])} style={{ border: 'none', background: '#EFF6FF', color: '#2563EB', padding: '4px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: '600', cursor: 'pointer' }}>+ 잉크 추가</button>
                 </div>
                 {inks.map((ik, idx) => (
@@ -359,7 +546,7 @@ export default function CompanyManagement({ partsList }) {
 
               <div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-                  <label style={{ fontSize: '12px', fontWeight: '600', color: '#64748B', margin: 0 }}>💧 희석제 품번 목록</label>
+                  <label style={{ fontSize: '12px', fontWeight: '600', color: '#64748B', margin: 0 }}>희석제 품번 목록</label>
                   <button type="button" onClick={() => setSolvents([...solvents, ''])} style={{ border: 'none', background: '#EFF6FF', color: '#2563EB', padding: '4px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: '600', cursor: 'pointer' }}>+ 희석제 추가</button>
                 </div>
                 {solvents.map((sv, idx) => (
@@ -372,7 +559,7 @@ export default function CompanyManagement({ partsList }) {
             </div>
 
             <div>
-              <label style={{ fontSize: '12px', fontWeight: '600', color: '#64748B', marginBottom: '6px', display: 'block' }}>📌 비고</label>
+              <label style={{ fontSize: '12px', fontWeight: '600', color: '#64748B', marginBottom: '6px', display: 'block' }}>비고</label>
               <textarea rows="5" placeholder="비고 입력" value={note} onChange={(e) => setNote(e.target.value)} style={inputStyle} />
             </div>
 
@@ -383,6 +570,7 @@ export default function CompanyManagement({ partsList }) {
         </div>
       )}
 
+      {/* 거래처 목록 테이블 */}
       <div style={{ backgroundColor: '#ffffff', borderRadius: '8px', border: '1px solid #CBD5E1', overflow: 'hidden', boxShadow: '0 1px 3px rgba(0,0,0,0.05)', width: '100%' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '13px', tableLayout: 'fixed' }}>
           <thead>
@@ -440,6 +628,7 @@ export default function CompanyManagement({ partsList }) {
         </table>
       </div>
 
+      {/* 거래처 상세 모달 */}
       {isModalOpen && selectedCompany && (
         <div style={{
           position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
@@ -454,20 +643,15 @@ export default function CompanyManagement({ partsList }) {
             
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', borderBottom: '1px solid #E2E8F0', paddingBottom: '14px' }}>
               <h3 style={{ margin: 0, fontSize: '20px', color: '#0F172A' }}>
-                🏢 {selectedCompany.name} 상세 정보
+                {selectedCompany.name} 상세 정보
               </h3>
-              <button 
-                onClick={() => setIsModalOpen(false)} 
-                style={{ border: 'none', background: 'none', fontSize: '20px', color: '#64748B', cursor: 'pointer' }}
-              >
-                ✕
-              </button>
+              <button onClick={() => setIsModalOpen(false)} style={{ border: 'none', background: 'none', fontSize: '20px', color: '#64748B', cursor: 'pointer' }}>✕</button>
             </div>
 
             <div>
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginBottom: '16px' }}>
                 <button onClick={() => setIsEditing(!isEditing)} style={{ padding: '8px 14px', background: isEditing ? '#64748B' : '#0F172A', color: 'white', border: 'none', borderRadius: '6px', fontWeight: '700', cursor: 'pointer', fontSize: '12px' }}>
-                  {isEditing ? '수정 취소' : '✏️ 업체 정보 수정'}
+                  {isEditing ? '수정 취소' : '업체 정보 수정'}
                 </button>
                 <button onClick={() => handleDeleteCompany(selectedCompany.id)} style={{ padding: '8px 14px', background: '#FEE2E2', color: '#EF4444', border: 'none', borderRadius: '6px', fontWeight: '700', cursor: 'pointer', fontSize: '12px' }}>
                   삭제
@@ -478,38 +662,34 @@ export default function CompanyManagement({ partsList }) {
                 <div>
                   <div style={{ display: 'grid', gridTemplateColumns: '1.5fr 1fr', gap: '20px', marginBottom: '24px' }}>
                     <div>
-                      <h4 style={{ margin: '0 0 10px 0', color: '#334155' }}>👤 담당자 정보</h4>
+                      <h4 style={{ margin: '0 0 10px 0', color: '#334155' }}>담당자 정보</h4>
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginBottom: '20px' }}>
                         {selectedCompany.managersList.map((m, idx) => (
                           <div key={idx} style={{ padding: '12px', backgroundColor: '#F8FAFC', borderRadius: '6px', border: '1px solid #E2E8F0', fontSize: '13px' }}>
                             <div style={{ fontWeight: '700', color: '#0F172A' }}>{m.name || '미입력'} ({m.role || '직책 없음'})</div>
-                            <div style={{ color: '#64748B', marginTop: '4px' }}>📞 {m.phone || '-'}</div>
-                            <div style={{ color: '#64748B' }}>✉️ {m.email || '-'}</div>
+                            <div style={{ color: '#64748B', marginTop: '4px' }}>연락처: {m.phone || '-'}</div>
+                            <div style={{ color: '#64748B' }}>이메일: {m.email || '-'}</div>
                           </div>
                         ))}
                       </div>
 
-                      {/* 💡 주소와 비고를 완전히 독립된 두 개의 박스로 분리 */}
-                      <h4 style={{ margin: '0 0 10px 0', color: '#334155' }}>📍 주소 정보</h4>
+                      <h4 style={{ margin: '0 0 10px 0', color: '#334155' }}>주소 정보</h4>
                       <div style={{ backgroundColor: '#F8FAFC', padding: '14px', borderRadius: '8px', border: '1px solid #E2E8F0', fontSize: '13px', color: '#334155', marginBottom: '16px' }}>
                         {selectedCompany.address || '등록된 주소가 없습니다.'}
                       </div>
 
-                      <h4 style={{ margin: '0 0 10px 0', color: '#334155' }}>📌 비고 사항</h4>
-                      <div style={{ 
-                        backgroundColor: '#F8FAFC', padding: '14px', borderRadius: '8px', border: '1px solid #E2E8F0', 
-                        fontSize: '13px', color: '#1E293B', minHeight: '110px', whiteSpace: 'pre-wrap', lineHeight: '1.6' 
-                      }}>
+                      <h4 style={{ margin: '0 0 10px 0', color: '#334155' }}>비고 사항</h4>
+                      <div style={{ backgroundColor: '#F8FAFC', padding: '14px', borderRadius: '8px', border: '1px solid #E2E8F0', fontSize: '13px', color: '#1E293B', minHeight: '110px', whiteSpace: 'pre-wrap', lineHeight: '1.6' }}>
                         {selectedCompany.card_url || '등록된 비고 내용이 없습니다.'}
                       </div>
                     </div>
 
                     <div>
-                      <h4 style={{ margin: '0 0 10px 0', color: '#334155' }}>🧪 지정 소모품 정보</h4>
+                      <h4 style={{ margin: '0 0 10px 0', color: '#334155' }}>지정 소모품 정보</h4>
                       <div style={{ backgroundColor: '#EFF6FF', padding: '16px', borderRadius: '8px', border: '1px solid #DBEAFE', fontSize: '13px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
                         
                         <div>
-                          <span style={{ color: '#1E40AF', fontWeight: '700', display: 'block', marginBottom: '6px' }}>🧪 잉크 목록</span>
+                          <span style={{ color: '#1E40AF', fontWeight: '700', display: 'block', marginBottom: '6px' }}>잉크 목록</span>
                           {selectedCompany.inkList.map((ik, iIdx) => {
                             const info = getPartPriceInfo(ik, selectedCompany.name)
                             return (
@@ -524,7 +704,7 @@ export default function CompanyManagement({ partsList }) {
                         </div>
 
                         <div style={{ borderTop: '1px solid #BFDBFE', paddingTop: '8px' }}>
-                          <span style={{ color: '#1E40AF', fontWeight: '700', display: 'block', marginBottom: '6px' }}>💧 희석제 목록</span>
+                          <span style={{ color: '#1E40AF', fontWeight: '700', display: 'block', marginBottom: '6px' }}>희석제 목록</span>
                           {selectedCompany.solventList.map((sv, sIdx) => {
                             const info = getPartPriceInfo(sv, selectedCompany.name)
                             return (
@@ -545,7 +725,7 @@ export default function CompanyManagement({ partsList }) {
                   <div style={{ borderTop: '1px solid #E2E8F0', paddingTop: '20px', marginTop: '20px' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', flexWrap: 'wrap', gap: '8px' }}>
                       <h4 style={{ margin: 0, color: '#1E293B', fontSize: '16px', fontWeight: '700' }}>
-                        📋 최근 서비스 이력 ({filteredDetailHistory.length})
+                        최근 서비스 이력 ({filteredDetailHistory.length})
                       </h4>
                       <div style={{ position: 'relative', width: '180px' }}>
                         <input 
@@ -587,6 +767,9 @@ export default function CompanyManagement({ partsList }) {
                             }
                           } catch (e) {}
 
+                          const hasReplacementParts = parsedParts.length > 0
+                          const isDeliveryIssued = h.delivery_issued === true
+
                           return (
                             <div 
                               key={h.id} 
@@ -608,25 +791,48 @@ export default function CompanyManagement({ partsList }) {
                                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
                                   <span style={{ fontSize: '13px', color: '#2563EB', fontWeight: '700' }}>
                                     {h.work_date} ({h.start_time || '09:00'} ~ {h.end_time || '18:00'}) 
-                                    {h.report_url && <span style={{ marginLeft: '8px', padding: '2px 6px', backgroundColor: '#EFF6FF', borderRadius: '4px', fontSize: '11px', border: '1px solid #BFDBFE' }}>📄 리포트 보기</span>}
+                                    {h.report_url && <span style={{ marginLeft: '8px', padding: '2px 6px', backgroundColor: '#EFF6FF', borderRadius: '4px', fontSize: '11px', border: '1px solid #BFDBFE' }}>리포트 보기</span>}
                                   </span>
                                 </div>
                                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr 2fr', gap: '10px', fontSize: '13px', color: '#334155' }}>
                                   <div><b>S/N:</b> <span style={{ color: '#0284C7', fontWeight: '600' }}>{h.sn || '없음'}</span></div>
                                   <div><b>작업:</b> {h.work_content || '-'}</div>
-                                  <div><b>교체 파트:</b> {parsedParts.length > 0 ? parsedParts.map(p => typeof p === 'object' ? (p.name || p.part_id) : p).join(', ') : '없음'}</div>
+                                  <div><b>교체 파트:</b> {hasReplacementParts ? parsedParts.map(p => typeof p === 'object' ? (p.name || p.part_id) : p).join(', ') : '없음'}</div>
                                 </div>
                               </div>
 
-                              <button 
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  handleDeleteHistoryItem(h.id)
-                                }}
-                                style={{ border: 'none', background: '#FEE2E2', color: '#EF4444', cursor: 'pointer', fontSize: '12px', padding: '6px 10px', borderRadius: '6px', fontWeight: '600', marginLeft: '12px' }}
-                              >
-                                삭제
-                              </button>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginLeft: '12px' }}>
+                                {hasReplacementParts && (
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      handleOpenDeliveryModal(h)
+                                    }}
+                                    style={{
+                                      border: 'none',
+                                      background: isDeliveryIssued ? '#E2E8F0' : '#10B981',
+                                      color: isDeliveryIssued ? '#475569' : '#FFFFFF',
+                                      cursor: 'pointer',
+                                      fontSize: '12px',
+                                      padding: '6px 12px',
+                                      borderRadius: '6px',
+                                      fontWeight: '700'
+                                    }}
+                                  >
+                                    {isDeliveryIssued ? '출고증 발행 완료' : '출고증 작성'}
+                                  </button>
+                                )}
+
+                                <button 
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    handleDeleteHistoryItem(h.id)
+                                  }}
+                                  style={{ border: 'none', background: '#FEE2E2', color: '#EF4444', cursor: 'pointer', fontSize: '12px', padding: '6px 10px', borderRadius: '6px', fontWeight: '600' }}
+                                >
+                                  삭제
+                                </button>
+                              </div>
                             </div>
                           )
                         })
@@ -650,7 +856,7 @@ export default function CompanyManagement({ partsList }) {
 
                   <div>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-                      <label style={{ fontSize: '12px', fontWeight: '600', color: '#64748B', margin: 0 }}>👤 담당자 목록</label>
+                      <label style={{ fontSize: '12px', fontWeight: '600', color: '#64748B', margin: 0 }}>담당자 목록</label>
                       <button 
                         type="button" 
                         onClick={() => setEditData({ ...editData, managers: [...editData.managers, { name: '', phone: '', role: '', email: '' }] })} 
@@ -675,7 +881,7 @@ export default function CompanyManagement({ partsList }) {
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
                     <div>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-                        <label style={{ fontSize: '12px', fontWeight: '600', color: '#64748B', margin: 0 }}>🧪 잉크 품번 목록</label>
+                        <label style={{ fontSize: '12px', fontWeight: '600', color: '#64748B', margin: 0 }}>잉크 품번 목록</label>
                         <button 
                           type="button" 
                           onClick={() => setEditData({ ...editData, inks: [...editData.inks, ''] })} 
@@ -696,7 +902,7 @@ export default function CompanyManagement({ partsList }) {
 
                     <div>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-                        <label style={{ fontSize: '12px', fontWeight: '600', color: '#64748B', margin: 0 }}>💧 희석제 품번 목록</label>
+                        <label style={{ fontSize: '12px', fontWeight: '600', color: '#64748B', margin: 0 }}>희석제 품번 목록</label>
                         <button 
                           type="button" 
                           onClick={() => setEditData({ ...editData, solvents: [...editData.solvents, ''] })} 
@@ -732,6 +938,241 @@ export default function CompanyManagement({ partsList }) {
         </div>
       )}
 
+      {/* 출고증 발행 및 조회 모달 */}
+      {isDeliveryModalOpen && selectedCompany && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          backgroundColor: 'rgba(15, 23, 42, 0.75)',
+          display: 'flex', justifyContent: 'center', alignItems: 'center',
+          zIndex: 2000, padding: '20px'
+        }}>
+          <div className="printable-delivery-area" style={{
+            backgroundColor: '#ffffff', borderRadius: '12px', width: '100%', maxWidth: '950px',
+            maxHeight: '92vh', overflowY: 'auto', padding: '28px', boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)'
+          }}>
+            
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', borderBottom: '2px solid #0F172A', paddingBottom: '12px' }}>
+              <h3 style={{ margin: 0, fontSize: '22px', color: '#0F172A', fontWeight: '800' }}>
+                출 고 증 (DELIVERY NOTE)
+              </h3>
+              <button className="no-print" onClick={() => setIsDeliveryModalOpen(false)} style={{ border: 'none', background: 'none', fontSize: '20px', color: '#64748B', cursor: 'pointer' }}>✕</button>
+            </div>
+
+            <div style={{ backgroundColor: '#F8FAFC', padding: '16px', borderRadius: '8px', border: '1px solid #E2E8F0', marginBottom: '20px', display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px' }}>
+              <div>
+                <label style={{ fontSize: '11px', fontWeight: '700', color: '#64748B', display: 'block', marginBottom: '4px' }}>공급받는 자 (업체명)</label>
+                <div style={{ fontSize: '14px', fontWeight: '800', color: '#0F172A', padding: '8px 0' }}>{selectedCompany.name}</div>
+              </div>
+
+              <div>
+                <label style={{ fontSize: '11px', fontWeight: '700', color: '#64748B', display: 'block', marginBottom: '4px' }}>발행 일자</label>
+                <input type="date" value={deliveryDate} onChange={(e) => setDeliveryDate(e.target.value)} style={inputStyle} />
+              </div>
+
+              <div>
+                <label style={{ fontSize: '11px', fontWeight: '700', color: '#64748B', display: 'block', marginBottom: '4px' }}>발행자 (작성자)</label>
+                <div style={{ display: 'flex', gap: '6px' }}>
+                  <select value={deliveryIssuer} onChange={(e) => setDeliveryIssuer(e.target.value)} style={inputStyle}>
+                    {issuerOptions.map((opt, i) => <option key={i} value={opt}>{opt}</option>)}
+                  </select>
+                  {deliveryIssuer === '직접 입력' && (
+                    <input placeholder="이름" value={customIssuer} onChange={(e) => setCustomIssuer(e.target.value)} style={inputStyle} />
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <div style={{ backgroundColor: '#F8FAFC', padding: '12px 16px', borderRadius: '8px', border: '1px solid #E2E8F0', marginBottom: '20px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                <label style={{ fontSize: '11px', fontWeight: '700', color: '#64748B', margin: 0 }}>장비 S/N 목록</label>
+                <button className="no-print" onClick={() => setDeliverySnList([...deliverySnList, ''])} style={{ border: 'none', background: '#EFF6FF', color: '#2563EB', fontSize: '11px', padding: '2px 6px', borderRadius: '4px', cursor: 'pointer', fontWeight: '700' }}>+ S/N 추가</button>
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                {deliverySnList.map((snVal, sIdx) => (
+                  <div key={sIdx} style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+                    <input placeholder="S/N" value={snVal} onChange={(e) => { const newS = [...deliverySnList]; newS[sIdx] = e.target.value; setDeliverySnList(newS); }} style={{ ...inputStyle, width: '150px' }} />
+                    {deliverySnList.length > 1 && <button className="no-print" onClick={() => setDeliverySnList(deliverySnList.filter((_, i) => i !== sIdx))} style={{ border: 'none', background: 'none', color: '#EF4444', cursor: 'pointer' }}>✕</button>}
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div style={{ border: '1px solid #0F172A', borderRadius: '4px', overflow: 'hidden', marginBottom: '20px' }}>
+              <div style={{ backgroundColor: '#F1F5F9', padding: '10px 14px', borderBottom: '1px solid #CBD5E1', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontSize: '13px', fontWeight: '800', color: '#0F172A' }}>출고 부품 품목 명세</span>
+                <button 
+                  className="no-print"
+                  onClick={() => setDeliveryItems([...deliveryItems, { partId: '', partSn: '', name: '', qty: 1 }])} 
+                  style={{ padding: '4px 10px', background: '#2563EB', color: 'white', border: 'none', borderRadius: '4px', fontSize: '12px', fontWeight: '700', cursor: 'pointer' }}
+                >
+                  + 부품 추가
+                </button>
+              </div>
+
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+                <thead>
+                  <tr style={{ backgroundColor: '#F8FAFC', borderBottom: '1px solid #CBD5E1' }}>
+                    <th style={{ padding: '8px', borderRight: '1px solid #E2E8F0', width: '45px', textAlign: 'center' }}>NO</th>
+                    <th style={{ padding: '8px', borderRight: '1px solid #E2E8F0', width: '160px' }}>부품 ID / 코드</th>
+                    <th style={{ padding: '8px', borderRight: '1px solid #E2E8F0', width: '130px' }}>부품 S/N</th>
+                    <th style={{ padding: '8px', borderRight: '1px solid #E2E8F0' }}>품명 / 규격</th>
+                    <th style={{ padding: '8px', borderRight: '1px solid #E2E8F0', width: '75px', textAlign: 'center' }}>수량</th>
+                    <th className="no-print" style={{ padding: '8px', width: '50px', textAlign: 'center' }}>삭제</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {deliveryItems.map((item, idx) => {
+                    const codeQuery = (item.partId || '').toLowerCase()
+                    const nameQuery = (item.name || '').toLowerCase()
+                    
+                    const matchedCodeSuggestions = partsList && codeQuery.trim() !== '' 
+                      ? partsList.filter(p => p.code && p.code.toLowerCase().includes(codeQuery) && p.code.toLowerCase() !== codeQuery).slice(0, 5)
+                      : []
+
+                    const matchedNameSuggestions = partsList && nameQuery.trim() !== '' 
+                      ? partsList.filter(p => p.name && p.name.toLowerCase().includes(nameQuery) && p.name.toLowerCase() !== nameQuery).slice(0, 5)
+                      : []
+
+                    return (
+                      <tr key={idx} style={{ borderBottom: '1px solid #E2E8F0' }}>
+                        <td style={{ padding: '6px', textAlign: 'center', borderRight: '1px solid #E2E8F0', fontWeight: '700' }}>{idx + 1}</td>
+                        
+                        <td style={{ padding: '6px', borderRight: '1px solid #E2E8F0', position: 'relative' }}>
+                          <input 
+                            value={item.partId} 
+                            onChange={(e) => { 
+                              const val = e.target.value
+                              const newI = [...deliveryItems]
+                              newI[idx].partId = val
+                              const found = partsList?.find(p => p.code && p.code.toLowerCase() === val.toLowerCase())
+                              if (found) {
+                                newI[idx].name = found.name || ''
+                              }
+                              setDeliveryItems(newI) 
+                            }} 
+                            style={inputStyle} 
+                            placeholder="코드 입력" 
+                          />
+                          {matchedCodeSuggestions.length > 0 && (
+                            <div className="no-print" style={{ position: 'absolute', top: '100%', left: 0, right: 0, backgroundColor: 'white', border: '1px solid #CBD5E1', borderRadius: '4px', zIndex: 3000, boxShadow: '0 4px 6px rgba(0,0,0,0.1)', maxHeight: '150px', overflowY: 'auto' }}>
+                              {matchedCodeSuggestions.map((sPart, sIdx) => (
+                                <div 
+                                  key={sIdx}
+                                  onClick={() => {
+                                    const newI = [...deliveryItems]
+                                    newI[idx].partId = sPart.code || ''
+                                    newI[idx].name = sPart.name || ''
+                                    setDeliveryItems(newI)
+                                  }}
+                                  style={{ padding: '6px 10px', fontSize: '11px', cursor: 'pointer', borderBottom: '1px solid #F1F5F9', backgroundColor: '#FFF' }}
+                                  onMouseEnter={(e) => e.target.style.backgroundColor = '#EFF6FF'}
+                                  onMouseLeave={(e) => e.target.style.backgroundColor = '#FFF'}
+                                >
+                                  <b>{sPart.code}</b> ({sPart.name})
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </td>
+
+                        <td style={{ padding: '6px', borderRight: '1px solid #E2E8F0' }}>
+                          <input 
+                            value={item.partSn} 
+                            onChange={(e) => { const newI = [...deliveryItems]; newI[idx].partSn = e.target.value; setDeliveryItems(newI); }} 
+                            style={inputStyle} 
+                            placeholder="부품 S/N" 
+                          />
+                        </td>
+
+                        <td style={{ padding: '6px', borderRight: '1px solid #E2E8F0', position: 'relative' }}>
+                          <input 
+                            value={item.name} 
+                            onChange={(e) => { 
+                              const val = e.target.value
+                              const newI = [...deliveryItems]
+                              newI[idx].name = val
+                              const found = partsList?.find(p => p.name && p.name.toLowerCase() === val.toLowerCase())
+                              if (found) {
+                                newI[idx].partId = found.code || ''
+                              }
+                              setDeliveryItems(newI) 
+                            }} 
+                            style={inputStyle} 
+                            placeholder="품명 및 규격" 
+                          />
+                          {matchedNameSuggestions.length > 0 && (
+                            <div className="no-print" style={{ position: 'absolute', top: '100%', left: 0, right: 0, backgroundColor: 'white', border: '1px solid #CBD5E1', borderRadius: '4px', zIndex: 3000, boxShadow: '0 4px 6px rgba(0,0,0,0.1)', maxHeight: '150px', overflowY: 'auto' }}>
+                              {matchedNameSuggestions.map((sPart, sIdx) => (
+                                <div 
+                                  key={sIdx}
+                                  onClick={() => {
+                                    const newI = [...deliveryItems]
+                                    newI[idx].partId = sPart.code || ''
+                                    newI[idx].name = sPart.name || ''
+                                    setDeliveryItems(newI)
+                                  }}
+                                  style={{ padding: '6px 10px', fontSize: '11px', cursor: 'pointer', borderBottom: '1px solid #F1F5F9', backgroundColor: '#FFF' }}
+                                  onMouseEnter={(e) => e.target.style.backgroundColor = '#EFF6FF'}
+                                  onMouseLeave={(e) => e.target.style.backgroundColor = '#FFF'}
+                                >
+                                  <b>{sPart.name}</b> ({sPart.code})
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </td>
+
+                        <td style={{ padding: '6px', borderRight: '1px solid #E2E8F0' }}>
+                          <input 
+                            type="number" 
+                            value={item.qty} 
+                            onChange={(e) => { const newI = [...deliveryItems]; newI[idx].qty = Number(e.target.value); setDeliveryItems(newI); }} 
+                            style={{ ...inputStyle, textAlign: 'center' }} 
+                          />
+                        </td>
+
+                        <td className="no-print" style={{ padding: '6px', textAlign: 'center' }}>
+                          <button 
+                            onClick={() => setDeliveryItems(deliveryItems.filter((_, i) => i !== idx))} 
+                            style={{ border: 'none', background: 'none', color: '#EF4444', cursor: 'pointer', fontWeight: 'bold', fontSize: '14px' }}
+                            title="행 삭제"
+                          >
+                            ✕
+                          </button>
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            <div style={{ marginBottom: '24px' }}>
+              <label style={{ fontSize: '12px', fontWeight: '700', color: '#334155', display: 'block', marginBottom: '4px' }}>특이사항 및 작업 내용</label>
+              <textarea rows="4" value={deliveryNote} onChange={(e) => setDeliveryNote(e.target.value)} style={inputStyle} />
+            </div>
+
+            <div className="no-print" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid #E2E8F0', paddingTop: '16px' }}>
+              <button onClick={() => window.print()} style={{ padding: '10px 18px', background: '#475569', color: 'white', border: 'none', borderRadius: '6px', fontWeight: '700', cursor: 'pointer', fontSize: '13px' }}>
+                바로 인쇄 / PDF
+              </button>
+
+              <div style={{ display: 'flex', gap: '8px' }}>
+                {/*<button onClick={handleSendOutlookMail} style={{ padding: '10px 18px', background: '#0284C7', color: 'white', border: 'none', borderRadius: '6px', fontWeight: '700', cursor: 'pointer', fontSize: '13px' }}>
+                  Outlook 메일 전송
+                </button>
+                */}
+                <button onClick={handleSaveDeliveryNote} style={{ padding: '10px 20px', background: '#10B981', color: 'white', border: 'none', borderRadius: '6px', fontWeight: '800', cursor: 'pointer', fontSize: '13px' }}>
+                  발행 완료 처리 및 저장
+                </button>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      )}
+
+      {/* 서비스 리포트 이미지 확대 보기 모달 */}
       {selectedReportImage && (
         <div style={{
           position: 'fixed',

@@ -6,6 +6,7 @@ import LoginForm from './components/LoginForm'
 import CompanyManagement from './components/CompanyManagement'
 import PartManagement from './components/PartManagement'
 import UserManagement from './components/UserManagement'
+import DeliveryHistory from './components/DeliveryHistory' // 💡 출고증 이력 관리 컴포넌트 임포트 추가
 
 export default function App() {
   const [user, setUser] = useState(null)
@@ -68,6 +69,8 @@ export default function App() {
         <main style={{ flex: 1, padding: '24px', overflowY: 'auto', boxSizing: 'border-box' }}>
           {currentMenu === 'companies' && <CompanyManagement partsList={partsList} />}
           {currentMenu === 'parts' && <PartManagement />}
+          {/* 💡 출고증 이력 관리 메뉴 선택 시 분기 렌더링 */}
+          {currentMenu === 'delivery_history' && <DeliveryHistory partsList={partsList} />}
           {currentMenu === 'users' && isAdmin && <UserManagement />}
         </main>
       </div>
