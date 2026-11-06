@@ -72,7 +72,7 @@ export default function ServiceManagement() {
     setIsModalOpen(true)
   }
 
-  // 💡 최근 서비스 이력 클릭 시 기술부 입력란에 자동 반영하는 함수
+  // 최근 서비스 이력 클릭 시 기술부 입력란에 자동 반영하는 함수
   const handleApplyRecentHistory = () => {
     if (!recentHistory) return
 
@@ -354,29 +354,12 @@ export default function ServiceManagement() {
                 </div>
               </div>
 
-              {/* 💡 최근 서비스 이력 카드 (클릭 시 기술부 폼에 자동 입력) */}
+              {/* 최근 서비스 이력 카드 (카드 클릭 시 기술부 입력란에 자동 적용) */}
               <div style={{ backgroundColor: '#F0F9FF', border: '1px solid #BAE6FD', borderRadius: '8px', padding: '14px', fontSize: '13px' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
                   <b style={{ color: '#0369A1', fontSize: '14px' }}>
                     🕒 최근 서비스 이력 (직전 1건)
                   </b>
-                  {recentHistory && (
-                    <button
-                      onClick={handleApplyRecentHistory}
-                      style={{
-                        padding: '4px 10px',
-                        backgroundColor: '#0284C7',
-                        color: '#FFFFFF',
-                        border: 'none',
-                        borderRadius: '4px',
-                        fontWeight: '700',
-                        fontSize: '11px',
-                        cursor: 'pointer'
-                      }}
-                    >
-                      ✨ 기술부 입력란에 자동 채우기
-                    </button>
-                  )}
                 </div>
 
                 {recentHistory ? (
@@ -405,7 +388,7 @@ export default function ServiceManagement() {
                       <div style={{ color: '#475569' }}><b>교체 파트:</b> {recentHistory.replaced_parts}</div>
                     )}
                     <div style={{ marginTop: '6px', fontSize: '11px', color: '#0284C7', textAlign: 'right', fontWeight: '600' }}>
-                      👉 클릭하여 이 내용 적용하기
+                      👉 클릭하여 이 내용 기술부 입력란에 적용하기
                     </div>
                   </div>
                 ) : (
