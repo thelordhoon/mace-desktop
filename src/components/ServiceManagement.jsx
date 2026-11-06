@@ -292,7 +292,7 @@ export default function ServiceManagement() {
         <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '13px' }}>
           <thead>
             <tr style={{ backgroundColor: '#64748B', color: '#FFFFFF', borderBottom: '1px solid #475569' }}>
-              <th style={{ padding: '12px 14px', width: '100px' }}>작업일자</th>
+              <th style={{ padding: '12px 14px', width: '100px' }}>견적일자</th>
               <th style={{ padding: '12px 14px', width: '140px' }}>공급받는 자 (업체명)</th>
               <th style={{ padding: '12px 14px', width: '100px' }}>장비 S/N</th>
               <th style={{ padding: '12px 14px', width: '310px' }}>견적 품목</th>
