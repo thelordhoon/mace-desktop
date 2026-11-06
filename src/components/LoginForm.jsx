@@ -15,13 +15,13 @@ export default function LoginForm({ onLoginSuccess }) {
     const cleanUser = username.trim().toLowerCase()
     const companyEmail = `${cleanUser}@mace-inkjet.co.kr`
 
-    // 1. Supabase Auth 로그인 시도 (Auth 사용 시)
+    // 1. Supabase Auth 로그인 시도
     let { data: authData } = await supabase.auth.signInWithPassword({
       email: companyEmail,
       password,
     })
 
-    // 2. profiles 테이블에서 아이디로 전체 조회 (중복 대비 array로 처리)
+    // 2. profiles 테이블에서 아이디로 조회
     const { data: profiles, error: profileError } = await supabase
       .from('profiles')
       .select('*')
@@ -33,7 +33,6 @@ export default function LoginForm({ onLoginSuccess }) {
       return
     }
 
-    // 💡 여러 개일 경우 승인 완료(is_approved=true)된 계정을 우선 선택, 없으면 첫 번째 선택
     const profile = profiles.find(p => p.is_approved) || profiles[0]
 
     // Auth 로그인 실패 시 DB 직접 저장 비밀번호 비교
@@ -79,12 +78,30 @@ export default function LoginForm({ onLoginSuccess }) {
     }
 
     const cleanUser = username.trim().toLowerCase()
+    const companyEmail = `${cleanUser}@mace-inkjet.co.kr`
 
-    const { error } = await supabase.from('profiles').insert([
+    // 💡 1. Supabase Auth에 진짜 인증 계정 생성 시도
+    const { data: authData, error: authError } = await supabase.auth.signUp({
+      email: companyEmail,
+      password: password,
+    })
+
+    // 이미지 존재하는 아이디나 Auth 생성 에러 처리
+    if (authError && !authError.message.includes('User already registered')) {
+      alert('가입 신청 실패 (Auth): ' + authError.message)
+      setLoading(false)
+      return
+    }
+
+    // Auth 생성이 성공하면 그 UID 사용, 실패시(이미 존재할 수 있음) 기존 방식 ID 호환
+    const userId = authData?.user?.id || crypto.randomUUID()
+
+    // 💡 2. profiles 테이블에도 동일한 ID로 프로필 데이터 등록
+    const { error: profileError } = await supabase.from('profiles').insert([
       {
-        id: crypto.randomUUID(),
+        id: userId,
         username: cleanUser,
-        email: `${cleanUser}@mace-inkjet.co.kr`,
+        email: companyEmail,
         full_name: fullName,
         password: password,
         role: 'user',
@@ -92,8 +109,8 @@ export default function LoginForm({ onLoginSuccess }) {
       }
     ])
 
-    if (error) {
-      alert('가입 신청 실패: ' + error.message)
+    if (profileError) {
+      alert('가입 신청 실패 (Profiles): ' + profileError.message)
       setLoading(false)
       return
     }
