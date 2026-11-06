@@ -208,10 +208,10 @@ export default function ServiceManagement() {
               <th style={{ padding: '12px 14px', width: '100px' }}>작업일자</th>
               <th style={{ padding: '12px 14px', width: '140px' }}>공급받는 자 (업체명)</th>
               <th style={{ padding: '12px 14px', width: '100px' }}>장비 S/N</th>
-              <th style={{ padding: '12px 14px', width: '280px' }}>견적 품목 요약 내역</th>
-              <th style={{ padding: '12px 14px', width: '110px', textAlign: 'center' }}>작업완료일자</th> {/* 💡 추가된 칸 */}
-              <th style={{ padding: '12px 14px', width: '100px' }}>비고</th>
-              <th style={{ padding: '12px 14px', width: '140px', textAlign: 'right' }}>견적 금액</th>
+              <th style={{ padding: '12px 14px', width: '310px' }}>견적 품목</th> {/* 💡 '요약 내역' 제거 */}
+              <th style={{ padding: '12px 14px', width: '110px', textAlign: 'center' }}>작업완료일자</th>
+              <th style={{ padding: '12px 14px', width: '90px' }}>비고</th>
+              <th style={{ padding: '12px 14px', width: '130px', textAlign: 'right' }}>견적 금액</th>
               <th style={{ padding: '12px 14px', width: '70px', textAlign: 'center' }}>작성자</th>
               <th style={{ padding: '12px 14px', width: '115px', textAlign: 'center' }}>관리부 상태</th>
               <th style={{ padding: '12px 14px', width: '150px', textAlign: 'center' }}>관리</th>
@@ -255,11 +255,12 @@ export default function ServiceManagement() {
                       {item.serial_no || '미입력'}
                     </td>
                     
+                    {/* 💡 품목명과 파트 번호(코드) 함께 출력 */}
                     <td style={{ padding: '12px 14px', color: '#334155', lineHeight: '1.6' }}>
                       {partsArray.length > 0 ? (
                         partsArray.map((p, pIdx) => (
                           <div key={pIdx} style={{ fontSize: '12px', color: '#0F172A', fontWeight: '500' }}>
-                            • {p.name} <span style={{ color: '#2563EB', fontWeight: 'bold' }}>({p.qty}개)</span>
+                            • {p.name} {p.code ? <span style={{ color: '#0284C7', fontWeight: '600' }}>({p.code})</span> : ''} <span style={{ color: '#2563EB', fontWeight: 'bold' }}>({p.qty}개)</span>
                           </div>
                         ))
                       ) : (
@@ -267,7 +268,6 @@ export default function ServiceManagement() {
                       )}
                     </td>
 
-                    {/* 💡 작업완료일자 데이터 표시 */}
                     <td style={{ padding: '12px 14px', textAlign: 'center', color: item.work_completed_date ? '#0F172A' : '#94A3B8', fontWeight: '500' }}>
                       {item.work_completed_date || '-'}
                     </td>
