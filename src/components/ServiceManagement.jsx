@@ -35,28 +35,16 @@ export default function ServiceManagement() {
     }
   }
 
-  const handleOpenDetailModal = async (item) => {
-    let currentSn = item.serial_no || ''
-    if (!currentSn && item.company_id) {
-      const { data } = await supabase
-        .from('service_history')
-        .select('sn')
-        .eq('company_id', item.company_id)
-        .order('created_at', { ascending: false })
-        .limit(1)
-      if (data && data.length > 0 && data[0].sn) {
-        currentSn = data[0].sn
-      }
-    }
-
+  // 💡 S/N 자동 탐색을 제거하고 DB에 저장된 값 그대로 가져오거나 빈 값으로 초기화
+  const handleOpenDetailModal = (item) => {
     setSelectedService(item)
     setEditForm({
-      serial_no: currentSn,
+      serial_no: item.serial_no || '', // 기본적으로 비어있거나 저장된 값만 표시
       as_content: item.as_content || '',
       work_completed_date: item.work_completed_date || '',
       statement_date: item.statement_date || '',
       tax_invoice_date: item.tax_invoice_date || '',
-      status: item.status || '시스템 처리중',
+      status: item.status === '처리완료' ? '계산서 발행완료' : (item.status || '시스템 처리중'),
       note: item.note || ''
     })
     setIsModalOpen(true)
@@ -141,8 +129,8 @@ export default function ServiceManagement() {
   }
 
   const getStatusBadge = (status) => {
-    if (status === '처리완료') {
-      return <span style={{ padding: '4px 10px', backgroundColor: '#DCFCE7', color: '#166534', borderRadius: '4px', fontWeight: '700', fontSize: '12px' }}>처리완료</span>
+    if (status === '계산서 발행완료' || status === '처리완료') {
+      return <span style={{ padding: '4px 10px', backgroundColor: '#DCFCE7', color: '#166534', borderRadius: '4px', fontWeight: '700', fontSize: '12px' }}>계산서 발행완료</span>
     } else if (status === '미발행') {
       return <span style={{ padding: '4px 10px', backgroundColor: '#F1F5F9', color: '#475569', borderRadius: '4px', fontWeight: '700', fontSize: '12px' }}>미발행</span>
     }
@@ -190,7 +178,7 @@ export default function ServiceManagement() {
         </div>
       </div>
 
-      {/* 목록 테이블 (비고 위치 변경 및 품목/금액/상태/관리 너비 반영) */}
+      {/* 목록 테이블 */}
       <div style={{ backgroundColor: '#ffffff', borderRadius: '8px', border: '1px solid #CBD5E1', overflow: 'hidden', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '13px' }}>
           <thead>
@@ -198,12 +186,12 @@ export default function ServiceManagement() {
               <th style={{ padding: '12px 14px', width: '105px' }}>작업일자</th>
               <th style={{ padding: '12px 14px', width: '150px' }}>공급받는 자 (업체명)</th>
               <th style={{ padding: '12px 14px', width: '110px' }}>장비 S/N</th>
-              <th style={{ padding: '12px 14px', width: '320px' }}>견적 품목 요약 내역</th> {/* 15% + 마진 반영 확장 */}
-              <th style={{ padding: '12px 14px', width: '120px' }}>비고</th> {/* 40% 축소 */}
-              <th style={{ padding: '12px 14px', width: '180px', textAlign: 'right' }}>견적 금액 (VAT포함)</th> {/* 위치 변경 및 10% 확장 */}
+              <th style={{ padding: '12px 14px', width: '320px' }}>견적 품목 요약 내역</th>
+              <th style={{ padding: '12px 14px', width: '120px' }}>비고</th>
+              <th style={{ padding: '12px 14px', width: '180px', textAlign: 'right' }}>견적 금액</th>
               <th style={{ padding: '12px 14px', width: '75px', textAlign: 'center' }}>작성자</th>
-              <th style={{ padding: '12px 14px', width: '125px', textAlign: 'center' }}>관리부 상태</th> {/* 10% 확장 */}
-              <th style={{ padding: '12px 14px', width: '175px', textAlign: 'center' }}>관리</th> {/* 10% 확장 */}
+              <th style={{ padding: '12px 14px', width: '125px', textAlign: 'center' }}>관리부 상태</th>
+              <th style={{ padding: '12px 14px', width: '175px', textAlign: 'center' }}>관리</th>
             </tr>
           </thead>
           <tbody>
@@ -221,6 +209,9 @@ export default function ServiceManagement() {
                   if (Array.isArray(pArr)) partsArray = pArr
                 } catch (e) {}
 
+                const totalAmt = Number(item.total_amount || 0)
+                const supplyPrice = Math.round(totalAmt / 1.1)
+
                 return (
                   <tr 
                     key={item.id} 
@@ -237,8 +228,8 @@ export default function ServiceManagement() {
                     <td style={{ padding: '12px 14px', fontWeight: '700', color: '#2563EB' }}>
                       {item.company_name}
                     </td>
-                    <td style={{ padding: '12px 14px', color: '#0284C7', fontWeight: '700', fontFamily: 'monospace' }}>
-                      {item.serial_no || '-'}
+                    <td style={{ padding: '12px 14px', color: item.serial_no ? '#0284C7' : '#94A3B8', fontWeight: '700', fontFamily: 'monospace' }}>
+                      {item.serial_no || '미입력'}
                     </td>
                     
                     <td style={{ padding: '12px 14px', color: '#334155', lineHeight: '1.6' }}>
@@ -258,7 +249,7 @@ export default function ServiceManagement() {
                     </td>
 
                     <td style={{ padding: '12px 14px', fontWeight: '800', color: '#0F172A', textAlign: 'right' }}>
-                      ₩ {Number(item.total_amount || 0).toLocaleString()}
+                      ₩ {supplyPrice.toLocaleString()}
                     </td>
                     <td style={{ padding: '12px 14px', textAlign: 'center', color: '#475569' }}>
                       {item.writer || '-'}
@@ -299,7 +290,7 @@ export default function ServiceManagement() {
           zIndex: 1000, padding: '20px'
         }}>
           <div style={{
-            backgroundColor: '#ffffff', borderRadius: '12px', width: '100%', maxWidth: '750px',
+            backgroundColor: '#ffffff', borderRadius: '12px', width: '100%', maxWidth: '800px',
             maxHeight: '90vh', overflowY: 'auto', padding: '24px', boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.2)'
           }}>
             
@@ -317,27 +308,63 @@ export default function ServiceManagement() {
                 <div><b>업체 담당자:</b> {selectedService.manager_name || '-'}</div>
                 <div><b>연락처:</b> {selectedService.manager_phone || '-'}</div>
                 <div><b>견적 발송일:</b> {selectedService.estimate_sent_date || '-'}</div>
-                <div style={{ gridColumn: 'span 2' }}><b>총 견적 금액:</b> <span style={{ color: '#2563EB', fontWeight: 'bold' }}>₩ {Number(selectedService.total_amount || 0).toLocaleString()} 원</span></div>
+                <div style={{ gridColumn: 'span 2' }}>
+                  <b>견적 금액 (VAT 제외):</b> <span style={{ color: '#2563EB', fontWeight: 'bold' }}>₩ {Math.round(Number(selectedService.total_amount || 0) / 1.1).toLocaleString()} 원</span>
+                </div>
               </div>
 
-              <div style={{ backgroundColor: '#F1F5F9', padding: '12px 14px', borderRadius: '8px', border: '1px solid #CBD5E1', fontSize: '13px' }}>
-                <b style={{ display: 'block', marginBottom: '6px', color: '#0F172A' }}>📋 견적 품목 및 규격 내역</b>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                  {(() => {
-                    try {
-                      const pArr = typeof selectedService.parts_data === 'string' ? JSON.parse(selectedService.parts_data) : selectedService.parts_data
-                      if (Array.isArray(pArr) && pArr.length > 0) {
-                        return pArr.map((p, pIdx) => (
-                          <div key={pIdx} style={{ display: 'flex', justifyContent: 'space-between', color: '#334155', borderBottom: '1px dashed #CBD5E1', paddingBottom: '3px' }}>
-                            <span>• {p.name} ({p.code || '코드없음'})</span>
-                            <span>수량: <b>{p.qty}개</b> / 단가: ₩ {Number(p.price || 0).toLocaleString()}</span>
-                          </div>
-                        ))
-                      }
-                    } catch (e) {}
-                    return <span style={{ color: '#64748B' }}>등록된 품목 상세 내역이 없습니다.</span>
-                  })()}
-                </div>
+              {/* 견적 품목 및 규격 내역 테이블 */}
+              <div style={{ backgroundColor: '#F1F5F9', padding: '14px', borderRadius: '8px', border: '1px solid #CBD5E1', fontSize: '13px' }}>
+                <b style={{ display: 'block', marginBottom: '10px', color: '#0F172A' }}>📋 견적 품목 및 규격 내역</b>
+                
+                <table style={{ width: '100%', borderCollapse: 'collapse', backgroundColor: '#FFFFFF', borderRadius: '6px', overflow: 'hidden', border: '1px solid #CBD5E1' }}>
+                  <thead>
+                    <tr style={{ backgroundColor: '#E2E8F0', color: '#1E293B', fontSize: '12px', textAlign: 'left' }}>
+                      <th style={{ padding: '8px 10px', borderBottom: '1px solid #CBD5E1' }}>품명 / 규격명 (코드)</th>
+                      <th style={{ padding: '8px 10px', borderBottom: '1px solid #CBD5E1', width: '70px', textAlign: 'center' }}>수량</th>
+                      <th style={{ padding: '8px 10px', borderBottom: '1px solid #CBD5E1', width: '110px', textAlign: 'right' }}>단가</th>
+                      <th style={{ padding: '8px 10px', borderBottom: '1px solid #CBD5E1', width: '120px', textAlign: 'right' }}>합계금액</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(() => {
+                      try {
+                        const pArr = typeof selectedService.parts_data === 'string' ? JSON.parse(selectedService.parts_data) : selectedService.parts_data
+                        if (Array.isArray(pArr) && pArr.length > 0) {
+                          return pArr.map((p, pIdx) => {
+                            const pQty = Number(p.qty || 1)
+                            const pPrice = Number(p.price || 0)
+                            const pAmount = p.amount ? Number(p.amount) : (pQty * pPrice)
+
+                            return (
+                              <tr key={pIdx} style={{ borderBottom: '1px solid #E2E8F0', fontSize: '12px' }}>
+                                <td style={{ padding: '8px 10px', color: '#0F172A', fontWeight: '500' }}>
+                                  {p.name} <span style={{ color: '#64748B', fontSize: '11px' }}>({p.code || '코드없음'})</span>
+                                </td>
+                                <td style={{ padding: '8px 10px', textAlign: 'center', fontWeight: 'bold', color: '#2563EB' }}>
+                                  {pQty}개
+                                </td>
+                                <td style={{ padding: '8px 10px', textAlign: 'right', color: '#334155' }}>
+                                  ₩ {pPrice.toLocaleString()}
+                                </td>
+                                <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: '700', color: '#0F172A' }}>
+                                  ₩ {pAmount.toLocaleString()}
+                                </td>
+                              </tr>
+                            )
+                          })
+                        }
+                      } catch (e) {}
+                      return (
+                        <tr>
+                          <td colSpan="4" style={{ padding: '16px', textAlign: 'center', color: '#64748B' }}>
+                            등록된 품목 상세 내역이 없습니다.
+                          </td>
+                        </tr>
+                      )
+                    })()}
+                  </tbody>
+                </table>
               </div>
 
               {/* 기술부 섹션 */}
@@ -406,7 +433,7 @@ export default function ServiceManagement() {
                       style={{ ...inputStyle, fontWeight: 'bold' }}
                     >
                       <option value="시스템 처리중">시스템 처리중</option>
-                      <option value="계산서 처리완료">계산서 처리완료</option>
+                      <option value="계산서 발행완료">계산서 발행완료</option>
                       <option value="미발행">미발행</option>
                     </select>
                   </div>
