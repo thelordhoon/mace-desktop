@@ -72,6 +72,20 @@ export default function ServiceManagement() {
     setIsModalOpen(true)
   }
 
+  // 💡 최근 서비스 이력 클릭 시 기술부 입력란에 자동 반영하는 함수
+  const handleApplyRecentHistory = () => {
+    if (!recentHistory) return
+
+    setEditForm(prev => ({
+      ...prev,
+      serial_no: recentHistory.sn || prev.serial_no,
+      work_completed_date: recentHistory.work_date || recentHistory.created_at?.substring(0, 10) || prev.work_completed_date,
+      as_content: recentHistory.work_content || recentHistory.as_content || prev.as_content
+    }))
+
+    alert('최근 서비스 이력 내용이 기술부 입력 항목에 적용되었습니다.')
+  }
+
   const handleSaveDetail = async () => {
     if (!selectedService) return
     setIsSaving(true)
@@ -208,7 +222,7 @@ export default function ServiceManagement() {
               <th style={{ padding: '12px 14px', width: '100px' }}>작업일자</th>
               <th style={{ padding: '12px 14px', width: '140px' }}>공급받는 자 (업체명)</th>
               <th style={{ padding: '12px 14px', width: '100px' }}>장비 S/N</th>
-              <th style={{ padding: '12px 14px', width: '310px' }}>견적 품목</th> {/* 💡 '요약 내역' 제거 */}
+              <th style={{ padding: '12px 14px', width: '310px' }}>견적 품목</th>
               <th style={{ padding: '12px 14px', width: '110px', textAlign: 'center' }}>작업완료일자</th>
               <th style={{ padding: '12px 14px', width: '90px' }}>비고</th>
               <th style={{ padding: '12px 14px', width: '130px', textAlign: 'right' }}>견적 금액</th>
@@ -255,7 +269,6 @@ export default function ServiceManagement() {
                       {item.serial_no || '미입력'}
                     </td>
                     
-                    {/* 💡 품목명과 파트 번호(코드) 함께 출력 */}
                     <td style={{ padding: '12px 14px', color: '#334155', lineHeight: '1.6' }}>
                       {partsArray.length > 0 ? (
                         partsArray.map((p, pIdx) => (
@@ -341,13 +354,48 @@ export default function ServiceManagement() {
                 </div>
               </div>
 
-              {/* 최근 서비스 이력 카드 (직전 1건) */}
+              {/* 💡 최근 서비스 이력 카드 (클릭 시 기술부 폼에 자동 입력) */}
               <div style={{ backgroundColor: '#F0F9FF', border: '1px solid #BAE6FD', borderRadius: '8px', padding: '14px', fontSize: '13px' }}>
-                <b style={{ display: 'block', marginBottom: '8px', color: '#0369A1', fontSize: '14px' }}>
-                  🕒 최근 서비스 이력 (직전 1건)
-                </b>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                  <b style={{ color: '#0369A1', fontSize: '14px' }}>
+                    🕒 최근 서비스 이력 (직전 1건)
+                  </b>
+                  {recentHistory && (
+                    <button
+                      onClick={handleApplyRecentHistory}
+                      style={{
+                        padding: '4px 10px',
+                        backgroundColor: '#0284C7',
+                        color: '#FFFFFF',
+                        border: 'none',
+                        borderRadius: '4px',
+                        fontWeight: '700',
+                        fontSize: '11px',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      ✨ 기술부 입력란에 자동 채우기
+                    </button>
+                  )}
+                </div>
+
                 {recentHistory ? (
-                  <div style={{ backgroundColor: '#FFFFFF', padding: '12px', borderRadius: '6px', border: '1px solid #E0F2FE', fontSize: '12px', lineHeight: '1.6' }}>
+                  <div 
+                    onClick={handleApplyRecentHistory}
+                    title="클릭하면 아래 기술부 입력 항목에 내용이 자동으로 채워집니다."
+                    style={{ 
+                      backgroundColor: '#FFFFFF', 
+                      padding: '12px', 
+                      borderRadius: '6px', 
+                      border: '1px solid #E0F2FE', 
+                      fontSize: '12px', 
+                      lineHeight: '1.6',
+                      cursor: 'pointer',
+                      transition: 'background-color 0.15s'
+                    }}
+                    onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#F8FAFC'}
+                    onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#FFFFFF'}
+                  >
                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px', fontWeight: 'bold', color: '#0284C7' }}>
                       <span>일자: {recentHistory.work_date || recentHistory.created_at?.substring(0, 10)}</span>
                       <span>S/N: {recentHistory.sn || '미입력'}</span>
@@ -356,6 +404,9 @@ export default function ServiceManagement() {
                     {recentHistory.replaced_parts && (
                       <div style={{ color: '#475569' }}><b>교체 파트:</b> {recentHistory.replaced_parts}</div>
                     )}
+                    <div style={{ marginTop: '6px', fontSize: '11px', color: '#0284C7', textAlign: 'right', fontWeight: '600' }}>
+                      👉 클릭하여 이 내용 적용하기
+                    </div>
                   </div>
                 ) : (
                   <div style={{ color: '#94A3B8', fontSize: '12px', textAlign: 'center', padding: '8px 0' }}>
@@ -372,7 +423,7 @@ export default function ServiceManagement() {
                   <thead>
                     <tr style={{ backgroundColor: '#E2E8F0', color: '#1E293B', fontSize: '12px', textAlign: 'left' }}>
                       <th style={{ padding: '8px 10px', borderBottom: '1px solid #CBD5E1' }}>품명 / 규격명 (코드)</th>
-                      <th style={{ padding: '8px 10px', borderBottom: '1px solid #CBD5E1', width: '70px', textAlign: 'center' }}>수량</th>
+                      <th style={{ padding: '8px 14px', borderBottom: '1px solid #CBD5E1', width: '80px', textAlign: 'right' }}>수량</th>
                       <th style={{ padding: '8px 10px', borderBottom: '1px solid #CBD5E1', width: '110px', textAlign: 'right' }}>단가</th>
                       <th style={{ padding: '8px 10px', borderBottom: '1px solid #CBD5E1', width: '120px', textAlign: 'right' }}>합계금액</th>
                     </tr>
@@ -392,7 +443,7 @@ export default function ServiceManagement() {
                                 <td style={{ padding: '8px 10px', color: '#0F172A', fontWeight: '500' }}>
                                   {p.name} <span style={{ color: '#64748B', fontSize: '11px' }}>({p.code || '코드없음'})</span>
                                 </td>
-                                <td style={{ padding: '8px 10px', textAlign: 'center', fontWeight: 'bold', color: '#2563EB' }}>
+                                <td style={{ padding: '8px 14px', textAlign: 'right', fontWeight: 'bold', color: '#2563EB' }}>
                                   {pQty}개
                                 </td>
                                 <td style={{ padding: '8px 10px', textAlign: 'right', color: '#334155' }}>
