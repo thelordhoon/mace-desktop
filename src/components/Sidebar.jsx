@@ -24,7 +24,21 @@ export default function Sidebar({ currentMenu, setCurrentMenu, isAdmin, resetVie
         🔧 자재 및 부품 관리
       </button>
 
-      {/* 💡 왼쪽 사이드바에 추가된 출고증 이력 관리 메뉴 */}
+      <button 
+        onClick={() => handleMenuClick('estimate')}
+        style={{ width: '100%', padding: '12px 14px', backgroundColor: currentMenu === 'estimate' ? '#2563eb' : 'transparent', color: currentMenu === 'estimate' ? '#ffffff' : '#cbd5e1', border: 'none', borderRadius: '8px', textAlign: 'left', fontWeight: '600', fontSize: '14px', cursor: 'pointer' }}
+      >
+        📝 견적서 작성
+      </button>
+
+      {/* 💡 새로 추가된 대장 메뉴 */}
+      <button 
+        onClick={() => handleMenuClick('service_management')}
+        style={{ width: '100%', padding: '12px 14px', backgroundColor: currentMenu === 'service_management' ? '#2563eb' : 'transparent', color: currentMenu === 'service_management' ? '#ffffff' : '#cbd5e1', border: 'none', borderRadius: '8px', textAlign: 'left', fontWeight: '600', fontSize: '14px', cursor: 'pointer' }}
+      >
+        📊 기술 서비스 내용 및 관리
+      </button>
+
       <button 
         onClick={() => handleMenuClick('delivery_history')}
         style={{ width: '100%', padding: '12px 14px', backgroundColor: currentMenu === 'delivery_history' ? '#2563eb' : 'transparent', color: currentMenu === 'delivery_history' ? '#ffffff' : '#cbd5e1', border: 'none', borderRadius: '8px', textAlign: 'left', fontWeight: '600', fontSize: '14px', cursor: 'pointer' }}

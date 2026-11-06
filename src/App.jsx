@@ -5,22 +5,22 @@ import Sidebar from './components/Sidebar'
 import LoginForm from './components/LoginForm'
 import CompanyManagement from './components/CompanyManagement'
 import PartManagement from './components/PartManagement'
+import EstimateForm from './components/EstimateForm'
+import ServiceManagement from './components/ServiceManagement' // 💡 임포트 추가
 import UserManagement from './components/UserManagement'
-import DeliveryHistory from './components/DeliveryHistory' // 💡 출고증 이력 관리 컴포넌트 임포트 추가
+import DeliveryHistory from './components/DeliveryHistory'
 
 export default function App() {
   const [user, setUser] = useState(null)
   const [currentMenu, setCurrentMenu] = useState('companies')
   const [partsList, setPartsList] = useState([])
 
-  // 앱 실행 시 세션 체크 및 부품 목록 선행 로드 (단가 계산용)
   useEffect(() => {
     checkUserSession()
     fetchParts()
   }, [])
 
   const checkUserSession = async () => {
-    // 로컬 스토리지나 Supabase 세션 연동 관리
     const savedUser = localStorage.getItem('mace_desk_user')
     if (savedUser) {
       setUser(JSON.parse(savedUser))
@@ -42,7 +42,6 @@ export default function App() {
     setUser(null)
   }
 
-  // 로그인하지 않은 경우 로그인 화면 출력
   if (!user) {
     return <LoginForm onLoginSuccess={handleLoginSuccess} />
   }
@@ -52,24 +51,22 @@ export default function App() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', backgroundColor: '#F1F5F9', fontFamily: '-apple-system, sans-serif', overflow: 'hidden' }}>
       
-      {/* 1. 상단 헤더 */}
       <Header user={user} onLogout={handleLogout} />
 
-      {/* 2. 메인 바디 (사이드바 + 컨텐츠 영역) */}
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
         
-        {/* 사이드바 메뉴 */}
         <Sidebar 
           currentMenu={currentMenu} 
           setCurrentMenu={setCurrentMenu} 
           isAdmin={isAdmin} 
         />
 
-        {/* 우측 메인 콘텐츠 뷰어 */}
         <main style={{ flex: 1, padding: '24px', overflowY: 'auto', boxSizing: 'border-box' }}>
           {currentMenu === 'companies' && <CompanyManagement partsList={partsList} />}
           {currentMenu === 'parts' && <PartManagement />}
-          {/* 💡 출고증 이력 관리 메뉴 선택 시 분기 렌더링 */}
+          {currentMenu === 'estimate' && <EstimateForm user={user} />}
+          {/* 💡 신규 메뉴 분기 추가 */}
+          {currentMenu === 'service_management' && <ServiceManagement />}
           {currentMenu === 'delivery_history' && <DeliveryHistory partsList={partsList} />}
           {currentMenu === 'users' && isAdmin && <UserManagement />}
         </main>
