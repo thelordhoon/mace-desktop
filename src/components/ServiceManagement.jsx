@@ -7,6 +7,7 @@ export default function ServiceManagement() {
   const [periodFilter, setPeriodFilter] = useState('all') // 'all', '3months', '1year'
   
   const [selectedService, setSelectedService] = useState(null)
+  const [recentHistory, setRecentHistory] = useState(null)
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
 
@@ -35,11 +36,12 @@ export default function ServiceManagement() {
     }
   }
 
-  // 💡 S/N 자동 탐색을 제거하고 DB에 저장된 값 그대로 가져오거나 빈 값으로 초기화
-  const handleOpenDetailModal = (item) => {
+  const handleOpenDetailModal = async (item) => {
     setSelectedService(item)
+    setRecentHistory(null)
+
     setEditForm({
-      serial_no: item.serial_no || '', // 기본적으로 비어있거나 저장된 값만 표시
+      serial_no: item.serial_no || '',
       as_content: item.as_content || '',
       work_completed_date: item.work_completed_date || '',
       statement_date: item.statement_date || '',
@@ -47,6 +49,26 @@ export default function ServiceManagement() {
       status: item.status === '처리완료' ? '계산서 발행완료' : (item.status || '시스템 처리중'),
       note: item.note || ''
     })
+
+    if (item.company_id || item.company_name) {
+      let query = supabase
+        .from('service_history')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(1)
+
+      if (item.company_id) {
+        query = query.eq('company_id', item.company_id)
+      } else {
+        query = query.eq('company_name', item.company_name)
+      }
+
+      const { data } = await query
+      if (data && data.length > 0) {
+        setRecentHistory(data[0])
+      }
+    }
+
     setIsModalOpen(true)
   }
 
@@ -140,7 +162,7 @@ export default function ServiceManagement() {
   return (
     <div style={{ width: '100%', boxSizing: 'border-box' }}>
       
-      {/* 상단 제목 및 기간별 필터 버튼 + 검색창 */}
+      {/* 상단 헤더 및 필터 */}
       <div style={{ backgroundColor: '#ffffff', borderRadius: '8px', padding: '20px', border: '1px solid #CBD5E1', boxShadow: '0 1px 3px rgba(0,0,0,0.05)', marginBottom: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
         <h3 style={{ margin: 0, fontSize: '18px', color: '#0F172A', fontWeight: '800' }}>
           발행된 기술 서비스 및 견적 이력 목록 ({filteredServices.length}건)
@@ -183,21 +205,22 @@ export default function ServiceManagement() {
         <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '13px' }}>
           <thead>
             <tr style={{ backgroundColor: '#64748B', color: '#FFFFFF', borderBottom: '1px solid #475569' }}>
-              <th style={{ padding: '12px 14px', width: '105px' }}>작업일자</th>
-              <th style={{ padding: '12px 14px', width: '150px' }}>공급받는 자 (업체명)</th>
-              <th style={{ padding: '12px 14px', width: '110px' }}>장비 S/N</th>
-              <th style={{ padding: '12px 14px', width: '320px' }}>견적 품목 요약 내역</th>
-              <th style={{ padding: '12px 14px', width: '120px' }}>비고</th>
-              <th style={{ padding: '12px 14px', width: '180px', textAlign: 'right' }}>견적 금액</th>
-              <th style={{ padding: '12px 14px', width: '75px', textAlign: 'center' }}>작성자</th>
-              <th style={{ padding: '12px 14px', width: '125px', textAlign: 'center' }}>관리부 상태</th>
-              <th style={{ padding: '12px 14px', width: '175px', textAlign: 'center' }}>관리</th>
+              <th style={{ padding: '12px 14px', width: '100px' }}>작업일자</th>
+              <th style={{ padding: '12px 14px', width: '140px' }}>공급받는 자 (업체명)</th>
+              <th style={{ padding: '12px 14px', width: '100px' }}>장비 S/N</th>
+              <th style={{ padding: '12px 14px', width: '280px' }}>견적 품목 요약 내역</th>
+              <th style={{ padding: '12px 14px', width: '110px', textAlign: 'center' }}>작업완료일자</th> {/* 💡 추가된 칸 */}
+              <th style={{ padding: '12px 14px', width: '100px' }}>비고</th>
+              <th style={{ padding: '12px 14px', width: '140px', textAlign: 'right' }}>견적 금액</th>
+              <th style={{ padding: '12px 14px', width: '70px', textAlign: 'center' }}>작성자</th>
+              <th style={{ padding: '12px 14px', width: '115px', textAlign: 'center' }}>관리부 상태</th>
+              <th style={{ padding: '12px 14px', width: '150px', textAlign: 'center' }}>관리</th>
             </tr>
           </thead>
           <tbody>
             {filteredServices.length === 0 ? (
               <tr>
-                <td colSpan="9" style={{ padding: '40px', textAlign: 'center', color: '#94A3B8' }}>
+                <td colSpan="10" style={{ padding: '40px', textAlign: 'center', color: '#94A3B8' }}>
                   등록되었거나 조건에 맞는 기술 서비스 이력이 없습니다.
                 </td>
               </tr>
@@ -242,6 +265,11 @@ export default function ServiceManagement() {
                       ) : (
                         <div style={{ color: '#64748B' }}>{item.as_content || '견적 내역'}</div>
                       )}
+                    </td>
+
+                    {/* 💡 작업완료일자 데이터 표시 */}
+                    <td style={{ padding: '12px 14px', textAlign: 'center', color: item.work_completed_date ? '#0F172A' : '#94A3B8', fontWeight: '500' }}>
+                      {item.work_completed_date || '-'}
                     </td>
 
                     <td style={{ padding: '12px 14px', color: '#64748B', fontSize: '12px', whiteSpace: 'pre-wrap' }}>
@@ -311,6 +339,29 @@ export default function ServiceManagement() {
                 <div style={{ gridColumn: 'span 2' }}>
                   <b>견적 금액 (VAT 제외):</b> <span style={{ color: '#2563EB', fontWeight: 'bold' }}>₩ {Math.round(Number(selectedService.total_amount || 0) / 1.1).toLocaleString()} 원</span>
                 </div>
+              </div>
+
+              {/* 최근 서비스 이력 카드 (직전 1건) */}
+              <div style={{ backgroundColor: '#F0F9FF', border: '1px solid #BAE6FD', borderRadius: '8px', padding: '14px', fontSize: '13px' }}>
+                <b style={{ display: 'block', marginBottom: '8px', color: '#0369A1', fontSize: '14px' }}>
+                  🕒 최근 서비스 이력 (직전 1건)
+                </b>
+                {recentHistory ? (
+                  <div style={{ backgroundColor: '#FFFFFF', padding: '12px', borderRadius: '6px', border: '1px solid #E0F2FE', fontSize: '12px', lineHeight: '1.6' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px', fontWeight: 'bold', color: '#0284C7' }}>
+                      <span>일자: {recentHistory.work_date || recentHistory.created_at?.substring(0, 10)}</span>
+                      <span>S/N: {recentHistory.sn || '미입력'}</span>
+                    </div>
+                    <div><b>작업내용:</b> {recentHistory.work_content || recentHistory.as_content || '-'}</div>
+                    {recentHistory.replaced_parts && (
+                      <div style={{ color: '#475569' }}><b>교체 파트:</b> {recentHistory.replaced_parts}</div>
+                    )}
+                  </div>
+                ) : (
+                  <div style={{ color: '#94A3B8', fontSize: '12px', textAlign: 'center', padding: '8px 0' }}>
+                    조회된 이전 서비스 이력이 없습니다.
+                  </div>
+                )}
               </div>
 
               {/* 견적 품목 및 규격 내역 테이블 */}
