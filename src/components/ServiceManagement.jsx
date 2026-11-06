@@ -4,8 +4,12 @@ import { supabase } from '../supabaseClient'
 export default function ServiceManagement() {
   const [services, setServices] = useState([])
   const [searchTerm, setSearchTerm] = useState('')
-  const [periodFilter, setPeriodFilter] = useState('all') // 'all', '3months', '1year'
+  const [periodFilter, setPeriodFilter] = useState('all') // 'all', '3months', '1year', 'custom'
   
+  // 💡 사용자 지정 날짜 조회 상태 추가
+  const [startDate, setStartDate] = useState('')
+  const [endDate, setEndDate] = useState('')
+
   const [selectedService, setSelectedService] = useState(null)
   const [recentHistory, setRecentHistory] = useState(null)
   const [isModalOpen, setIsModalOpen] = useState(false)
@@ -72,7 +76,6 @@ export default function ServiceManagement() {
     setIsModalOpen(true)
   }
 
-  // 최근 서비스 이력 클릭 시 기술부 입력란에 자동 반영하는 함수
   const handleApplyRecentHistory = () => {
     if (!recentHistory) return
 
@@ -130,6 +133,7 @@ export default function ServiceManagement() {
     }
   }
 
+  // 💡 검색어 및 기간 필터링 로직
   const filteredServices = services.filter(s => {
     const matchesSearch = 
       (s.company_name && s.company_name.toLowerCase().includes(searchTerm.toLowerCase())) ||
@@ -140,6 +144,14 @@ export default function ServiceManagement() {
     if (periodFilter === 'all') return true
 
     if (s.work_date) {
+      const workDateStr = s.work_date // YYYY-MM-DD
+      
+      if (periodFilter === 'custom') {
+        if (startDate && workDateStr < startDate) return false
+        if (endDate && workDateStr > endDate) return false
+        return true
+      }
+
       const workDate = new Date(s.work_date)
       const now = new Date()
       const diffMonths = (now.getFullYear() - workDate.getFullYear()) * 12 + (now.getMonth() - workDate.getMonth())
@@ -149,9 +161,18 @@ export default function ServiceManagement() {
       } else if (periodFilter === '1year') {
         return diffMonths <= 12 && workDate <= now
       }
+    } else if (periodFilter === 'custom' && (startDate || endDate)) {
+      return false
     }
     return true
   })
+
+  // 💡 필터링된 항목들의 견적 금액 총 합산 (VAT 제외 공급가액 기준 혹은 총액 기준 선택 가능 - 여기서는 VAT 제외 공급가액 합산)
+  const filteredTotalAmount = filteredServices.reduce((sum, item) => {
+    const totalAmt = Number(item.total_amount || 0)
+    const supplyPrice = Math.round(totalAmt / 1.1)
+    return sum + supplyPrice
+  }, 0)
 
   const inputStyle = {
     width: '100%',
@@ -176,28 +197,69 @@ export default function ServiceManagement() {
   return (
     <div style={{ width: '100%', boxSizing: 'border-box' }}>
       
-      {/* 상단 헤더 및 필터 */}
-      <div style={{ backgroundColor: '#ffffff', borderRadius: '8px', padding: '20px', border: '1px solid #CBD5E1', boxShadow: '0 1px 3px rgba(0,0,0,0.05)', marginBottom: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
+      {/* 상단 헤더 및 조회 조건 설정 영역 (붉은색 지정 공간) */}
+      <div style={{ backgroundColor: '#ffffff', borderRadius: '8px', padding: '16px 20px', border: '1px solid #CBD5E1', boxShadow: '0 1px 3px rgba(0,0,0,0.05)', marginBottom: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '14px' }}>
+        
+        {/* 좌측: 타이틀 및 건수 */}
         <h3 style={{ margin: 0, fontSize: '18px', color: '#0F172A', fontWeight: '800' }}>
           발행된 기술 서비스 및 견적 이력 목록 ({filteredServices.length}건)
         </h3>
 
-        <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+        {/* 우측: 날짜 조회 조건 및 기존 필터 */}
+        <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
+          
+          {/* 💡 날짜별 조회 조건 입력 박스 */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', backgroundColor: '#F8FAFC', padding: '6px 12px', borderRadius: '6px', border: '1px solid #CBD5E1' }}>
+            <span style={{ fontSize: '12px', fontWeight: '700', color: '#475569' }}>견적일자:</span>
+            <input 
+              type="date" 
+              value={startDate} 
+              onChange={(e) => {
+                setStartDate(e.target.value)
+                setPeriodFilter('custom')
+              }}
+              style={{ padding: '4px', fontSize: '12px', border: '1px solid #CBD5E1', borderRadius: '4px', background: '#FFF' }}
+            />
+            <span style={{ fontSize: '12px', color: '#64748B' }}>~</span>
+            <input 
+              type="date" 
+              value={endDate} 
+              onChange={(e) => {
+                setEndDate(e.target.value)
+                setPeriodFilter('custom')
+              }}
+              style={{ padding: '4px', fontSize: '12px', border: '1px solid #CBD5E1', borderRadius: '4px', background: '#FFF' }}
+            />
+            {(startDate || endDate) && (
+              <button 
+                onClick={() => {
+                  setStartDate('')
+                  setEndDate('')
+                  setPeriodFilter('all')
+                }}
+                style={{ background: '#E2E8F0', border: 'none', borderRadius: '4px', padding: '4px 8px', fontSize: '11px', cursor: 'pointer', fontWeight: '600', color: '#334155' }}
+              >
+                초기화
+              </button>
+            )}
+          </div>
+
+          {/* 기존 기간 버튼 */}
           <div style={{ display: 'flex', backgroundColor: '#F1F5F9', padding: '3px', borderRadius: '6px', border: '1px solid #CBD5E1' }}>
             <button 
-              onClick={() => setPeriodFilter('all')}
+              onClick={() => { setPeriodFilter('all'); setStartDate(''); setEndDate(''); }}
               style={{ padding: '6px 12px', background: periodFilter === 'all' ? '#2563EB' : 'transparent', color: periodFilter === 'all' ? '#FFF' : '#475569', border: 'none', borderRadius: '4px', fontWeight: '700', fontSize: '12px', cursor: 'pointer' }}
             >
               전체
             </button>
             <button 
-              onClick={() => setPeriodFilter('3months')}
+              onClick={() => { setPeriodFilter('3months'); setStartDate(''); setEndDate(''); }}
               style={{ padding: '6px 12px', background: periodFilter === '3months' ? '#2563EB' : 'transparent', color: periodFilter === '3months' ? '#FFF' : '#475569', border: 'none', borderRadius: '4px', fontWeight: '700', fontSize: '12px', cursor: 'pointer' }}
             >
               최근 3개월
             </button>
             <button 
-              onClick={() => setPeriodFilter('1year')}
+              onClick={() => { setPeriodFilter('1year'); setStartDate(''); setEndDate(''); }}
               style={{ padding: '6px 12px', background: periodFilter === '1year' ? '#2563EB' : 'transparent', color: periodFilter === '1year' ? '#FFF' : '#475569', border: 'none', borderRadius: '4px', fontWeight: '700', fontSize: '12px', cursor: 'pointer' }}
             >
               최근 1년
@@ -209,8 +271,19 @@ export default function ServiceManagement() {
             placeholder="업체명 또는 S/N 검색..." 
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            style={{ ...inputStyle, width: '200px' }}
+            style={{ ...inputStyle, width: '180px' }}
           />
+        </div>
+
+      </div>
+
+      {/* 💡 기간별 견적 금액 총 합산 창 (요약 박스) */}
+      <div style={{ backgroundColor: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: '8px', padding: '12px 20px', marginBottom: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div style={{ fontSize: '13px', color: '#1E40AF', fontWeight: '600' }}>
+          📊 선택 기간 조건에 해당하는 견적 총 합산 내역 <span style={{ fontSize: '11px', color: '#64748B' }}>(VAT 제외 공급가액 기준)</span>
+        </div>
+        <div style={{ fontSize: '15px', fontWeight: '800', color: '#1D4ED8' }}>
+          합산 견적 금액: <span style={{ fontSize: '18px', fontWeight: '900', color: '#2563EB', marginLeft: '8px' }}>₩ {filteredTotalAmount.toLocaleString()} 원</span>
         </div>
       </div>
 
@@ -219,12 +292,12 @@ export default function ServiceManagement() {
         <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '13px' }}>
           <thead>
             <tr style={{ backgroundColor: '#64748B', color: '#FFFFFF', borderBottom: '1px solid #475569' }}>
-              <th style={{ padding: '12px 14px', width: '100px' }}>견적일자</th>
+              <th style={{ padding: '12px 14px', width: '100px' }}>작업일자</th>
               <th style={{ padding: '12px 14px', width: '140px' }}>공급받는 자 (업체명)</th>
               <th style={{ padding: '12px 14px', width: '100px' }}>장비 S/N</th>
               <th style={{ padding: '12px 14px', width: '310px' }}>견적 품목</th>
               <th style={{ padding: '12px 14px', width: '110px', textAlign: 'center' }}>작업완료일자</th>
-              <th style={{ padding: '12px 14px', width: '90px', textAlign: 'center' }}>비고</th>
+              <th style={{ padding: '12px 14px', width: '90px' }}>비고</th>
               <th style={{ padding: '12px 14px', width: '130px', textAlign: 'right' }}>견적 금액</th>
               <th style={{ padding: '12px 14px', width: '70px', textAlign: 'center' }}>작성자</th>
               <th style={{ padding: '12px 14px', width: '115px', textAlign: 'center' }}>관리부 상태</th>
@@ -354,7 +427,7 @@ export default function ServiceManagement() {
                 </div>
               </div>
 
-              {/* 최근 서비스 이력 카드 (카드 클릭 시 기술부 입력란에 자동 적용) */}
+              {/* 최근 서비스 이력 카드 */}
               <div style={{ backgroundColor: '#F0F9FF', border: '1px solid #BAE6FD', borderRadius: '8px', padding: '14px', fontSize: '13px' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
                   <b style={{ color: '#0369A1', fontSize: '14px' }}>
