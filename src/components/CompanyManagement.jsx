@@ -398,7 +398,20 @@ export default function CompanyManagement({ partsList }) {
     return Math.max(...compHistories.map(h => new Date(h.created_at || h.work_date).getTime()))
   }
 
-  let processedCompanies = companies.filter(c => !searchName.trim() || c.name.toLowerCase().includes(searchName.trim().toLowerCase()))
+  // 💡 [수정됨] 업체명 또는 장비 S/N 포함 여부로 필터링하도록 수정
+  let processedCompanies = companies.filter(c => {
+    const query = searchName.trim().toLowerCase()
+    if (!query) return true
+
+    // 1. 업체명 매칭 검사
+    const matchName = c.name && c.name.toLowerCase().includes(query)
+
+    // 2. 해당 업체의 서비스 이력에 등록된 S/N 매칭 검사
+    const compHistories = allHistories.filter(h => h.company_id === c.id)
+    const matchSn = compHistories.some(h => h.sn && h.sn.toLowerCase().includes(query))
+
+    return matchName || matchSn
+  })
 
   if (sortOrder === 'alphabet') {
     processedCompanies.sort((a, b) => cleanCompanyName(a.name).localeCompare(cleanCompanyName(b.name), 'ko-KR'))
@@ -488,12 +501,13 @@ export default function CompanyManagement({ partsList }) {
         </div>
 
         <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+          {/* 💡 [수정됨] 플레이스홀더를 S/N 검색도 가능함을 알리도록 변경 */}
           <input 
             type="text" 
-            placeholder="업체명 검색..." 
+            placeholder="업체명 또는 S/N 검색..." 
             value={searchName} 
             onChange={(e) => setSearchName(e.target.value)} 
-            style={{ ...inputStyle, width: '180px' }} 
+            style={{ ...inputStyle, width: '200px' }} 
           />
         </div>
       </div>
@@ -1158,10 +1172,6 @@ export default function CompanyManagement({ partsList }) {
               </button>
 
               <div style={{ display: 'flex', gap: '8px' }}>
-                {/*<button onClick={handleSendOutlookMail} style={{ padding: '10px 18px', background: '#0284C7', color: 'white', border: 'none', borderRadius: '6px', fontWeight: '700', cursor: 'pointer', fontSize: '13px' }}>
-                  Outlook 메일 전송
-                </button>
-                */}
                 <button onClick={handleSaveDeliveryNote} style={{ padding: '10px 20px', background: '#10B981', color: 'white', border: 'none', borderRadius: '6px', fontWeight: '800', cursor: 'pointer', fontSize: '13px' }}>
                   발행 완료 처리 및 저장
                 </button>
