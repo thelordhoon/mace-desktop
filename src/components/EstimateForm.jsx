@@ -104,7 +104,6 @@ export default function EstimateForm({ user }) {
     setItems(newItems)
   }
 
-  // 단가 산출 로직 (1순위: 지정 소모품 특별가, 2순위: 딜러가/소비자가)
   const getDeterminedPrice = (part) => {
     if (!part) return 0
 
@@ -327,7 +326,7 @@ export default function EstimateForm({ user }) {
       {/* 좌측 패널 */}
       <div className="no-print" style={{ width: '280px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
         
-        {/* 🏷️ 지정 소모품 정보 (가격 표시 추가) */}
+        {/* 지정 소모품 정보 */}
         <div style={{ backgroundColor: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '8px', padding: '16px', boxSizing: 'border-box' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', borderBottom: '1px solid #93c5fd', paddingBottom: '6px' }}>
             <h4 style={{ margin: 0, color: '#1e40af', fontSize: '15px' }}>
@@ -376,7 +375,7 @@ export default function EstimateForm({ user }) {
           )}
         </div>
 
-        {/* ⚡ 자주 사용하는 품목 (TOP) */}
+        {/* 자주 사용하는 품목 (TOP) */}
         <div style={{ backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '16px', boxSizing: 'border-box' }}>
           <h4 style={{ margin: '0 0 12px 0', color: '#334155', fontSize: '15px', borderBottom: '1px solid #cbd5e1', paddingBottom: '6px' }}>
             ⚡ 자주 사용하는 품목 (TOP)
@@ -447,8 +446,9 @@ export default function EstimateForm({ user }) {
             <div style={{ flex: 1, border: '1px solid #333', padding: '12px', borderRadius: '4px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #ccc', paddingBottom: '4px', marginBottom: '10px' }}>
                 <h3 style={{ margin: 0 }}>공급받는 자</h3>
+                {/* 💡 인쇄 시 숨겨지도록 className="no-print" 추가 */}
                 {selectedCompany?.is_dealer && (
-                  <span style={{ backgroundColor: '#DBEAFE', color: '#1E40AF', padding: '2px 6px', borderRadius: '4px', fontSize: '11px', fontWeight: '800' }}>
+                  <span className="no-print" style={{ backgroundColor: '#DBEAFE', color: '#1E40AF', padding: '2px 6px', borderRadius: '4px', fontSize: '11px', fontWeight: '800' }}>
                     [딜러 적용]
                   </span>
                 )}
