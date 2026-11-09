@@ -10,6 +10,14 @@ export default function Sidebar({ currentMenu, setCurrentMenu, isAdmin, resetVie
     <aside style={{ width: '240px', backgroundColor: '#1e293b', color: '#cbd5e1', padding: '24px 14px', boxSizing: 'border-box', display: 'flex', flexDirection: 'column', gap: '8px' }}>
       <div style={{ fontSize: '11px', fontWeight: '700', color: '#64748b', padding: '0 10px 6px 10px', textTransform: 'uppercase' }}>시스템 메뉴</div>
       
+      {/* 💡 최상단에 메인 캘린더 메뉴 추가 */}
+      <button 
+        onClick={() => handleMenuClick('calendar')}
+        style={{ width: '100%', padding: '12px 14px', backgroundColor: currentMenu === 'calendar' ? '#2563eb' : 'transparent', color: currentMenu === 'calendar' ? '#ffffff' : '#cbd5e1', border: 'none', borderRadius: '8px', textAlign: 'left', fontWeight: '600', fontSize: '14px', cursor: 'pointer' }}
+      >
+        📅 현장 출장 및 작업 캘린더
+      </button>
+
       <button 
         onClick={() => handleMenuClick('companies')}
         style={{ width: '100%', padding: '12px 14px', backgroundColor: currentMenu === 'companies' ? '#2563eb' : 'transparent', color: currentMenu === 'companies' ? '#ffffff' : '#cbd5e1', border: 'none', borderRadius: '8px', textAlign: 'left', fontWeight: '600', fontSize: '14px', cursor: 'pointer' }}
@@ -31,7 +39,6 @@ export default function Sidebar({ currentMenu, setCurrentMenu, isAdmin, resetVie
         📝 견적서 작성
       </button>
 
-      {/* 💡 새로 추가된 대장 메뉴 */}
       <button 
         onClick={() => handleMenuClick('service_management')}
         style={{ width: '100%', padding: '12px 14px', backgroundColor: currentMenu === 'service_management' ? '#2563eb' : 'transparent', color: currentMenu === 'service_management' ? '#ffffff' : '#cbd5e1', border: 'none', borderRadius: '8px', textAlign: 'left', fontWeight: '600', fontSize: '14px', cursor: 'pointer' }}

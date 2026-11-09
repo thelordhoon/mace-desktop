@@ -6,13 +6,15 @@ import LoginForm from './components/LoginForm'
 import CompanyManagement from './components/CompanyManagement'
 import PartManagement from './components/PartManagement'
 import EstimateForm from './components/EstimateForm'
-import ServiceManagement from './components/ServiceManagement' // 💡 임포트 추가
+import ServiceManagement from './components/ServiceManagement'
 import UserManagement from './components/UserManagement'
 import DeliveryHistory from './components/DeliveryHistory'
+import EngineerCalendar from './components/EngineerCalendar' // 💡 캘린더 컴포넌트 임포트 추가
 
 export default function App() {
   const [user, setUser] = useState(null)
-  const [currentMenu, setCurrentMenu] = useState('companies')
+  // 💡 첫 화면(초기 메뉴)을 'calendar'로 지정
+  const [currentMenu, setCurrentMenu] = useState('calendar')
   const [partsList, setPartsList] = useState([])
 
   useEffect(() => {
@@ -62,10 +64,11 @@ export default function App() {
         />
 
         <main style={{ flex: 1, padding: '24px', overflowY: 'auto', boxSizing: 'border-box' }}>
+          {/* 💡 메인(첫 화면) 분기 추가 */}
+          {currentMenu === 'calendar' && <EngineerCalendar user={user} />}
           {currentMenu === 'companies' && <CompanyManagement partsList={partsList} />}
           {currentMenu === 'parts' && <PartManagement />}
           {currentMenu === 'estimate' && <EstimateForm user={user} />}
-          {/* 💡 신규 메뉴 분기 추가 */}
           {currentMenu === 'service_management' && <ServiceManagement />}
           {currentMenu === 'delivery_history' && <DeliveryHistory partsList={partsList} />}
           {currentMenu === 'users' && isAdmin && <UserManagement />}
