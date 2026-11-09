@@ -11,13 +11,14 @@ export default function EngineerCalendar({ user }) {
   const engineerList = ['배진철', '진희찬', '국민석']
   const workTypes = ['출장/AS', '정기점검', '장비설치', '내부업무']
 
-  // 공지사항 및 영업부 전달사항 상태
+  // 게시판 상태 (공지사항, 영업부, 기술부)
   const [notices, setNotices] = useState([])
   const [salesNotes, setSalesNotes] = useState([])
+  const [techNotes, setTechNotes] = useState([])
   
-  // 공지/영업 작성 모달 상태
+  // 공지/영업/기술 작성 모달 상태
   const [showBoardModal, setShowBoardModal] = useState(false)
-  const [boardCategory, setBoardCategory] = useState('NOTICE') // NOTICE | SALES
+  const [boardCategory, setBoardCategory] = useState('NOTICE') // NOTICE | SALES | TECH
   const [boardForm, setBoardForm] = useState({ author: '이현희', content: '' })
 
   // 달력 일정 모달 및 폼 상태
@@ -56,7 +57,7 @@ export default function EngineerCalendar({ user }) {
     setForm(prev => ({ ...prev, [name]: value }))
   }
 
-  // 게시판(공지사항 & 영업부 전달사항) 불러오기
+  // 게시판(공지, 영업, 기술) 불러오기
   const fetchBulletins = async () => {
     const { data, error } = await supabase
       .from('bulletin_boards')
@@ -67,6 +68,7 @@ export default function EngineerCalendar({ user }) {
     if (!error && data) {
       setNotices(data.filter(b => b.category === 'NOTICE'))
       setSalesNotes(data.filter(b => b.category === 'SALES'))
+      setTechNotes(data.filter(b => b.category === 'TECH'))
     }
   }
 
@@ -87,12 +89,11 @@ export default function EngineerCalendar({ user }) {
     } else {
       alert('성공적으로 등록되었습니다.')
       setShowBoardModal(false)
-      setBoardForm({ author: boardCategory === 'NOTICE' ? '이현희' : '서주섭', content: '' })
       fetchBulletins()
     }
   }
 
-  // 게시판 항목 삭제 (비활성화)
+  // 게시판 항목 삭제
   const handleDeleteBoardItem = async (id) => {
     if (!window.confirm('이 항목을 삭제하시겠습니까?')) return
     const { error } = await supabase.from('bulletin_boards').delete().eq('id', id)
@@ -302,18 +303,18 @@ export default function EngineerCalendar({ user }) {
         </div>
       </div>
 
-      {/* 메인 2단 레이아웃 (좌측: 공지/영업 패널, 우측: 달력) */}
+      {/* 메인 2단 레이아웃 (좌측: 공지/영업/기술 패널, 우측: 달력) */}
       <div style={{ display: 'grid', gridTemplateColumns: '320px 1fr', gap: '20px', alignItems: 'start' }}>
         
-        {/* 👈 좌측 패널 (공지사항 & 영업부 전달사항) */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+        {/* 👈 좌측 패널 (공지사항 & 영업부 전달사항 & 기술부 공지사항) */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
           
           {/* 1. 중요 공지사항 Box (이현희, 김우연 작성) */}
-          <div style={{ backgroundColor: '#FFFBEB', border: '1px solid #FCD34D', borderRadius: '12px', padding: '16px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', borderBottom: '1px dashed #FDE68A', paddingBottom: '8px' }}>
+          <div style={{ backgroundColor: '#FFFBEB', border: '1px solid #FCD34D', borderRadius: '12px', padding: '14px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px', borderBottom: '1px dashed #FDE68A', paddingBottom: '6px' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                <span style={{ fontSize: '16px' }}>📢</span>
-                <h3 style={{ margin: 0, fontSize: '15px', color: '#92400E', fontWeight: '800' }}>주요 공지사항</h3>
+                <span style={{ fontSize: '15px' }}>📢</span>
+                <h3 style={{ margin: 0, fontSize: '14px', color: '#92400E', fontWeight: '800' }}>주요 공지사항</h3>
               </div>
               <button 
                 onClick={() => {
@@ -327,20 +328,20 @@ export default function EngineerCalendar({ user }) {
               </button>
             </div>
             <div style={{ fontSize: '11px', color: '#B45309', marginBottom: '8px', fontWeight: '600' }}>
-              📌 택배 마감시간, 미지급/선입금 업체 정보
+              📌 택배 마감, 미지급/선입금 업체 고지
             </div>
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '260px', overflowY: 'auto' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '180px', overflowY: 'auto' }}>
               {notices.length === 0 ? (
-                <div style={{ fontSize: '12px', color: '#D97706', textAlign: 'center', padding: '16px 0' }}>등록된 공지사항이 없습니다.</div>
+                <div style={{ fontSize: '12px', color: '#D97706', textAlign: 'center', padding: '10px 0' }}>등록된 공지가 없습니다.</div>
               ) : (
                 notices.map(item => (
-                  <div key={item.id} style={{ backgroundColor: '#FFFFFF', border: '1px solid #FDE68A', borderRadius: '8px', padding: '10px', fontSize: '12px', position: 'relative' }}>
+                  <div key={item.id} style={{ backgroundColor: '#FFFFFF', border: '1px solid #FDE68A', borderRadius: '6px', padding: '8px', fontSize: '12px' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
                       <span style={{ fontWeight: '800', color: '#B45309', fontSize: '11px' }}>[{item.author}]</span>
                       <button onClick={() => handleDeleteBoardItem(item.id)} style={{ border: 'none', background: 'none', color: '#9CA3AF', cursor: 'pointer', fontSize: '10px' }}>✕</button>
                     </div>
-                    <div style={{ color: '#1F2937', whiteSpace: 'pre-wrap', lineHeight: '1.4', wordBreak: 'break-all' }}>{item.content}</div>
+                    <div style={{ color: '#1F2937', whiteSpace: 'pre-wrap', lineHeight: '1.3', wordBreak: 'break-all' }}>{item.content}</div>
                   </div>
                 ))
               )}
@@ -348,11 +349,11 @@ export default function EngineerCalendar({ user }) {
           </div>
 
           {/* 2. 영업부 전달사항 Box (서주섭 작성) */}
-          <div style={{ backgroundColor: '#EFF6FF', border: '1px solid #93C5FD', borderRadius: '12px', padding: '16px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', borderBottom: '1px dashed #BFDBFE', paddingBottom: '8px' }}>
+          <div style={{ backgroundColor: '#EFF6FF', border: '1px solid #93C5FD', borderRadius: '12px', padding: '14px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px', borderBottom: '1px dashed #BFDBFE', paddingBottom: '6px' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                <span style={{ fontSize: '16px' }}>💼</span>
-                <h3 style={{ margin: 0, fontSize: '15px', color: '#1E40AF', fontWeight: '800' }}>영업부 전달사항</h3>
+                <span style={{ fontSize: '15px' }}>💼</span>
+                <h3 style={{ margin: 0, fontSize: '14px', color: '#1E40AF', fontWeight: '800' }}>영업부 전달사항</h3>
               </div>
               <button 
                 onClick={() => {
@@ -366,20 +367,60 @@ export default function EngineerCalendar({ user }) {
               </button>
             </div>
             <div style={{ fontSize: '11px', color: '#1D4ED8', marginBottom: '8px', fontWeight: '600' }}>
-              🔍 업체 소통 일정 & 장비 S/N 지정 안내
+              🔍 업체 소통 일정 & 장비 S/N 지정
             </div>
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '260px', overflowY: 'auto' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '180px', overflowY: 'auto' }}>
               {salesNotes.length === 0 ? (
-                <div style={{ fontSize: '12px', color: '#3B82F6', textAlign: 'center', padding: '16px 0' }}>등록된 전달사항이 없습니다.</div>
+                <div style={{ fontSize: '12px', color: '#3B82F6', textAlign: 'center', padding: '10px 0' }}>등록된 전달사항이 없습니다.</div>
               ) : (
                 salesNotes.map(item => (
-                  <div key={item.id} style={{ backgroundColor: '#FFFFFF', border: '1px solid #BFDBFE', borderRadius: '8px', padding: '10px', fontSize: '12px' }}>
+                  <div key={item.id} style={{ backgroundColor: '#FFFFFF', border: '1px solid #BFDBFE', borderRadius: '6px', padding: '8px', fontSize: '12px' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
                       <span style={{ fontWeight: '800', color: '#1D4ED8', fontSize: '11px' }}>[{item.author}]</span>
                       <button onClick={() => handleDeleteBoardItem(item.id)} style={{ border: 'none', background: 'none', color: '#9CA3AF', cursor: 'pointer', fontSize: '10px' }}>✕</button>
                     </div>
-                    <div style={{ color: '#1F2937', whiteSpace: 'pre-wrap', lineHeight: '1.4', wordBreak: 'break-all' }}>{item.content}</div>
+                    <div style={{ color: '#1F2937', whiteSpace: 'pre-wrap', lineHeight: '1.3', wordBreak: 'break-all' }}>{item.content}</div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+
+          {/* 💡 3. 기술부 공지사항 Box (배진철, 진희찬, 국민석 작성) */}
+          <div style={{ backgroundColor: '#F0FDF4', border: '1px solid #86EFAC', borderRadius: '12px', padding: '14px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px', borderBottom: '1px dashed #BBF7D0', paddingBottom: '6px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <span style={{ fontSize: '15px' }}>🔧</span>
+                <h3 style={{ margin: 0, fontSize: '14px', color: '#166534', fontWeight: '800' }}>기술부 공지사항</h3>
+              </div>
+              <button 
+                onClick={() => {
+                  setBoardCategory('TECH')
+                  const myName = user?.full_name || user?.username || '배진철'
+                  setBoardForm({ author: engineerList.includes(myName) ? myName : '배진철', content: '' })
+                  setShowBoardModal(true)
+                }}
+                style={{ background: '#16A34A', color: '#fff', border: 'none', padding: '3px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: '700', cursor: 'pointer' }}
+              >
+                + 등록
+              </button>
+            </div>
+            <div style={{ fontSize: '11px', color: '#15803D', marginBottom: '8px', fontWeight: '600' }}>
+              🛠️ 부품/장비 수리, 작업 관련 기술 공지
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '180px', overflowY: 'auto' }}>
+              {techNotes.length === 0 ? (
+                <div style={{ fontSize: '12px', color: '#22C55E', textAlign: 'center', padding: '10px 0' }}>등록된 기술 공지가 없습니다.</div>
+              ) : (
+                techNotes.map(item => (
+                  <div key={item.id} style={{ backgroundColor: '#FFFFFF', border: '1px solid #BBF7D0', borderRadius: '6px', padding: '8px', fontSize: '12px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
+                      <span style={{ fontWeight: '800', color: '#15803D', fontSize: '11px' }}>[{item.author}]</span>
+                      <button onClick={() => handleDeleteBoardItem(item.id)} style={{ border: 'none', background: 'none', color: '#9CA3AF', cursor: 'pointer', fontSize: '10px' }}>✕</button>
+                    </div>
+                    <div style={{ color: '#1F2937', whiteSpace: 'pre-wrap', lineHeight: '1.3', wordBreak: 'break-all' }}>{item.content}</div>
                   </div>
                 ))
               )}
@@ -485,13 +526,13 @@ export default function EngineerCalendar({ user }) {
         </div>
       </div>
 
-      {/* 💡 공지사항 / 영업부 전달사항 등록 모달 */}
+      {/* 💡 공지사항 / 영업부 / 기술부 통합 등록 모달 */}
       {showBoardModal && (
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }}>
           <div style={{ backgroundColor: '#ffffff', borderRadius: '12px', padding: '24px', width: '420px', boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1)', boxSizing: 'border-box' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
               <h3 style={{ margin: 0, fontSize: '16px', color: '#0F172A', fontWeight: '800' }}>
-                {boardCategory === 'NOTICE' ? '📢 공지사항 등록' : '💼 영업부 전달사항 등록'}
+                {boardCategory === 'NOTICE' ? '📢 주요 공지사항 등록' : boardCategory === 'SALES' ? '💼 영업부 전달사항 등록' : '🔧 기술부 공지사항 등록'}
               </h3>
               <button onClick={() => setShowBoardModal(false)} style={{ border: 'none', background: 'none', fontSize: '16px', color: '#64748B', cursor: 'pointer' }}>✕</button>
             </div>
@@ -504,15 +545,24 @@ export default function EngineerCalendar({ user }) {
                   onChange={(e) => setBoardForm({ ...boardForm, author: e.target.value })}
                   style={inputStyle}
                 >
-                  {boardCategory === 'NOTICE' ? (
+                  {boardCategory === 'NOTICE' && (
                     <>
                       <option value="이현희">이현희</option>
                       <option value="김우연">김우연</option>
                     </>
-                  ) : (
+                  )}
+                  {boardCategory === 'SALES' && (
                     <>
                       <option value="서주섭">서주섭 (영업부)</option>
                       <option value="영업부">영업부 전체</option>
+                    </>
+                  )}
+                  {boardCategory === 'TECH' && (
+                    <>
+                      <option value="배진철">배진철</option>
+                      <option value="진희찬">진희찬</option>
+                      <option value="국민석">국민석</option>
+                      <option value="기술부">기술부 전체</option>
                     </>
                   )}
                 </select>
@@ -522,7 +572,11 @@ export default function EngineerCalendar({ user }) {
                 <label style={labelStyle}>내용*</label>
                 <textarea 
                   rows="4" 
-                  placeholder={boardCategory === 'NOTICE' ? '예: 오늘 16시 택배 마감입니다. (A업체 미지급 선입금 처리)' : '예: 한국몰렉스 수리장비 S/N: LJ-392171 지정건'}
+                  placeholder={
+                    boardCategory === 'NOTICE' ? '예: 오늘 16시 택배 마감입니다.' : 
+                    boardCategory === 'SALES' ? '예: 한국몰렉스 수리장비 S/N: LJ-392171 지정건' :
+                    '예: 잉크 펌프 테스트용 장비 출고 전 세팅 확인 필요'
+                  }
                   value={boardForm.content} 
                   onChange={(e) => setBoardForm({ ...boardForm, content: e.target.value })} 
                   style={inputStyle} 
@@ -532,7 +586,16 @@ export default function EngineerCalendar({ user }) {
 
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '8px' }}>
                 <button type="button" onClick={() => setShowBoardModal(false)} style={{ padding: '8px 14px', background: '#F1F5F9', color: '#64748B', border: '1px solid #CBD5E1', borderRadius: '6px', fontWeight: '600', cursor: 'pointer' }}>취소</button>
-                <button type="submit" style={{ padding: '8px 16px', background: boardCategory === 'NOTICE' ? '#F59E0B' : '#2563EB', color: '#fff', border: 'none', borderRadius: '6px', fontWeight: '700', cursor: 'pointer' }}>등록하기</button>
+                <button 
+                  type="submit" 
+                  style={{ 
+                    padding: '8px 16px', 
+                    background: boardCategory === 'NOTICE' ? '#F59E0B' : boardCategory === 'SALES' ? '#2563EB' : '#16A34A', 
+                    color: '#fff', border: 'none', borderRadius: '6px', fontWeight: '700', cursor: 'pointer' 
+                  }}
+                >
+                  등록하기
+                </button>
               </div>
             </form>
           </div>
@@ -620,7 +683,7 @@ export default function EngineerCalendar({ user }) {
                 <input 
                   type="text" 
                   name="title"
-                  placeholder="작업내용을 기입하세요" 
+                  placeholder="예: 잉크 공급 장치 점검 및 노즐 교체" 
                   value={form.title} 
                   onChange={handleFormChange} 
                   style={inputStyle} 
