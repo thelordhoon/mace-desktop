@@ -303,13 +303,13 @@ export default function EngineerCalendar({ user }) {
         </div>
       </div>
 
-      {/* 메인 2단 레이아웃 (좌측: 공지/영업/기술 패널, 우측: 달력) */}
+      {/* 메인 2단 레이아웃 */}
       <div style={{ display: 'grid', gridTemplateColumns: '320px 1fr', gap: '20px', alignItems: 'start' }}>
         
-        {/* 👈 좌측 패널 (공지사항 & 영업부 전달사항 & 기술부 공지사항) */}
+        {/* 👈 좌측 패널 */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
           
-          {/* 1. 중요 공지사항 Box (이현희, 김우연 작성) */}
+          {/* 1. 중요 공지사항 Box */}
           <div style={{ backgroundColor: '#FFFBEB', border: '1px solid #FCD34D', borderRadius: '12px', padding: '14px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px', borderBottom: '1px dashed #FDE68A', paddingBottom: '6px' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
@@ -348,7 +348,7 @@ export default function EngineerCalendar({ user }) {
             </div>
           </div>
 
-          {/* 2. 영업부 전달사항 Box (서주섭 작성) */}
+          {/* 2. 영업부 전달사항 Box */}
           <div style={{ backgroundColor: '#EFF6FF', border: '1px solid #93C5FD', borderRadius: '12px', padding: '14px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px', borderBottom: '1px dashed #BFDBFE', paddingBottom: '6px' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
@@ -387,7 +387,7 @@ export default function EngineerCalendar({ user }) {
             </div>
           </div>
 
-          {/* 💡 3. 기술부 공지사항 Box (배진철, 진희찬, 국민석 작성) */}
+          {/* 3. 기술부 공지사항 Box */}
           <div style={{ backgroundColor: '#F0FDF4', border: '1px solid #86EFAC', borderRadius: '12px', padding: '14px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px', borderBottom: '1px dashed #BBF7D0', paddingBottom: '6px' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
@@ -429,7 +429,7 @@ export default function EngineerCalendar({ user }) {
 
         </div>
 
-        {/* 👉 우측 메인 달력 그리드 */}
+        {/* 👉 우측 메인 달력 그리드 (높이 200px 확대) */}
         <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #E2E8F0', overflow: 'hidden', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', backgroundColor: '#F8FAFC', borderBottom: '1px solid #E2E8F0', textAlign: 'center', fontWeight: '700', fontSize: '13px', color: '#64748B' }}>
             {['일', '월', '화', '수', '목', '금', '토'].map((day, idx) => (
@@ -439,7 +439,7 @@ export default function EngineerCalendar({ user }) {
             ))}
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', autoRows: 'minmax(130px, auto)' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', autoRows: 'minmax(200px, auto)' }}>
             {calendarCells.map((dateStr, index) => {
               if (!dateStr) {
                 return <div key={`empty-${index}`} style={{ backgroundColor: '#F8FAFC', borderBottom: '1px solid #F1F5F9', borderRight: '1px solid #F1F5F9' }} />
@@ -459,7 +459,7 @@ export default function EngineerCalendar({ user }) {
                     padding: '8px', 
                     backgroundColor: isToday ? '#EFF6FF' : '#FFFFFF',
                     cursor: 'pointer',
-                    minHeight: '130px',
+                    minHeight: '200px',
                     boxSizing: 'border-box',
                     display: 'flex',
                     flexDirection: 'column',
@@ -482,9 +482,15 @@ export default function EngineerCalendar({ user }) {
                     }}>
                       {Number(dayNum)}
                     </span>
+                    {daySchedules.length > 0 && (
+                      <span style={{ fontSize: '10px', backgroundColor: '#E2E8F0', color: '#475569', padding: '1px 5px', borderRadius: '10px', fontWeight: '700' }}>
+                        {daySchedules.length}건
+                      </span>
+                    )}
                   </div>
 
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', overflowY: 'auto', maxHeight: '100px' }}>
+                  {/* 💡 일정 3개 이상 넉넉히 들어가도록 maxHeight를 165px로 확대 */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', overflowY: 'auto', maxHeight: '165px', paddingRight: '2px' }}>
                     {daySchedules.map((sch) => {
                       const badge = getBadgeStyle(sch.work_type)
                       return (
@@ -505,12 +511,13 @@ export default function EngineerCalendar({ user }) {
                             display: 'flex',
                             flexDirection: 'column',
                             gap: '2px',
-                            cursor: 'pointer'
+                            cursor: 'pointer',
+                            boxShadow: '0 1px 2px rgba(0,0,0,0.02)'
                           }}
                         >
                           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                             <span style={{ fontWeight: '800' }}>[{sch.engineer_name}]</span>
-                            <span style={{ fontSize: '10px', opacity: 0.8 }}>{sch.work_type}</span>
+                            <span style={{ fontSize: '10px', opacity: 0.85 }}>{sch.work_type}</span>
                           </div>
                           <div style={{ wordBreak: 'break-all', lineHeight: '1.2' }}>
                             {sch.company_name ? `${sch.company_name} - ` : ''}{sch.title}
@@ -526,7 +533,7 @@ export default function EngineerCalendar({ user }) {
         </div>
       </div>
 
-      {/* 💡 공지사항 / 영업부 / 기술부 통합 등록 모달 */}
+      {/* 공지사항 / 영업부 / 기술부 통합 등록 모달 */}
       {showBoardModal && (
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }}>
           <div style={{ backgroundColor: '#ffffff', borderRadius: '12px', padding: '24px', width: '420px', boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1)', boxSizing: 'border-box' }}>
@@ -602,7 +609,7 @@ export default function EngineerCalendar({ user }) {
         </div>
       )}
 
-      {/* 일정 등록 / 수정 모달 (기존) */}
+      {/* 일정 등록 / 수정 모달 */}
       {showModal && (
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }}>
           <div style={{ backgroundColor: '#ffffff', borderRadius: '12px', padding: '24px', width: '500px', boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1)', boxSizing: 'border-box' }}>
