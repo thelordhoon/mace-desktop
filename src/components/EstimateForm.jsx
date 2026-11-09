@@ -15,7 +15,7 @@ export default function EstimateForm({ user }) {
   const [selectedManager, setSelectedManager] = useState(null)
 
   const [partsList, setPartsList] = useState([])
-  const [frequentParts, setFrequentParts] = useState([]) // 💡 즐겨찾기(TOP) 부품 상태 추가
+  const [frequentParts, setFrequentParts] = useState([])
   
   const [estimateDate, setEstimateDate] = useState(() => new Date().toISOString().substring(0, 10))
   const [writer, setWriter] = useState('')
@@ -39,7 +39,6 @@ export default function EstimateForm({ user }) {
     if (cData) setCompanies(cData)
     if (pData) {
       setPartsList(pData)
-      // 💡 부품 전체 목록 중 사용자가 '즐겨찾기(is_favorite)' 체크한 품목만 필터링
       const favorites = pData.filter(p => p.is_favorite === true)
       .sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ko-KR'))
       setFrequentParts(favorites)
@@ -105,22 +104,37 @@ export default function EstimateForm({ user }) {
     setItems(newItems)
   }
 
-  const handleSelectPart = (index, part) => {
-    const newItems = [...items]
-    let determinedPrice = Number(part.customer_price || part.dealer_price || 0)
+  // 단가 산출 로직 (1순위: 지정 소모품 특별가, 2순위: 딜러가/소비자가)
+  const getDeterminedPrice = (part) => {
+    if (!part) return 0
 
     if (selectedCompany && part.company_prices) {
       try {
-        const compPrices = typeof part.company_prices === 'string' ? JSON.parse(part.company_prices) : part.company_prices
+        const compPrices = typeof part.company_prices === 'string' 
+          ? JSON.parse(part.company_prices) 
+          : part.company_prices
+          
         if (Array.isArray(compPrices)) {
           const matched = compPrices.find(cp => cp.company_name === selectedCompany.name)
-          if (matched && matched.price) {
-            determinedPrice = Number(matched.price)
+          if (matched && matched.price !== undefined && matched.price !== null && matched.price !== '') {
+            return Number(matched.price)
           }
         }
-      } catch (e) {}
+      } catch (e) {
+        console.error('company_prices 파싱 오류:', e)
+      }
     }
 
+    if (selectedCompany && selectedCompany.is_dealer === true) {
+      return Number(part.dealer_price || part.customer_price || 0)
+    }
+
+    return Number(part.customer_price || part.dealer_price || 0)
+  }
+
+  const handleSelectPart = (index, part) => {
+    const newItems = [...items]
+    const determinedPrice = getDeterminedPrice(part)
     const qty = newItems[index].qty || 1
 
     newItems[index] = {
@@ -138,17 +152,7 @@ export default function EstimateForm({ user }) {
 
   const handleAddQuickPart = (part) => {
     const emptyIndex = items.findIndex(item => !item.name && !item.code)
-    
-    let determinedPrice = Number(part.customer_price || part.dealer_price || 0)
-    if (selectedCompany && part.company_prices) {
-      try {
-        const compPrices = typeof part.company_prices === 'string' ? JSON.parse(part.company_prices) : part.company_prices
-        if (Array.isArray(compPrices)) {
-          const matched = compPrices.find(cp => cp.company_name === selectedCompany.name)
-          if (matched && matched.price) determinedPrice = Number(matched.price)
-        }
-      } catch (e) {}
-    }
+    const determinedPrice = getDeterminedPrice(part)
 
     if (emptyIndex !== -1) {
       const newItems = [...items]
@@ -323,10 +327,18 @@ export default function EstimateForm({ user }) {
       {/* 좌측 패널 */}
       <div className="no-print" style={{ width: '280px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
         
+        {/* 🏷️ 지정 소모품 정보 (가격 표시 추가) */}
         <div style={{ backgroundColor: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '8px', padding: '16px', boxSizing: 'border-box' }}>
-          <h4 style={{ margin: '0 0 12px 0', color: '#1e40af', fontSize: '15px', borderBottom: '1px solid #93c5fd', paddingBottom: '6px' }}>
-            🏷️ 지정 소모품 정보
-          </h4>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', borderBottom: '1px solid #93c5fd', paddingBottom: '6px' }}>
+            <h4 style={{ margin: 0, color: '#1e40af', fontSize: '15px' }}>
+              🏷️ 지정 소모품 정보
+            </h4>
+            {selectedCompany?.is_dealer && (
+              <span style={{ backgroundColor: '#DBEAFE', color: '#1E40AF', padding: '2px 6px', borderRadius: '4px', fontSize: '10px', fontWeight: '800' }}>
+                딜러 적용중
+              </span>
+            )}
+          </div>
 
           {!selectedCompany ? (
             <div style={{ fontSize: '12px', color: '#64748b', textAlign: 'center', padding: '16px 0' }}>
@@ -337,8 +349,9 @@ export default function EstimateForm({ user }) {
               등록된 지정 소모품이 없습니다.
             </div>
           ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '200px', overflowY: 'auto' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '220px', overflowY: 'auto' }}>
               {assignedParts.map((part) => {
+                const partPrice = getDeterminedPrice(part)
                 return (
                   <div 
                     key={part.id}
@@ -351,8 +364,11 @@ export default function EstimateForm({ user }) {
                     onMouseEnter={(e) => e.currentTarget.style.borderColor = '#2563eb'}
                     onMouseLeave={(e) => e.currentTarget.style.borderColor = '#dbeafe'}
                   >
-                    <div style={{ fontWeight: 'bold', fontSize: '12px', color: '#1e293b' }}>{part.code}</div>
-                    <div style={{ fontSize: '11px', color: '#475569' }}>{part.name}</div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2px' }}>
+                      <span style={{ fontWeight: 'bold', fontSize: '12px', color: '#1e293b' }}>{part.code}</span>
+                      <span style={{ fontSize: '12px', fontWeight: '800', color: '#2563eb' }}>{Number(partPrice).toLocaleString()} 원</span>
+                    </div>
+                    <div style={{ fontSize: '11px', color: '#475569', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{part.name}</div>
                   </div>
                 )
               })}
@@ -360,6 +376,7 @@ export default function EstimateForm({ user }) {
           )}
         </div>
 
+        {/* ⚡ 자주 사용하는 품목 (TOP) */}
         <div style={{ backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '16px', boxSizing: 'border-box' }}>
           <h4 style={{ margin: '0 0 12px 0', color: '#334155', fontSize: '15px', borderBottom: '1px solid #cbd5e1', paddingBottom: '6px' }}>
             ⚡ 자주 사용하는 품목 (TOP)
@@ -392,7 +409,6 @@ export default function EstimateForm({ user }) {
               <span style={{ width: '100%' }}>출장비</span>
             </button>
 
-            {/* 💡 사용자가 직접 즐겨찾기(is_favorite) 체크한 품목들만 순서대로 표시 */}
             {frequentParts.map((part) => {
               return (
                 <button
@@ -429,7 +445,14 @@ export default function EstimateForm({ user }) {
           <div style={{ display: 'flex', justifyContent: 'space-between', gap: '20px', marginBottom: '20px' }}>
             
             <div style={{ flex: 1, border: '1px solid #333', padding: '12px', borderRadius: '4px' }}>
-              <h3 style={{ margin: '0 0 10px 0', borderBottom: '1px solid #ccc', paddingBottom: '4px' }}>공급받는 자</h3>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #ccc', paddingBottom: '4px', marginBottom: '10px' }}>
+                <h3 style={{ margin: 0 }}>공급받는 자</h3>
+                {selectedCompany?.is_dealer && (
+                  <span style={{ backgroundColor: '#DBEAFE', color: '#1E40AF', padding: '2px 6px', borderRadius: '4px', fontSize: '11px', fontWeight: '800' }}>
+                    [딜러 적용]
+                  </span>
+                )}
+              </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '13px' }}>
                 
                 <div style={{ position: 'relative' }}>
@@ -456,11 +479,12 @@ export default function EstimateForm({ user }) {
                         <li 
                           key={c.id}
                           onClick={() => handleSelectCompany(c)}
-                          style={{ padding: '6px 10px', cursor: 'pointer', borderBottom: '1px solid #eee', fontSize: '13px' }}
-                          onMouseEnter={(e) => e.target.style.backgroundColor = '#f1f5f9'}
-                          onMouseLeave={(e) => e.target.style.backgroundColor = '#fff'}
+                          style={{ padding: '6px 10px', cursor: 'pointer', borderBottom: '1px solid #eee', fontSize: '13px', display: 'flex', justifyContent: 'space-between' }}
+                          onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#f1f5f9'}
+                          onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#fff'}
                         >
-                          {c.name}
+                          <span>{c.name}</span>
+                          {c.is_dealer && <span style={{ color: '#2563EB', fontSize: '11px', fontWeight: 'bold' }}>(딜러)</span>}
                         </li>
                       ))}
                     </ul>
@@ -570,14 +594,7 @@ export default function EstimateForm({ user }) {
                           boxShadow: '0 4px 6px rgba(0,0,0,0.1)'
                         }}>
                           {filteredParts.map((p) => {
-                            let displayPrice = p.customer_price || p.dealer_price || 0
-                            if (selectedCompany && p.company_prices) {
-                              try {
-                                const cpList = typeof p.company_prices === 'string' ? JSON.parse(p.company_prices) : p.company_prices
-                                const found = Array.isArray(cpList) && cpList.find(cp => cp.company_name === selectedCompany.name)
-                                if (found && found.price) displayPrice = found.price
-                              } catch (e) {}
-                            }
+                            const displayPrice = getDeterminedPrice(p)
 
                             return (
                               <li 
