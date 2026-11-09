@@ -15,12 +15,13 @@ export default function EstimateForm({ user }) {
   const [selectedManager, setSelectedManager] = useState(null)
 
   const [partsList, setPartsList] = useState([])
+  const [frequentParts, setFrequentParts] = useState([]) // 💡 즐겨찾기(TOP) 부품 상태 추가
   
   const [estimateDate, setEstimateDate] = useState(() => new Date().toISOString().substring(0, 10))
   const [writer, setWriter] = useState('')
   const [note, setNote] = useState('')
   
-  const [isSubmitting, setIsSubmitting] = useState(false) // 💡 중복 클릭 방지 상태 추가
+  const [isSubmitting, setIsSubmitting] = useState(false)
 
   const [items, setItems] = useState([
     { part_id: '', category: '', code: '', name: '', price: 0, qty: 1, amount: 0, showDropdown: false }
@@ -34,8 +35,15 @@ export default function EstimateForm({ user }) {
   const fetchInitialData = async () => {
     const { data: cData } = await supabase.from('companies').select('*')
     const { data: pData } = await supabase.from('parts').select('*')
+    
     if (cData) setCompanies(cData)
-    if (pData) setPartsList(pData)
+    if (pData) {
+      setPartsList(pData)
+      // 💡 부품 전체 목록 중 사용자가 '즐겨찾기(is_favorite)' 체크한 품목만 필터링
+      const favorites = pData.filter(p => p.is_favorite === true)
+      .sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ko-KR'))
+      setFrequentParts(favorites)
+    }
   }
 
   const fetchUserProfile = async () => {
@@ -130,20 +138,33 @@ export default function EstimateForm({ user }) {
 
   const handleAddQuickPart = (part) => {
     const emptyIndex = items.findIndex(item => !item.name && !item.code)
+    
+    let determinedPrice = Number(part.customer_price || part.dealer_price || 0)
+    if (selectedCompany && part.company_prices) {
+      try {
+        const compPrices = typeof part.company_prices === 'string' ? JSON.parse(part.company_prices) : part.company_prices
+        if (Array.isArray(compPrices)) {
+          const matched = compPrices.find(cp => cp.company_name === selectedCompany.name)
+          if (matched && matched.price) determinedPrice = Number(matched.price)
+        }
+      } catch (e) {}
+    }
+
     if (emptyIndex !== -1) {
-      handleSelectPart(emptyIndex, part)
+      const newItems = [...items]
+      newItems[emptyIndex] = {
+        part_id: part.id,
+        category: part.category || '부품',
+        code: part.code || '',
+        name: part.name || '',
+        price: determinedPrice,
+        qty: 1,
+        amount: determinedPrice,
+        showDropdown: false
+      }
+      setItems(newItems)
     } else {
       const newItems = [...items]
-      let determinedPrice = Number(part.customer_price || part.dealer_price || 0)
-      if (selectedCompany && part.company_prices) {
-        try {
-          const compPrices = typeof part.company_prices === 'string' ? JSON.parse(part.company_prices) : part.company_prices
-          if (Array.isArray(compPrices)) {
-            const matched = compPrices.find(cp => cp.company_name === selectedCompany.name)
-            if (matched && matched.price) determinedPrice = Number(matched.price)
-          }
-        } catch (e) {}
-      }
       newItems.push({
         part_id: part.id,
         category: part.category || '부품',
@@ -218,14 +239,8 @@ export default function EstimateForm({ user }) {
     }
   }) : []
 
-  const frequentParts = partsList.filter(p => {
-    const n = (p.name || '').toLowerCase()
-    return n.includes('overhaul') || n.includes('kit') || n.includes('filter')
-  }).slice(0, 5)
-
-  // 💡 중복 클릭 방지가 적용된 저장 및 인쇄 함수
   const handlePrintWithAutoSave = async () => {
-    if (isSubmitting) return // 이미 처리 중이면 중복 실행 차단
+    if (isSubmitting) return
 
     if (!selectedCompany) {
       alert('거래처가 선택되지 않았습니다. 인쇄를 진행합니다.')
@@ -233,7 +248,7 @@ export default function EstimateForm({ user }) {
       return
     }
 
-    setIsSubmitting(true) // 처리 시작 (버튼 비활성화)
+    setIsSubmitting(true)
 
     try {
       const payload = {
@@ -255,7 +270,7 @@ export default function EstimateForm({ user }) {
       const { error } = await supabase.from('service_management').insert([payload])
       
       if (error) {
-        alert('대장 등록 실패: ' + error.message)
+        alert(`대장 등록 실패!\n메시지: ${error.message}\n상세: ${error.details || '없음'}`)
         setIsSubmitting(false)
         return
       }
@@ -263,8 +278,8 @@ export default function EstimateForm({ user }) {
       window.print()
     } catch (err) {
       console.error(err)
+      alert('예외 발생: ' + err.message)
     } finally {
-      // 처리 완료 후 일정 시간 뒤 버튼 활성화 복구
       setTimeout(() => {
         setIsSubmitting(false)
       }, 2000)
@@ -277,19 +292,20 @@ export default function EstimateForm({ user }) {
       <style>{`
         @media print {
           body * {
-            visibility: hidden;
+            visibility: hidden !important;
           }
           #printable-estimate, #printable-estimate * {
-            visibility: visible;
+            visibility: visible !important;
           }
           #printable-estimate {
-            position: absolute;
-            left: 0;
-            top: 0;
-            width: 100%;
-            margin: 0;
-            padding: 10px;
+            position: absolute !important;
+            left: 0 !important;
+            top: 0 !important;
+            width: 100% !important;
+            margin: 0 !important;
+            padding: 10px !important;
             box-shadow: none !important;
+            background: white !important;
           }
           .no-print {
             display: none !important;
@@ -299,6 +315,7 @@ export default function EstimateForm({ user }) {
             background: transparent !important;
             appearance: none;
             resize: none !important;
+            color: #000 !important;
           }
         }
       `}</style>
@@ -322,13 +339,6 @@ export default function EstimateForm({ user }) {
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '200px', overflowY: 'auto' }}>
               {assignedParts.map((part) => {
-                let price = part.customer_price || part.dealer_price || 0
-                try {
-                  const cpList = typeof part.company_prices === 'string' ? JSON.parse(part.company_prices) : part.company_prices
-                  const matched = Array.isArray(cpList) && cpList.find(cp => cp.company_name === selectedCompany.name)
-                  if (matched && matched.price) price = matched.price
-                } catch (e) {}
-
                 return (
                   <div 
                     key={part.id}
@@ -343,9 +353,6 @@ export default function EstimateForm({ user }) {
                   >
                     <div style={{ fontWeight: 'bold', fontSize: '12px', color: '#1e293b' }}>{part.code}</div>
                     <div style={{ fontSize: '11px', color: '#475569' }}>{part.name}</div>
-                    <div style={{ fontSize: '12px', fontWeight: 'bold', color: '#d97706', textAlign: 'right' }}>
-                      {Number(price).toLocaleString()} 원
-                    </div>
                   </div>
                 )
               })}
@@ -364,13 +371,12 @@ export default function EstimateForm({ user }) {
               style={{
                 backgroundColor: '#ffffff', border: '1px solid #cbd5e1', borderRadius: '6px', padding: '8px 10px',
                 textAlign: 'left', cursor: 'pointer', fontSize: '12px', color: '#0f172a', fontWeight: '600',
-                display: 'flex', justifyContent: 'space-between', alignItems: 'center'
+                display: 'flex', justifyContent: 'flex-start', alignItems: 'center'
               }}
               onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#f1f5f9'}
               onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#ffffff'}
             >
-              <span>공임비</span>
-              <span style={{ color: '#d97706', fontWeight: '700' }}>150,000원</span>
+              <span style={{ width: '100%' }}>공임비</span>
             </button>
 
             <button
@@ -378,31 +384,35 @@ export default function EstimateForm({ user }) {
               style={{
                 backgroundColor: '#ffffff', border: '1px solid #cbd5e1', borderRadius: '6px', padding: '8px 10px',
                 textAlign: 'left', cursor: 'pointer', fontSize: '12px', color: '#0f172a', fontWeight: '600',
-                display: 'flex', justifyContent: 'space-between', alignItems: 'center'
+                display: 'flex', justifyContent: 'flex-start', alignItems: 'center'
               }}
               onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#f1f5f9'}
               onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#ffffff'}
             >
-              <span>출장비</span>
-              <span style={{ color: '#d97706', fontWeight: '700' }}>100,000원</span>
+              <span style={{ width: '100%' }}>출장비</span>
             </button>
 
-            {frequentParts.map((part) => (
-              <button
-                key={part.id}
-                onClick={() => handleAddQuickPart(part)}
-                style={{
-                  backgroundColor: '#ffffff', border: '1px solid #cbd5e1', borderRadius: '6px', padding: '8px 10px',
-                  textAlign: 'left', cursor: 'pointer', fontSize: '12px', color: '#0f172a', fontWeight: '600',
-                  display: 'flex', justifyContent: 'space-between', alignItems: 'center'
-                }}
-                onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#f1f5f9'}
-                onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#ffffff'}
-              >
-                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '170px' }}>{part.name}</span>
-                <span style={{ color: '#2563eb', fontWeight: '700' }}>선택</span>
-              </button>
-            ))}
+            {/* 💡 사용자가 직접 즐겨찾기(is_favorite) 체크한 품목들만 순서대로 표시 */}
+            {frequentParts.map((part) => {
+              return (
+                <button
+                  key={part.id}
+                  onClick={() => handleAddQuickPart(part)}
+                  title="클릭 시 견적서 항목으로 자동 입력됩니다"
+                  style={{
+                    backgroundColor: '#ffffff', border: '1px solid #cbd5e1', borderRadius: '6px', padding: '8px 10px',
+                    textAlign: 'left', cursor: 'pointer', fontSize: '12px', color: '#0f172a', fontWeight: '600',
+                    display: 'flex', justifyContent: 'flex-start', alignItems: 'center'
+                  }}
+                  onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#f1f5f9'}
+                  onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#ffffff'}
+                >
+                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', width: '100%' }}>
+                    {part.name}
+                  </span>
+                </button>
+              )
+            })}
           </div>
         </div>
 
@@ -471,7 +481,7 @@ export default function EstimateForm({ user }) {
               </div>
             </div>
 
-            {/* 공급자 정보 (도장 위치 우측 이동) */}
+            {/* 공급자 정보 */}
             <div style={{ flex: 1, border: '1px solid #333', padding: '12px', borderRadius: '4px', backgroundColor: '#fafafa', position: 'relative' }}>
               <h3 style={{ margin: '0 0 10px 0', borderBottom: '1px solid #ccc', paddingBottom: '4px' }}>공급자</h3>
               <div style={{ fontSize: '13px', lineHeight: '1.8' }}>
@@ -654,7 +664,7 @@ export default function EstimateForm({ user }) {
           </div>
         </div>
 
-        {/* 💡 중복 클릭 방지 버튼 적용 */}
+        {/* 저장 및 인쇄 버튼 */}
         <div className="no-print" style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '20px' }}>
           <button 
             onClick={handlePrintWithAutoSave} 

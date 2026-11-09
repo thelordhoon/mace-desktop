@@ -46,7 +46,22 @@ export default function PartManagement() {
     if (data) setCompanies(data)
   }
 
-  // 신규 등록용 업체별 단가 핸들러
+  // 💡 테이블에서 원클릭 즐겨찾기 토글 기능
+  const handleToggleFavorite = async (part) => {
+    const newStatus = !part.is_favorite
+    setPartsList(prev => prev.map(p => p.id === part.id ? { ...p, is_favorite: newStatus } : p))
+
+    const { error } = await supabase
+      .from('parts')
+      .update({ is_favorite: newStatus })
+      .eq('id', part.id)
+
+    if (error) {
+      alert('즐겨찾기 상태 변경 실패: ' + error.message)
+      fetchParts()
+    }
+  }
+
   const handleAddCompanyPriceField = () => {
     setCompanyPrices([...companyPrices, { company_name: '', price: 0 }])
   }
@@ -59,7 +74,6 @@ export default function PartManagement() {
     setCompanyPrices(updated)
   }
 
-  // 수정용 업체별 단가 핸들러
   const handleAddEditCompanyPriceField = () => {
     setEditCompanyPrices([...editCompanyPrices, { company_name: '', price: 0 }])
   }
@@ -86,7 +100,8 @@ export default function PartManagement() {
       customer_price: Number(customerPrice),
       stock: Number(stock),
       company_prices: JSON.stringify(companyPrices),
-      note: partNote
+      note: partNote,
+      is_favorite: false
     }])
     setUploading(false)
 
@@ -100,7 +115,6 @@ export default function PartManagement() {
     }
   }
 
-  // 수정 모드 진입
   const handleStartEditPart = (p) => {
     setEditingPartId(p.id)
     setEditPartForm({
@@ -125,7 +139,6 @@ export default function PartManagement() {
     }
   }
 
-  // 수정 사항 저장
   const handleSavePartEdit = async (partId) => {
     setUploading(true)
     const { error } = await supabase
@@ -159,7 +172,7 @@ export default function PartManagement() {
     if (!error) { alert('부품이 삭제되었습니다.'); fetchParts() }
   }
 
-  // 💡 정렬 로직: 1순위 카테고리('소모품' 우선), 2순위 소모품 내 명칭(잉크/INK -> 희석제 -> 기타)
+  // 💡 기존 정렬 규칙 완벽 복구 (1순위 소모품/잉크/희석제 우선)
   const getPartSortWeight = (item) => {
     const cat = item.category || ''
     const name = (item.name || '').toUpperCase()
@@ -228,7 +241,6 @@ export default function PartManagement() {
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
                 <div>
                   <span style={{ fontSize: '13px', fontWeight: '700', color: '#1E293B' }}>업체별 개별 단가 (선택)</span>
-                  <span style={{ fontSize: '11px', color: '#94A3B8', display: 'block' }}>특정 거래처의 공급가를 지정합니다.</span>
                 </div>
                 <button 
                   type="button" 
@@ -241,9 +253,7 @@ export default function PartManagement() {
 
               {companyPrices.map((cp, idx) => {
                 const searchKeyword = cp.company_name || ''
-                const matchedCompanies = searchKeyword.trim() === '' 
-                  ? companies 
-                  : companies.filter(c => c.name.toLowerCase().includes(searchKeyword.toLowerCase()))
+                const matchedCompanies = searchKeyword.trim() === '' ? companies : companies.filter(c => c.name.toLowerCase().includes(searchKeyword.toLowerCase()))
 
                 return (
                   <div key={idx} style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '8px', backgroundColor: '#F8FAFC', padding: '8px', borderRadius: '8px', border: '1px solid #E2E8F0', position: 'relative' }}>
@@ -255,38 +265,16 @@ export default function PartManagement() {
                         onChange={(e) => handleCompanyPriceChange(idx, 'company_name', e.target.value)}
                         style={{ ...inputStyle, paddingRight: '24px' }}
                       />
-                      {cp.company_name && (
-                        <span onClick={() => handleCompanyPriceChange(idx, 'company_name', '')} style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', cursor: 'pointer', color: '#94A3B8', fontSize: '12px' }}>✕</span>
-                      )}
                       {searchKeyword.trim() !== '' && !companies.some(c => c.name === searchKeyword) && matchedCompanies.length > 0 && (
                         <div style={{ position: 'absolute', left: 0, right: 0, top: '100%', backgroundColor: 'white', border: '1px solid #CBD5E1', borderRadius: '8px', maxHeight: '150px', overflowY: 'auto', zIndex: 50, boxShadow: '0 4px 12px rgba(0,0,0,0.1)', marginTop: '2px' }}>
                           {matchedCompanies.map(c => (
-                            <div 
-                              key={c.id} 
-                              onClick={() => handleCompanyPriceChange(idx, 'company_name', c.name)}
-                              style={{ padding: '8px 12px', fontSize: '13px', cursor: 'pointer', borderBottom: '1px solid #F1F5F9' }}
-                            >
-                              {c.name}
-                            </div>
+                            <div key={c.id} onClick={() => handleCompanyPriceChange(idx, 'company_name', c.name)} style={{ padding: '8px 12px', fontSize: '13px', cursor: 'pointer', borderBottom: '1px solid #F1F5F9' }}>{c.name}</div>
                           ))}
                         </div>
                       )}
                     </div>
-                    
-                    <input 
-                      type="number" 
-                      placeholder="특가 (원)" 
-                      value={cp.price} 
-                      onChange={(e) => handleCompanyPriceChange(idx, 'price', e.target.value)}
-                      style={{ ...inputStyle, flex: 1 }}
-                    />
-                    <button 
-                      type="button" 
-                      onClick={() => handleRemoveCompanyPriceField(idx)} 
-                      style={{ border: 'none', background: 'none', color: '#EF4444', fontSize: '14px', cursor: 'pointer', padding: '4px 8px' }}
-                    >
-                      ✕
-                    </button>
+                    <input type="number" placeholder="특가 (원)" value={cp.price} onChange={(e) => handleCompanyPriceChange(idx, 'price', e.target.value)} style={{ ...inputStyle, flex: 1 }} />
+                    <button type="button" onClick={() => handleRemoveCompanyPriceField(idx)} style={{ border: 'none', background: 'none', color: '#EF4444', fontSize: '14px', cursor: 'pointer', padding: '4px 8px' }}>✕</button>
                   </div>
                 )
               })}
@@ -294,7 +282,7 @@ export default function PartManagement() {
 
             <div>
               <label style={labelStyle}>📌 비고</label>
-              <textarea rows="5" placeholder="메모 및 특이사항 입력" value={partNote} onChange={(e) => setPartNote(e.target.value)} style={inputStyle} />
+              <textarea rows="3" placeholder="메모 및 특이사항 입력" value={partNote} onChange={(e) => setPartNote(e.target.value)} style={inputStyle} />
             </div>
 
             <button type="submit" disabled={uploading} style={{ padding: '12px', background: '#2563EB', color: 'white', border: 'none', borderRadius: '8px', fontWeight: '700', cursor: 'pointer', marginTop: '6px' }}>
@@ -362,7 +350,7 @@ export default function PartManagement() {
               })}
             </div>
 
-            <div><label style={labelStyle}>비고</label><textarea rows="5" value={editPartForm.note} onChange={(e) => setEditPartForm({ ...editPartForm, note: e.target.value })} style={inputStyle} /></div>
+            <div><label style={labelStyle}>비고</label><textarea rows="3" value={editPartForm.note} onChange={(e) => setEditPartForm({ ...editPartForm, note: e.target.value })} style={inputStyle} /></div>
 
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '6px' }}>
               <button type="button" onClick={() => setEditingPartId(null)} style={{ padding: '10px 18px', borderRadius: '8px', border: '1px solid #CBD5E1', background: 'white', color: '#64748B', fontWeight: '600', cursor: 'pointer', fontSize: '14px' }}>취소</button>
@@ -370,7 +358,7 @@ export default function PartManagement() {
             </div>
           </div>
         </div>
-   ) : (
+      ) : (
         <div style={{ backgroundColor: '#ffffff', borderRadius: '12px', border: '1px solid #E2E8F0', overflow: 'hidden' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '14px', tableLayout: 'fixed' }}>
             <thead>
@@ -378,12 +366,11 @@ export default function PartManagement() {
                 <th style={{ padding: '14px 16px', width: '100px' }}>카테고리</th>
                 <th style={{ padding: '14px 16px', width: '160px' }}>품번 / 코드</th>
                 <th style={{ padding: '14px 16px', width: '180px' }}>부품명</th>
-                {/* 💡 독립된 '업체별 특가' 열 부활 및 너비 고정 */}
                 <th style={{ padding: '14px 16px', width: '280px' }}>업체별 특가</th>
                 <th style={{ padding: '14px 16px', width: '90px' }}>재고 수량</th>
                 <th style={{ padding: '14px 16px', width: '110px' }}>소비자 기본가</th>
                 <th style={{ padding: '14px 16px', width: '110px' }}>딜러 기본가</th>
-                <th style={{ padding: '14px 16px', width: '100px', textAlign: 'center' }}>관리</th>
+                <th style={{ padding: '14px 16px', width: '120px', textAlign: 'center' }}>관리</th>
               </tr>
             </thead>
             <tbody>
@@ -414,7 +401,6 @@ export default function PartManagement() {
                       </td>
                       <td style={{ padding: '14px 16px', fontWeight: '600', color: '#475569', wordBreak: 'break-all' }}>{p.code || '-'}</td>
                       
-                      {/* 1) 부품명 밑에는 노란색 뱃지 (N개 등록됨) 표시 */}
                       <td style={{ padding: '14px 16px', fontWeight: '700', color: '#0F172A', wordBreak: 'break-all' }}>
                         {p.name}
                         {specialPriceCount > 0 && (
@@ -426,7 +412,6 @@ export default function PartManagement() {
                         )}
                       </td>
 
-                      {/* 💡 업체명은 왼쪽, 가격은 오른쪽 끝으로 정렬 */}
                       <td style={{ padding: '14px 16px' }}>
                         {parsedCompanyPrices.length > 0 ? (
                           <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
@@ -448,8 +433,25 @@ export default function PartManagement() {
                       <td style={{ padding: '14px 16px', fontWeight: '700', color: '#10B981', whiteSpace: 'nowrap' }}>{p.stock ?? 0} 개</td>
                       <td style={{ padding: '14px 16px', fontWeight: '700', color: '#2563EB', whiteSpace: 'nowrap' }}>{p.customer_price ? Number(p.customer_price).toLocaleString() : 0} 원</td>
                       <td style={{ padding: '14px 16px', fontWeight: '700', color: '#334155', whiteSpace: 'nowrap' }}>{p.dealer_price ? Number(p.dealer_price).toLocaleString() : 0} 원</td>
+                      
+                      {/* 💡 관리 열 내 즐겨찾기 별표(⭐/☆) 버튼 적용 */}
                       <td style={{ padding: '14px 16px', textAlign: 'center', whiteSpace: 'nowrap' }}>
-                        <div style={{ display: 'flex', justifyContent: 'center', gap: '6px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '6px' }}>
+                          <button 
+                            type="button"
+                            onClick={() => handleToggleFavorite(p)}
+                            title={p.is_favorite ? "자주 사용하는 품목(TOP)에서 제거" : "자주 사용하는 품목(TOP)으로 지정"}
+                            style={{ 
+                              border: '1px solid #CBD5E1', 
+                              background: p.is_favorite ? '#FEF3C7' : '#FFFFFF', 
+                              borderRadius: '6px', 
+                              cursor: 'pointer', 
+                              fontSize: '15px',
+                              padding: '4px 8px'
+                            }}
+                          >
+                            {p.is_favorite ? '⭐' : '☆'}
+                          </button>
                           <button onClick={() => handleStartEditPart(p)} style={{ border: 'none', background: '#EFF6FF', color: '#2563EB', padding: '6px 10px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600', fontSize: '12px' }}>수정</button>
                           <button onClick={() => handleDeletePart(p.id)} style={{ border: 'none', background: '#FEE2E2', color: '#EF4444', padding: '6px 10px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600', fontSize: '12px' }}>삭제</button>
                         </div>

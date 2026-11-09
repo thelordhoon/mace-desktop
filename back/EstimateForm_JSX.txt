@@ -20,6 +20,8 @@ export default function EstimateForm({ user }) {
   const [writer, setWriter] = useState('')
   const [note, setNote] = useState('')
   
+  const [isSubmitting, setIsSubmitting] = useState(false) // 💡 중복 클릭 방지 상태 추가
+
   const [items, setItems] = useState([
     { part_id: '', category: '', code: '', name: '', price: 0, qty: 1, amount: 0, showDropdown: false }
   ])
@@ -221,31 +223,52 @@ export default function EstimateForm({ user }) {
     return n.includes('overhaul') || n.includes('kit') || n.includes('filter')
   }).slice(0, 5)
 
+  // 💡 중복 클릭 방지가 적용된 저장 및 인쇄 함수
   const handlePrintWithAutoSave = async () => {
+    if (isSubmitting) return // 이미 처리 중이면 중복 실행 차단
+
     if (!selectedCompany) {
       alert('거래처가 선택되지 않았습니다. 인쇄를 진행합니다.')
       window.print()
       return
     }
 
-    const payload = {
-      work_date: estimateDate,
-      writer: writer,
-      company_name: selectedCompany.name,
-      company_id: selectedCompany.id,
-      manager_name: selectedManager?.name || '',
-      manager_phone: selectedManager?.phone || selectedCompany?.phone || '',
-      serial_no: null,
-      as_content: '',
-      parts_data: items.filter(i => i.name.trim() !== ''),
-      total_amount: grandTotal,
-      estimate_sent_date: estimateDate,
-      note: note,
-      status: '견적 완료'
-    }
+    setIsSubmitting(true) // 처리 시작 (버튼 비활성화)
 
-    await supabase.from('service_management').insert([payload])
-    window.print()
+    try {
+      const payload = {
+        work_date: estimateDate,
+        writer: writer,
+        company_name: selectedCompany.name,
+        company_id: selectedCompany.id,
+        manager_name: selectedManager?.name || '',
+        manager_phone: selectedManager?.phone || selectedCompany?.phone || '',
+        serial_no: null,
+        as_content: '',
+        parts_data: items.filter(i => i.name.trim() !== ''),
+        total_amount: grandTotal,
+        estimate_sent_date: estimateDate,
+        note: note,
+        status: '견적 완료'
+      }
+
+      const { error } = await supabase.from('service_management').insert([payload])
+      
+      if (error) {
+        alert('대장 등록 실패: ' + error.message)
+        setIsSubmitting(false)
+        return
+      }
+
+      window.print()
+    } catch (err) {
+      console.error(err)
+    } finally {
+      // 처리 완료 후 일정 시간 뒤 버튼 활성화 복구
+      setTimeout(() => {
+        setIsSubmitting(false)
+      }, 2000)
+    }
   }
 
   return (
@@ -599,7 +622,6 @@ export default function EstimateForm({ user }) {
             + 품목 행 추가
           </button>
 
-          {/* 💡 부가세 금액 텍스트 색상 검정색(#0f172a) 변경 */}
           <div style={{ backgroundColor: '#f8fafc', border: '1px solid #cbd5e1', borderRadius: '6px', padding: '12px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px', fontWeight: 'bold', fontSize: '14px' }}>
             <div>공급가액: <span style={{ color: '#0f172a', fontWeight: '800' }}>₩ {supplyAmount.toLocaleString()} 원</span></div>
             <div>+ 부가세(VAT): <span style={{ color: '#0f172a', fontWeight: '800' }}>₩ {vatAmount.toLocaleString()} 원</span></div>
@@ -632,12 +654,22 @@ export default function EstimateForm({ user }) {
           </div>
         </div>
 
+        {/* 💡 중복 클릭 방지 버튼 적용 */}
         <div className="no-print" style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '20px' }}>
           <button 
             onClick={handlePrintWithAutoSave} 
-            style={{ padding: '10px 20px', backgroundColor: '#2563eb', color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}
+            disabled={isSubmitting}
+            style={{ 
+              padding: '10px 20px', 
+              backgroundColor: isSubmitting ? '#94a3b8' : '#2563eb', 
+              color: '#fff', 
+              border: 'none', 
+              borderRadius: '6px', 
+              cursor: isSubmitting ? 'not-allowed' : 'pointer', 
+              fontWeight: 'bold' 
+            }}
           >
-            🖨️ 인쇄 / PDF 저장 (대장 자동 등록)
+            {isSubmitting ? '저장 및 인쇄 중...' : '🖨️ 인쇄 / PDF 저장 (대장 자동 등록)'}
           </button>
         </div>
       </div>
