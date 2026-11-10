@@ -7,8 +7,8 @@ export default function EngineerCalendar({ user }) {
   const [currentDate, setCurrentDate] = useState(new Date())
   const [selectedEngineerFilter, setSelectedEngineerFilter] = useState('ALL')
   
-  // 엔지니어 3명 고정
-  const engineerList = ['배진철', '진희찬', '국민석']
+  // 💡 엔지니어 3명 + 관리부 추가
+  const engineerList = ['배진철', '진희찬', '국민석', '관리부']
   const workTypes = ['출장/AS', '정기점검', '장비설치', '내부업무']
 
   // 게시판 상태 (공지사항, 영업부, 기술부)
@@ -228,7 +228,12 @@ export default function EngineerCalendar({ user }) {
     calendarCells.push(formattedDate)
   }
 
-  const getBadgeStyle = (type) => {
+  // 💡 배지 스타일: 관리부는 은은한 연보라색(#f3e8ff)으로 다르게 지정
+  const getBadgeStyle = (type, engineerName) => {
+    if (engineerName === '관리부') {
+      return { bg: '#f3e8ff', color: '#6b21a8', border: '#d8b4fe' }
+    }
+
     switch (type) {
       case '출장/AS': return { bg: '#fee2e2', color: '#991b1b', border: '#fca5a5' }
       case '정기점검': return { bg: '#dcfce7', color: '#166534', border: '#86efac' }
@@ -266,7 +271,7 @@ export default function EngineerCalendar({ user }) {
                 fontWeight: '700', fontSize: '13px', cursor: 'pointer'
               }}
             >
-              전체 엔지니어
+              전체
             </button>
             {engineerList.map((eng) => (
               <button
@@ -429,7 +434,7 @@ export default function EngineerCalendar({ user }) {
 
         </div>
 
-        {/* 👉 우측 메인 달력 그리드 (높이 200px 확대) */}
+        {/* 👉 우측 메인 달력 그리드 */}
         <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #E2E8F0', overflow: 'hidden', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', backgroundColor: '#F8FAFC', borderBottom: '1px solid #E2E8F0', textAlign: 'center', fontWeight: '700', fontSize: '13px', color: '#64748B' }}>
             {['일', '월', '화', '수', '목', '금', '토'].map((day, idx) => (
@@ -489,10 +494,10 @@ export default function EngineerCalendar({ user }) {
                     )}
                   </div>
 
-                  {/* 💡 일정 3개 이상 넉넉히 들어가도록 maxHeight를 165px로 확대 */}
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', overflowY: 'auto', maxHeight: '165px', paddingRight: '2px' }}>
                     {daySchedules.map((sch) => {
-                      const badge = getBadgeStyle(sch.work_type)
+                      // 💡 두 번째 인자로 sch.engineer_name 전달
+                      const badge = getBadgeStyle(sch.work_type, sch.engineer_name)
                       return (
                         <div 
                           key={sch.id}
