@@ -299,12 +299,12 @@ export default function EngineerCalendar({ user }) {
             <button onClick={handleNextMonth} style={{ padding: '6px 12px', border: '1px solid #CBD5E1', background: '#fff', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>▶</button>
           </div>
 
-          <button 
+          {/*<button 
             onClick={() => handleOpenAddModal()}
             style={{ padding: '10px 18px', background: '#2563EB', color: 'white', border: 'none', borderRadius: '8px', fontWeight: '700', cursor: 'pointer', fontSize: '14px' }}
           >
             + 일정 등록
-          </button>
+          </button>*/}
         </div>
       </div>
 
