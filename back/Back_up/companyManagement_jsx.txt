@@ -31,6 +31,7 @@ export default function CompanyManagement({ partsList }) {
   const [issuerOptions, setIssuerOptions] = useState(['배진철', '직접 입력'])
 
   const [name, setName] = useState('')
+  const [isDealer, setIsDealer] = useState(false) // 💡 신규 등록 딜러 여부
   const [managers, setManagers] = useState([{ name: '', phone: '', role: '', email: '' }])
   const [address, setAddress] = useState('')
   const [note, setNote] = useState('')
@@ -40,6 +41,7 @@ export default function CompanyManagement({ partsList }) {
   const [isEditing, setIsEditing] = useState(false)
   const [editData, setEditData] = useState({ 
     name: '', 
+    is_dealer: false, // 💡 수정 모드 딜러 여부
     managers: [], 
     address: '', 
     note: '', 
@@ -98,7 +100,7 @@ export default function CompanyManagement({ partsList }) {
     return splitArr.length > 0 ? splitArr : ['']
   }
 
-  const getPartPriceInfo = (itemCodeOrName, companyName) => {
+  const getPartPriceInfo = (itemCodeOrName, companyName, isDealerComp) => {
     if (!partsList || !itemCodeOrName || !itemCodeOrName.trim()) return null
     const query = itemCodeOrName.trim().toLowerCase()
     const matchedPart = partsList.find(p => (p.code && p.code.toLowerCase() === query) || (p.name && p.name.toLowerCase() === query))
@@ -115,9 +117,14 @@ export default function CompanyManagement({ partsList }) {
       }
     } catch (e) {}
 
+    let basePrice = matchedPart.customer_price || 0
+    if (isDealerComp) {
+      basePrice = matchedPart.dealer_price || matchedPart.customer_price || 0
+    }
+
     return {
       found: true,
-      finalPrice: companySpecialPrice !== null ? companySpecialPrice : (matchedPart.customer_price || 0),
+      finalPrice: companySpecialPrice !== null ? companySpecialPrice : basePrice,
       isSpecial: companySpecialPrice !== null
     }
   }
@@ -132,6 +139,7 @@ export default function CompanyManagement({ partsList }) {
 
     const { error } = await supabase.from('companies').insert([{
       name, 
+      is_dealer: isDealer, // 💡 딜러 여부 저장
       manager: JSON.stringify(managers), 
       phone: managers[0]?.phone || '', 
       email: managers[0]?.email || '', 
@@ -145,7 +153,7 @@ export default function CompanyManagement({ partsList }) {
     if (error) alert('등록 실패: ' + error.message)
     else {
       alert('업체가 등록되었습니다.')
-      setName(''); setAddress(''); setNote('');
+      setName(''); setIsDealer(false); setAddress(''); setNote('');
       setInks(['']); setSolvents(['']); setManagers([{ name: '', phone: '', role: '', email: '' }])
       setShowAddForm(false); fetchCompanies()
     }
@@ -167,6 +175,7 @@ export default function CompanyManagement({ partsList }) {
 
     setEditData({ 
       name: company.name || '', 
+      is_dealer: company.is_dealer || false, // 💡 수정 폼 딜러 여부 세팅
       managers: parsedManagers, 
       address: company.address || '', 
       note: company.card_url || '', 
@@ -187,6 +196,7 @@ export default function CompanyManagement({ partsList }) {
 
     const { data, error } = await supabase.from('companies').update({
       name: editData.name, 
+      is_dealer: editData.is_dealer, // 💡 딜러 여부 업데이트
       manager: JSON.stringify(editData.managers), 
       phone: editData.managers[0]?.phone || '', 
       email: editData.managers[0]?.email || '',
@@ -360,33 +370,6 @@ export default function CompanyManagement({ partsList }) {
     }
   }
 
-  const handleSendOutlookMail = () => {
-    if (!selectedCompany) return
-    const primaryManager = selectedCompany.managersList[0] || {}
-    const recipientEmail = primaryManager.email || selectedCompany.email || ''
-    const subject = `[출고증] (주)메이쓰 - ${selectedCompany.name} 자재/부품 출고명세`
-    
-    const finalIssuer = deliveryIssuer === '직접 입력' ? customIssuer : deliveryIssuer
-    const bodyText = `안녕하세요, (주)메이쓰입니다.
-
-요청하신 장비 서비스 교체 부품에 대한 출고증 정보 발송드립니다.
-
-- 업체명: ${selectedCompany.name}
-- 발행일자: ${deliveryDate}
-- 작성자: ${finalIssuer}
-- 장비 S/N: ${deliverySnList.join(', ')}
-- 출고 부품: ${deliveryItems.map(i => `${i.name || i.partId} (${i.qty}개)`).join(', ')}
-
-자세한 내용은 첨부 및 전달드린 출고 명세서를 참고해주시기 바랍니다.
-감사합니다.
-`
-
-    navigator.clipboard.writeText(bodyText).catch(() => {})
-    const mailtoUrl = `mailto:${recipientEmail}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(bodyText)}`
-    window.location.href = mailtoUrl
-    alert('메일 내용이 클립보드에 복사되었으며, Outlook 메일 창을 호출합니다.')
-  }
-
   const cleanCompanyName = (name) => {
     if (!name) return ''
     return name.replace(/\(주\)|주식회사|\(유\)|유한회사/g, '').trim()
@@ -398,15 +381,11 @@ export default function CompanyManagement({ partsList }) {
     return Math.max(...compHistories.map(h => new Date(h.created_at || h.work_date).getTime()))
   }
 
-  // 💡 [수정됨] 업체명 또는 장비 S/N 포함 여부로 필터링하도록 수정
   let processedCompanies = companies.filter(c => {
     const query = searchName.trim().toLowerCase()
     if (!query) return true
 
-    // 1. 업체명 매칭 검사
     const matchName = c.name && c.name.toLowerCase().includes(query)
-
-    // 2. 해당 업체의 서비스 이력에 등록된 S/N 매칭 검사
     const compHistories = allHistories.filter(h => h.company_id === c.id)
     const matchSn = compHistories.some(h => h.sn && h.sn.toLowerCase().includes(query))
 
@@ -501,7 +480,6 @@ export default function CompanyManagement({ partsList }) {
         </div>
 
         <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
-          {/* 💡 [수정됨] 플레이스홀더를 S/N 검색도 가능함을 알리도록 변경 */}
           <input 
             type="text" 
             placeholder="업체명 또는 S/N 검색..." 
@@ -526,6 +504,20 @@ export default function CompanyManagement({ partsList }) {
                 <label style={{ fontSize: '12px', fontWeight: '600', color: '#64748B', marginBottom: '6px', display: 'block' }}>주소</label>
                 <input placeholder="주소" value={address} onChange={(e) => setAddress(e.target.value)} style={inputStyle} />
               </div>
+            </div>
+
+            {/* 💡 딜러 여부 체크박스 추가 */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', backgroundColor: '#F8FAFC', padding: '10px 14px', borderRadius: '6px', border: '1px solid #E2E8F0' }}>
+              <input 
+                type="checkbox" 
+                id="isDealerNew" 
+                checked={isDealer} 
+                onChange={(e) => setIsDealer(e.target.checked)} 
+                style={{ width: '16px', height: '16px', cursor: 'pointer' }}
+              />
+              <label htmlFor="isDealerNew" style={{ fontSize: '13px', fontWeight: '700', color: '#1E293B', cursor: 'pointer' }}>
+                중간 설비 업체 (딜러) 로 지정 [체크 시 딜러가 적용]
+              </label>
             </div>
 
             <div>
@@ -612,10 +604,16 @@ export default function CompanyManagement({ partsList }) {
                   <tr key={c.id} style={{ borderBottom: '1px solid #E2E8F0', backgroundColor: index % 2 === 0 ? '#FFFFFF' : '#F8FAFC' }}>
                     <td 
                       onClick={() => handleOpenModal(c)}
-                      style={{ padding: '12px 18px', fontWeight: '700', color: '#2563EB', cursor: 'pointer', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textDecoration: 'underline' }}
-                      title="클릭하여 상세 정보 팝업 열기"
+                      style={{ padding: '12px 18px', fontWeight: '700', color: '#2563EB', cursor: 'pointer', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
                     >
-                      {c.name}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <span style={{ textDecoration: 'underline' }}>{c.name}</span>
+                        {c.is_dealer && (
+                          <span style={{ backgroundColor: '#DBEAFE', color: '#1E40AF', padding: '2px 6px', borderRadius: '4px', fontSize: '10px', fontWeight: '800', border: '1px solid #BFDBFE' }}>
+                            딜러
+                          </span>
+                        )}
+                      </div>
                     </td>
                     <td style={{ padding: '12px 16px', color: '#334155', fontWeight: '600', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       {primaryManager.name || '-'} {primaryManager.role ? `(${primaryManager.role})` : ''}
@@ -656,9 +654,16 @@ export default function CompanyManagement({ partsList }) {
           }}>
             
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', borderBottom: '1px solid #E2E8F0', paddingBottom: '14px' }}>
-              <h3 style={{ margin: 0, fontSize: '20px', color: '#0F172A' }}>
-                {selectedCompany.name} 상세 정보
-              </h3>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <h3 style={{ margin: 0, fontSize: '20px', color: '#0F172A' }}>
+                  {selectedCompany.name} 상세 정보
+                </h3>
+                {selectedCompany.is_dealer && (
+                  <span style={{ backgroundColor: '#DBEAFE', color: '#1E40AF', padding: '3px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: '800', border: '1px solid #BFDBFE' }}>
+                    딜러 업체
+                  </span>
+                )}
+              </div>
               <button onClick={() => setIsModalOpen(false)} style={{ border: 'none', background: 'none', fontSize: '20px', color: '#64748B', cursor: 'pointer' }}>✕</button>
             </div>
 
@@ -705,12 +710,12 @@ export default function CompanyManagement({ partsList }) {
                         <div>
                           <span style={{ color: '#1E40AF', fontWeight: '700', display: 'block', marginBottom: '6px' }}>잉크 목록</span>
                           {selectedCompany.inkList.map((ik, iIdx) => {
-                            const info = getPartPriceInfo(ik, selectedCompany.name)
+                            const info = getPartPriceInfo(ik, selectedCompany.name, selectedCompany.is_dealer)
                             return (
                               <div key={iIdx} style={{ backgroundColor: '#FFFFFF', padding: '8px 10px', borderRadius: '6px', marginBottom: '4px', border: '1px solid #BFDBFE' }}>
                                 <div style={{ fontWeight: '700', color: '#1E3A8A' }}>{ik || '미등록'}</div>
                                 <div style={{ fontSize: '12px', color: info?.isSpecial ? '#D97706' : '#2563EB', fontWeight: '800', marginTop: '2px' }}>
-                                  {info && info.found ? `${info.finalPrice.toLocaleString()} 원 ${info.isSpecial ? '(특별가)' : ''}` : '단가 정보 없음'}
+                                  {info && info.found ? `${info.finalPrice.toLocaleString()} 원 ${info.isSpecial ? '(특별가)' : selectedCompany.is_dealer ? '(딜러가)' : '(소비자가)'}` : '단가 정보 없음'}
                                 </div>
                               </div>
                             )
@@ -720,12 +725,12 @@ export default function CompanyManagement({ partsList }) {
                         <div style={{ borderTop: '1px solid #BFDBFE', paddingTop: '8px' }}>
                           <span style={{ color: '#1E40AF', fontWeight: '700', display: 'block', marginBottom: '6px' }}>희석제 목록</span>
                           {selectedCompany.solventList.map((sv, sIdx) => {
-                            const info = getPartPriceInfo(sv, selectedCompany.name)
+                            const info = getPartPriceInfo(sv, selectedCompany.name, selectedCompany.is_dealer)
                             return (
                               <div key={sIdx} style={{ backgroundColor: '#FFFFFF', padding: '8px 10px', borderRadius: '6px', marginBottom: '4px', border: '1px solid #BFDBFE' }}>
                                 <div style={{ fontWeight: '700', color: '#1E3A8A' }}>{sv || '미등록'}</div>
                                 <div style={{ fontSize: '12px', color: info?.isSpecial ? '#D97706' : '#2563EB', fontWeight: '800', marginTop: '2px' }}>
-                                  {info && info.found ? `${info.finalPrice.toLocaleString()} 원 ${info.isSpecial ? '(특별가)' : ''}` : '단가 정보 없음'}
+                                  {info && info.found ? `${info.finalPrice.toLocaleString()} 원 ${info.isSpecial ? '(특별가)' : selectedCompany.is_dealer ? '(딜러가)' : '(소비자가)'}` : '단가 정보 없음'}
                                 </div>
                               </div>
                             )
@@ -866,6 +871,20 @@ export default function CompanyManagement({ partsList }) {
                   <div>
                     <label style={{ fontSize: '12px', fontWeight: '600', color: '#64748B', marginBottom: '4px', display: 'block' }}>주소</label>
                     <input value={editData.address} onChange={(e) => setEditData({ ...editData, address: e.target.value })} style={inputStyle} />
+                  </div>
+
+                  {/* 💡 수정 모드 딜러 여부 체크박스 추가 */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', backgroundColor: '#F8FAFC', padding: '10px 14px', borderRadius: '6px', border: '1px solid #E2E8F0' }}>
+                    <input 
+                      type="checkbox" 
+                      id="isDealerEdit" 
+                      checked={editData.is_dealer || false} 
+                      onChange={(e) => setEditData({ ...editData, is_dealer: e.target.checked })} 
+                      style={{ width: '16px', height: '16px', cursor: 'pointer' }}
+                    />
+                    <label htmlFor="isDealerEdit" style={{ fontSize: '13px', fontWeight: '700', color: '#1E293B', cursor: 'pointer' }}>
+                      중간 설비 업체 (딜러) 로 지정 [체크 시 딜러가 적용]
+                    </label>
                   </div>
 
                   <div>

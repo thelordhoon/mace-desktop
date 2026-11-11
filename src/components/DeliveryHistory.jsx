@@ -247,7 +247,6 @@ export default function DeliveryHistory({ partsList }) {
                 <th style={{ padding: '10px 14px', width: '150px' }}>공급받는 자 (업체명)</th>
                 <th style={{ padding: '10px 14px', width: '120px' }}>장비 S/N</th>
                 <th style={{ padding: '10px 14px' }}>출고 부품 요약</th>
-                {/* 💡 요청하신 대로 작성자를 서비스 리포트 보기 왼쪽으로 이동 */}
                 <th style={{ padding: '10px 14px', width: '132px', textAlign: 'center' }}>작성자</th>
                 <th style={{ padding: '10px 14px', width: '140px', textAlign: 'center' }}>서비스 리포트 보기</th>
                 <th style={{ padding: '10px 14px', width: '180px', textAlign: 'center' }}>관리</th>
@@ -286,7 +285,6 @@ export default function DeliveryHistory({ partsList }) {
                       <td style={{ padding: '10px 14px', color: '#1E293B', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '250px' }} title={itemsSummary}>
                         {itemsSummary}
                       </td>
-                      {/* 💡 작성자 컬럼 위치 반영 */}
                       <td style={{ padding: '10px 14px', textAlign: 'center', color: '#475569' }}>
                         {issuerName}
                       </td>
