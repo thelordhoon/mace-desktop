@@ -46,7 +46,7 @@ export default function PartManagement() {
     note: ''
   })
 
-  // 빠른 입고 로트 추가 상태
+  // 📦 빠른 입고 로트 추가 상태 (유통기한 포함 복구 완료)
   const [quickLotPart, setQuickLotPart] = useState(null)
   const [quickLotNo, setQuickLotNo] = useState('')
   const [quickReceivedDate, setQuickReceivedDate] = useState(new Date().toISOString().split('T')[0])
@@ -208,6 +208,8 @@ export default function PartManagement() {
     if (!error) {
       alert('입고 로트가 추가되고 재고가 반영되었습니다.')
       setQuickLotPart(null); setQuickQty(''); setQuickExpiry(''); setQuickLotNo(''); fetchParts()
+    } else {
+      alert('로트 추가 오류: ' + error.message)
     }
   }
 
@@ -504,7 +506,7 @@ export default function PartManagement() {
         </div>
       </div>
 
-      {/* 📌 상단 탭 메뉴 ([📋 입·출고증 발행 이력] 탭 포함) */}
+      {/* 📌 상단 탭 메뉴 */}
       <div style={{ display: 'flex', gap: '8px', marginBottom: '20px', borderBottom: '2px solid #E2E8F0', paddingBottom: '2px' }}>
         <button type="button" onClick={() => setActiveTab('소모품')} style={{ padding: '10px 20px', fontSize: '14px', fontWeight: '800', border: 'none', borderBottom: activeTab === '소모품' ? '3px solid #2563EB' : 'none', color: activeTab === '소모품' ? '#2563EB' : '#64748B', backgroundColor: 'transparent', cursor: 'pointer' }}>
           🧪 소모품 관리 (FIFO)
@@ -837,7 +839,34 @@ export default function PartManagement() {
         </div>
       )}
 
-      {/* 출고증 작성 모달 (드롭다운 자동닫힘 수정 적용) */}
+      {/* 📦 빠른 입고 로트 추가 모달 (유통기한 포함 복구 완료) */}
+      {quickLotPart !== null && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }}>
+          <div style={{ backgroundColor: '#ffffff', borderRadius: '16px', padding: '24px', width: '440px', boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1)', boxSizing: 'border-box' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', borderBottom: '1px solid #F1F5F9', paddingBottom: '10px' }}>
+              <div>
+                <h3 style={{ margin: 0, fontSize: '16px', color: '#0F172A', fontWeight: '800' }}>📦 빠른 입고 로트 추가</h3>
+                <div style={{ fontSize: '12px', color: '#2563EB', fontWeight: '700', marginTop: '2px' }}>{quickLotPart.code} - {quickLotPart.name}</div>
+              </div>
+              <button type="button" onClick={() => setQuickLotPart(null)} style={{ border: 'none', background: 'none', fontSize: '16px', color: '#64748B', cursor: 'pointer', fontWeight: '700' }}>✕</button>
+            </div>
+
+            <form onSubmit={handleQuickAddLotSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <div><label style={labelStyle}>Lot 번호 (선택)</label><input type="text" placeholder="미입력 시 빈칸" value={quickLotNo} onChange={(e) => setQuickLotNo(e.target.value)} style={inputStyle} /></div>
+              <div><label style={labelStyle}>입고일</label><input type="date" value={quickReceivedDate} onChange={(e) => setQuickReceivedDate(e.target.value)} style={inputStyle} /></div>
+              <div><label style={labelStyle}>유통기한 (선택)</label><input type="date" value={quickExpiry} onChange={(e) => setQuickExpiry(e.target.value)} style={inputStyle} /></div>
+              <div><label style={labelStyle}>입고 수량 (개)*</label><input type="number" placeholder="예: 50" value={quickQty} onChange={(e) => setQuickQty(e.target.value)} style={inputStyle} required autoFocus /></div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '12px' }}>
+                <button type="button" onClick={() => setQuickLotPart(null)} style={{ padding: '8px 16px', border: '1px solid #CBD5E1', background: 'white', color: '#64748B', borderRadius: '8px', fontWeight: '600', cursor: 'pointer' }}>취소</button>
+                <button type="submit" style={{ padding: '8px 20px', background: '#2563EB', color: 'white', border: 'none', borderRadius: '8px', fontWeight: '700', cursor: 'pointer' }}>추가 및 재고 자동반영</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* 출고증 작성 모달 */}
       {showOutboundModal && (
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }}>
           <div style={{ backgroundColor: '#ffffff', borderRadius: '16px', padding: '24px', width: '740px', maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1)' }}>
@@ -847,8 +876,6 @@ export default function PartManagement() {
             </div>
             <form onSubmit={handleSaveOutbound} onKeyDown={(e) => { if(e.key === 'Enter') e.preventDefault() }} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
               <div style={{ display: 'grid', gridTemplateColumns: '1.5fr 1fr 1fr 1fr', gap: '12px' }}>
-                
-                {/* 🔍 공급받는 자 (업체명) 검색 및 드롭다운 선택 닫힘 처리 */}
                 <div style={{ position: 'relative' }}>
                   <label style={labelStyle}>공급받는 자 (업체명)*</label>
                   <input 
@@ -872,7 +899,7 @@ export default function PartManagement() {
                             key={c.id || c.name} 
                             onClick={() => {
                               setOutboundForm({ ...outboundForm, company_name: c.name })
-                              setShowCompanyDropdown(false) // 💡 선택 시 드롭다운 즉시 닫기
+                              setShowCompanyDropdown(false)
                             }}
                             style={{ padding: '8px 12px', fontSize: '12px', cursor: 'pointer', borderBottom: '1px solid #F1F5F9' }}
                             onMouseEnter={(e) => e.target.style.backgroundColor = '#F8FAFC'}
