@@ -9,7 +9,7 @@ export default function EngineerCalendar({ user }) {
   
   // 💡 엔지니어 3명 + 관리부 추가
   const engineerList = ['배진철', '진희찬', '국민석', '관리부']
-  const workTypes = ['출장/AS', '정기점검', '장비설치', '내부업무']
+  const workTypes = ['출장/AS', '정기점검', '장비설치', '내부업무','휴무']
 
   // 게시판 상태 (공지사항, 영업부, 기술부)
   const [notices, setNotices] = useState([])
