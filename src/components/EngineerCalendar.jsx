@@ -7,7 +7,7 @@ export default function EngineerCalendar({ user }) {
   const [currentDate, setCurrentDate] = useState(new Date())
   const [selectedEngineerFilter, setSelectedEngineerFilter] = useState('ALL')
   
-  // 💡 엔지니어 3명 + 관리부 추가
+  // 💡 엔지니어 3명 
   const engineerList = ['배진철', '진희찬', '국민석', '관리부']
   const workTypes = ['출장/AS', '정기점검', '장비설치', '내부업무','휴무']
 
@@ -170,7 +170,7 @@ export default function EngineerCalendar({ user }) {
 
   const handleSubmitSchedule = async (e) => {
     e.preventDefault()
-    if (!form.title.trim()) return alert('작업 제목을 입력해주세요!')
+    if (!form.title.trim()) return alert('작업 내용을 입력해주세요!')
     if (!form.start_date) return alert('시작일을 입력해주세요!')
 
     const payload = {
@@ -228,7 +228,7 @@ export default function EngineerCalendar({ user }) {
     calendarCells.push(formattedDate)
   }
 
-  // 💡 배지 스타일: 관리부는 은은한 연보라색(#f3e8ff)으로 다르게 지정
+  // 💡 배지 스타일: 관리부는 연보라색(#f3e8ff)
   const getBadgeStyle = (type, engineerName) => {
     if (engineerName === '관리부') {
       return { bg: '#f3e8ff', color: '#6b21a8', border: '#d8b4fe' }
@@ -236,8 +236,8 @@ export default function EngineerCalendar({ user }) {
 
     switch (type) {
       case '출장/AS': return { bg: '#fee2e2', color: '#991b1b', border: '#fca5a5' }
-      case '정기점검': return { bg: '#dcfce7', color: '#166534', border: '#86efac' }
-      case '장비설치': return { bg: '#eff6ff', color: '#1e40af', border: '#bfdbfe' }
+      case 'Overhaul': return { bg: '#dcfce7', color: '#166534', border: '#86efac' }
+      case '장비SETUP': return { bg: '#eff6ff', color: '#1e40af', border: '#bfdbfe' }
       default: return { bg: '#f1f5f9', color: '#475569', border: '#cbd5e1' }
     }
   }
@@ -586,8 +586,8 @@ export default function EngineerCalendar({ user }) {
                   rows="4" 
                   placeholder={
                     boardCategory === 'NOTICE' ? '예: 오늘 16시 택배 마감입니다.' : 
-                    boardCategory === 'SALES' ? '예: 한국몰렉스 수리장비 S/N: LJ-392171 지정건' :
-                    '예: 잉크 펌프 테스트용 장비 출고 전 세팅 확인 필요'
+                    boardCategory === 'SALES' ? '예: XX전자 납품시 필요 자재 확인요망.' :
+                    '예: 데모용 장비 출고 전 확인 필요'
                   }
                   value={boardForm.content} 
                   onChange={(e) => setBoardForm({ ...boardForm, content: e.target.value })} 
@@ -695,7 +695,7 @@ export default function EngineerCalendar({ user }) {
                 <input 
                   type="text" 
                   name="title"
-                  placeholder="예: 잉크 공급 장치 점검 및 노즐 교체" 
+                  placeholder="예: 인쇄불가, 부팅실패등" 
                   value={form.title} 
                   onChange={handleFormChange} 
                   style={inputStyle} 
