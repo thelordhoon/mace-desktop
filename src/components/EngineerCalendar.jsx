@@ -1,6 +1,15 @@
 import React, { useState, useEffect } from 'react'
 import { supabase } from '../supabaseClient'
 
+// 💡 로컬 타임존 기준 YYYY-MM-DD 구하는 유틸 함수
+const getLocalTodayString = () => {
+  const d = new Date()
+  const year = d.getFullYear()
+  const month = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
 export default function EngineerCalendar({ user }) {
   const [schedules, setSchedules] = useState([])
   const [companies, setCompanies] = useState([])
@@ -31,8 +40,8 @@ export default function EngineerCalendar({ user }) {
     engineer_name: '배진철',
     company_name: '',
     work_type: '출장/AS',
-    start_date: new Date().toISOString().substring(0, 10),
-    end_date: new Date().toISOString().substring(0, 10),
+    start_date: getLocalTodayString(),
+    end_date: getLocalTodayString(),
     note: ''
   })
 
@@ -134,7 +143,7 @@ export default function EngineerCalendar({ user }) {
   const handleOpenAddModal = (dateStr = null) => {
     setIsEditMode(false)
     setCurrentScheduleId(null)
-    const targetDate = dateStr || new Date().toISOString().substring(0, 10)
+    const targetDate = dateStr || getLocalTodayString()
     
     const myName = user?.full_name || user?.username || '배진철'
     const defaultName = engineerList.includes(myName) ? myName : '배진철'
@@ -298,13 +307,6 @@ export default function EngineerCalendar({ user }) {
             </span>
             <button onClick={handleNextMonth} style={{ padding: '6px 12px', border: '1px solid #CBD5E1', background: '#fff', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>▶</button>
           </div>
-
-          {/*<button 
-            onClick={() => handleOpenAddModal()}
-            style={{ padding: '10px 18px', background: '#2563EB', color: 'white', border: 'none', borderRadius: '8px', fontWeight: '700', cursor: 'pointer', fontSize: '14px' }}
-          >
-            + 일정 등록
-          </button>*/}
         </div>
       </div>
 
@@ -452,7 +454,7 @@ export default function EngineerCalendar({ user }) {
 
               const daySchedules = filteredSchedules.filter(sch => sch.start_date <= dateStr && sch.end_date >= dateStr)
               const dayNum = dateStr.split('-')[2]
-              const isToday = dateStr === new Date().toISOString().substring(0, 10)
+              const isToday = dateStr === getLocalTodayString()
 
               return (
                 <div 
@@ -496,7 +498,6 @@ export default function EngineerCalendar({ user }) {
 
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', overflowY: 'auto', maxHeight: '165px', paddingRight: '2px' }}>
                     {daySchedules.map((sch) => {
-                      // 💡 두 번째 인자로 sch.engineer_name 전달
                       const badge = getBadgeStyle(sch.work_type, sch.engineer_name)
                       return (
                         <div 
