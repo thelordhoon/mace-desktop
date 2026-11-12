@@ -122,7 +122,7 @@ export default function ConsumablesTab({ partsList, refreshParts, showAddForm, s
     }
   }
 
-  // D. 입고 처리
+  // D. 입고 처리 (품번/코드 포함하도록 요약 수정)
   const handleQuickAddLot = async (e) => {
     e.preventDefault()
     if (!quickLotPart) return
@@ -150,11 +150,15 @@ export default function ConsumablesTab({ partsList, refreshParts, showAddForm, s
 
     if (partError) return alert('입고 처리 오류: ' + partError.message)
 
+    // 💡 품번/코드가 있으면 [코드] 명칭 형태로 요약 생성
+    const partCodeStr = quickLotPart.code ? `[${quickLotPart.code}] ` : ''
+    const summaryText = `${partCodeStr}${quickLotPart.name} (${quickQty}개)`
+
     await supabase.from('delivery_history').insert([{
       date: quickReceivedDate || new Date().toISOString().split('T')[0],
       company_name: '본사 창고 (입고)',
       equipment_sn: quickLotNo.trim() ? `LOT: ${quickLotNo.trim()}` : '로트 입고',
-      summary: `${quickLotPart.name} (${quickQty}개)`,
+      summary: summaryText,
       author: '배진철',
       note: quickExpiry ? `유통기한: ${quickExpiry}` : '유통기한 미지정',
       type: 'INBOUND'
@@ -165,7 +169,7 @@ export default function ConsumablesTab({ partsList, refreshParts, showAddForm, s
     refreshParts()
   }
 
-  // E. 출고 처리
+  // E. 출고 처리 (품번/코드 포함하도록 요약 수정)
   const handleOutboundSubmit = async (e) => {
     e.preventDefault()
     if (!outboundPart) return
@@ -203,11 +207,15 @@ export default function ConsumablesTab({ partsList, refreshParts, showAddForm, s
 
     if (partError) return alert('출고 처리 오류: ' + partError.message)
 
+    // 💡 품번/코드가 있으면 [코드] 명칭 형태로 요약 생성
+    const partCodeStr = outboundPart.code ? `[${outboundPart.code}] ` : ''
+    const summaryText = `${partCodeStr}${outboundPart.name} (${reqSubQty}개)`
+
     await supabase.from('delivery_history').insert([{
       date: outboundDate || new Date().toISOString().split('T')[0],
       company_name: outboundCompany.trim(),
       equipment_sn: '-',
-      summary: `${outboundPart.name} (${reqSubQty}개)`,
+      summary: summaryText,
       author: '배진철',
       note: outboundNote.trim(),
       type: 'OUTBOUND'
@@ -612,9 +620,7 @@ export default function ConsumablesTab({ partsList, refreshParts, showAddForm, s
                       if (!window.confirm(`Lot [${l.lot_number || '공백'}]을 삭제하시겠습니까?`)) return
                       let currentLots = typeof selectedExpiryPart.lots === 'string' ? JSON.parse(selectedExpiryPart.lots) : selectedExpiryPart.lots
                       
-                      // 💡 index를 이용해 정확히 클릭한 해당 로트 하나만 제외하고 필터링
                       const updatedLots = currentLots.filter((_, i) => i !== idx)
-                      
                       const calcStock = updatedLots.reduce((sum, item) => sum + Number(item.qty || 0), 0)
                       
                       const { error } = await supabase.from('parts').update({ 
