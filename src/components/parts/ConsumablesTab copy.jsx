@@ -165,7 +165,8 @@ export default function ConsumablesTab({ partsList, refreshParts, showAddForm, s
       summary: `${quickLotPart.name} (${quickQty}개)`,
       author: '배진철',
       note: quickExpiry ? `유통기한: ${quickExpiry}` : '유통기한 미지정',
-      type: 'INBOUND'
+      type: 'INBOUND',
+      part_id: quickLotPart.id
     }])
 
     alert('입고 로트가 추가되고 이력에 등록되었습니다.')
@@ -174,7 +175,7 @@ export default function ConsumablesTab({ partsList, refreshParts, showAddForm, s
   }
 
   // ----------------------------------------------------
-  // E. 출고 처리 (선입선출 FIFO 로트 차감) & 이력 자동 등록
+  // E. 출고 처리 (선입선출 FIFO 로트 차감) & 이력 자동 등록 (정밀 복원 태그 추가)
   // ----------------------------------------------------
   const handleOutboundSubmit = async (e) => {
     e.preventDefault()
@@ -188,18 +189,41 @@ export default function ConsumablesTab({ partsList, refreshParts, showAddForm, s
       currentLots = outboundPart.lots ? (typeof outboundPart.lots === 'string' ? JSON.parse(outboundPart.lots) : outboundPart.lots) : []
     } catch (err) { currentLots = [] }
 
+    // 유통기한 임박순 정렬 (선입선출)
     currentLots.sort((a, b) => new Date(a.expiry || '9999-12-31') - new Date(b.expiry || '9999-12-31'))
 
     let remainingToDeduct = reqSubQty
+    const deductedDetails = [] // 💡 어떤 로트에서 몇 개가 차감되었는지 기록할 배열
+
     const updatedLots = currentLots.map(lot => {
       if (remainingToDeduct <= 0) return lot
       const lotQty = Number(lot.qty || 0)
+      
+      let deductedFromThisLot = 0
       if (lotQty <= remainingToDeduct) {
+        deductedFromThisLot = lotQty
         remainingToDeduct -= lotQty
+        
+        deductedDetails.push({
+          lot_number: lot.lot_number || '',
+          expiry: lot.expiry || '',
+          received_date: lot.received_date || '',
+          qty: deductedFromThisLot
+        })
+
         return { ...lot, qty: 0 }
       } else {
+        deductedFromThisLot = remainingToDeduct
         const newQty = lotQty - remainingToDeduct
         remainingToDeduct = 0
+
+        deductedDetails.push({
+          lot_number: lot.lot_number || '',
+          expiry: lot.expiry || '',
+          received_date: lot.received_date || '',
+          qty: deductedFromThisLot
+        })
+
         return { ...lot, qty: newQty }
       }
     }).filter(lot => Number(lot.qty) > 0)
@@ -213,14 +237,23 @@ export default function ConsumablesTab({ partsList, refreshParts, showAddForm, s
 
     if (partError) return alert('출고 처리 오류: ' + partError.message)
 
+    // 💡 삭제 시 정확한 1:1 복원을 위한 정밀 태그 생성
+    const restoreJsonStr = JSON.stringify(deductedDetails)
+    const baseNote = outboundNote.trim()
+    const finalNote = baseNote ? `${baseNote} [LOT_RESTORE:${restoreJsonStr}]` : `[LOT_RESTORE:${restoreJsonStr}]`
+
+    const partCodeStr = outboundPart.code ? `[${outboundPart.code}] ` : ''
+    const summaryText = `${partCodeStr}${outboundPart.name} (${reqSubQty}개)`
+
     await supabase.from('delivery_history').insert([{
       date: outboundDate || new Date().toISOString().split('T')[0],
       company_name: outboundCompany.trim(),
       equipment_sn: '-',
-      summary: `${outboundPart.name} (${reqSubQty}개)`,
+      summary: summaryText,
       author: '배진철',
-      note: outboundNote.trim(),
-      type: 'OUTBOUND'
+      note: finalNote,
+      type: 'OUTBOUND',
+      part_id: outboundPart.id
     }])
 
     alert('출고가 완료되고 이력에 등록되었습니다.')

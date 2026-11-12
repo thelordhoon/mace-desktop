@@ -33,7 +33,7 @@ export default function ConsumablesTab({ partsList, refreshParts, showAddForm, s
   // 4. 유통기한 상세 확인 모달 상태
   const [selectedExpiryPart, setSelectedExpiryPart] = useState(null)
 
-  // 5. 업체별 지정 특가 관리 모달 상태
+  // 5. 업체별 지정 특가 관리 모달 상태 (안전장치 추가)
   const [selectedSpecialPart, setSelectedSpecialPart] = useState(null)
   const [selectedSpecialPrices, setSelectedSpecialPrices] = useState(null)
   const [specialCompanySearchIndex, setSpecialCompanySearchIndex] = useState(null)
@@ -57,7 +57,9 @@ export default function ConsumablesTab({ partsList, refreshParts, showAddForm, s
   }
   const labelStyle = { fontSize: '13px', fontWeight: '700', color: '#475569', marginBottom: '6px', display: 'block' }
 
+  // ----------------------------------------------------
   // A. 신규 소모품 품목 등록
+  // ----------------------------------------------------
   const handleAddPart = async (e) => {
     e.preventDefault()
     if (!partName.trim() || !partCode.trim()) return alert('품명과 품번/코드를 입력해주세요!')
@@ -87,7 +89,9 @@ export default function ConsumablesTab({ partsList, refreshParts, showAddForm, s
     }
   }
 
+  // ----------------------------------------------------
   // B. 품목 수정 저장
+  // ----------------------------------------------------
   const handleSaveEdit = async (e) => {
     e.preventDefault()
     if (!editingPart) return
@@ -110,7 +114,9 @@ export default function ConsumablesTab({ partsList, refreshParts, showAddForm, s
     }
   }
 
+  // ----------------------------------------------------
   // C. 품목 삭제
+  // ----------------------------------------------------
   const handleDeletePart = async (id, name) => {
     if (!window.confirm(`[${name}] 품목을 정말 삭제하시겠습니까?`)) return
     const { error } = await supabase.from('parts').delete().eq('id', id)
@@ -122,7 +128,9 @@ export default function ConsumablesTab({ partsList, refreshParts, showAddForm, s
     }
   }
 
-  // D. 입고 처리
+  // ----------------------------------------------------
+  // D. 입고 처리 (+ 입고 로트 추가) & 이력 자동 등록
+  // ----------------------------------------------------
   const handleQuickAddLot = async (e) => {
     e.preventDefault()
     if (!quickLotPart) return
@@ -165,7 +173,9 @@ export default function ConsumablesTab({ partsList, refreshParts, showAddForm, s
     refreshParts()
   }
 
-  // E. 출고 처리
+  // ----------------------------------------------------
+  // E. 출고 처리 (선입선출 FIFO 로트 차감) & 이력 자동 등록
+  // ----------------------------------------------------
   const handleOutboundSubmit = async (e) => {
     e.preventDefault()
     if (!outboundPart) return
@@ -218,6 +228,7 @@ export default function ConsumablesTab({ partsList, refreshParts, showAddForm, s
     refreshParts()
   }
 
+  // 소모품 필터링
   const filteredParts = partsList.filter(p => {
     const cat = p.category || ''
     const isConsumable = cat === '잉크' || cat === '희석제' || cat === '소모품'
@@ -226,6 +237,7 @@ export default function ConsumablesTab({ partsList, refreshParts, showAddForm, s
 
   return (
     <div onKeyDown={(e) => { if (e.key === 'Enter') e.preventDefault() }}>
+      {/* 신규 등록 폼 */}
       {showAddForm && (
         <div style={{ backgroundColor: '#ffffff', borderRadius: '16px', padding: '24px', border: '1px solid #E2E8F0', marginBottom: '20px', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)' }}>
           <h4 style={{ margin: '0 0 16px 0', fontSize: '16px', fontWeight: '700', color: '#0F172A' }}>🧪 신규 소모품 품목 등록</h4>
@@ -248,6 +260,7 @@ export default function ConsumablesTab({ partsList, refreshParts, showAddForm, s
               <div><label style={labelStyle}>딜러 기본가 (원)</label><input type="number" value={dealerPrice} onChange={e => setDealerPrice(e.target.value)} style={inputStyle} /></div>
             </div>
 
+            {/* 업체별 특가 등록 */}
             <div style={{ borderTop: '1px solid #F1F5F9', paddingTop: '10px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
                 <span style={{ fontSize: '13px', fontWeight: '700', color: '#1E293B' }}>업체별 개별 특가 (선택)</span>
@@ -276,10 +289,12 @@ export default function ConsumablesTab({ partsList, refreshParts, showAddForm, s
         </div>
       )}
 
+      {/* 검색창 */}
       <div style={{ marginBottom: '16px' }}>
         <input type="text" placeholder="🔍 소모품 품명 또는 코드 검색..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} style={{ ...inputStyle, padding: '12px', maxWidth: '360px' }} />
       </div>
 
+      {/* 소모품 목록 테이블 */}
       <div style={{ backgroundColor: '#ffffff', borderRadius: '16px', border: '1px solid #E2E8F0', overflow: 'hidden', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.02)' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '14px', tableLayout: 'fixed' }}>
           <thead>
@@ -370,10 +385,11 @@ export default function ConsumablesTab({ partsList, refreshParts, showAddForm, s
         </table>
       </div>
 
-      {/* 지정 특가 관리 모달 */}
+      {/* 🏷️ 지정 특가 관리 모달 (안전장치 추가 완료) */}
       {selectedSpecialPart && selectedSpecialPrices && (
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }}>
           <div style={{ backgroundColor: '#ffffff', borderRadius: '16px', padding: '28px', width: '600px', maxHeight: '85vh', display: 'flex', flexDirection: 'column', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)', boxSizing: 'border-box' }}>
+            
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', borderBottom: '1px solid #F1F5F9', paddingBottom: '12px', flexShrink: 0 }}>
               <div>
                 <h3 style={{ margin: 0, fontSize: '18px', color: '#0F172A', fontWeight: '800' }}>🏷️ 업체별 개별 특가 관리</h3>
@@ -462,11 +478,12 @@ export default function ConsumablesTab({ partsList, refreshParts, showAddForm, s
                 }
               }} style={{ padding: '10px 24px', background: '#2563EB', color: 'white', border: 'none', borderRadius: '8px', fontWeight: '700', cursor: 'pointer' }}>저장하기</button>
             </div>
+
           </div>
         </div>
       )}
 
-      {/* 품목 정보 수정 모달 */}
+      {/* ✏️ 품목 정보 수정 모달 */}
       {editingPart && (
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }}>
           <div style={{ backgroundColor: '#ffffff', borderRadius: '16px', padding: '24px', width: '480px', boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1)', boxSizing: 'border-box' }}>
@@ -501,7 +518,7 @@ export default function ConsumablesTab({ partsList, refreshParts, showAddForm, s
         </div>
       )}
 
-      {/* 입고 모달 */}
+      {/* 📦 입고 모달 */}
       {quickLotPart && (
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }}>
           <div style={{ backgroundColor: '#ffffff', borderRadius: '16px', padding: '24px', width: '420px', boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1)', boxSizing: 'border-box' }}>
@@ -528,7 +545,7 @@ export default function ConsumablesTab({ partsList, refreshParts, showAddForm, s
         </div>
       )}
 
-      {/* 출고 모달 */}
+      {/* 📤 출고 모달 */}
       {outboundPart && (
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }}>
           <div style={{ backgroundColor: '#ffffff', borderRadius: '16px', padding: '24px', width: '460px', boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1)', boxSizing: 'border-box' }}>
@@ -582,7 +599,7 @@ export default function ConsumablesTab({ partsList, refreshParts, showAddForm, s
         </div>
       )}
 
-      {/* 유통기한 상세 조회 모달 */}
+      {/* ⏳ 유통기한 상세 조회 모달 */}
       {selectedExpiryPart && (
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }}>
           <div style={{ backgroundColor: '#ffffff', borderRadius: '16px', padding: '24px', width: '550px', maxHeight: '80vh', overflowY: 'auto', boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1)' }}>

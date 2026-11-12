@@ -5,17 +5,26 @@ export default function ConsumablesTab({ partsList, refreshParts, showAddForm, s
   const [searchTerm, setSearchTerm] = useState('')
   const [companies, setCompanies] = useState([])
 
+  // 💡 로컬 기준 오늘 날짜를 YYYY-MM-DD 형식으로 정확히 구하는 함수
+  const getTodayLocalDate = () => {
+    const d = new Date()
+    const year = d.getFullYear()
+    const month = String(d.getMonth() + 1).padStart(2, '0')
+    const day = String(d.getDate()).padStart(2, '0')
+    return `${year}-${month}-${day}`
+  }
+
   // 1. 빠른 입고 로트 모달 상태
   const [quickLotPart, setQuickLotPart] = useState(null)
   const [quickLotNo, setQuickLotNo] = useState('')
-  const [quickReceivedDate, setQuickReceivedDate] = useState(new Date().toISOString().split('T')[0])
+  const [quickReceivedDate, setQuickReceivedDate] = useState(getTodayLocalDate())
   const [quickExpiry, setQuickExpiry] = useState('')
   const [quickQty, setQuickQty] = useState('')
 
   // 2. 소모품 전용 출고 모달 상태 (로트별 입력 필드 포함)
   const [outboundPart, setOutboundPart] = useState(null)
   const [outboundCompany, setOutboundCompany] = useState('')
-  const [outboundDate, setOutboundDate] = useState(new Date().toISOString().split('T')[0])
+  const [outboundDate, setOutboundDate] = useState(getTodayLocalDate())
   const [outboundNote, setOutboundNote] = useState('')
   const [showCompanyDropdown, setShowCompanyDropdown] = useState(false)
   const [outboundLotInputs, setOutboundLotInputs] = useState({}) // { lotIndex: 출고할수량 }
@@ -38,9 +47,9 @@ export default function ConsumablesTab({ partsList, refreshParts, showAddForm, s
   const [selectedSpecialPrices, setSelectedSpecialPrices] = useState(null)
   const [specialCompanySearchIndex, setSpecialCompanySearchIndex] = useState(null)
 
-  // 6. 품목 정보 수정 모달 상태
+  // 6. 품목 정보 수정 모달 상태 (stock 필드 추가)
   const [editingPart, setEditingPart] = useState(null)
-  const [editForm, setEditForm] = useState({ name: '', code: '', category: '잉크', customer_price: 0, dealer_price: 0, note: '' })
+  const [editForm, setEditForm] = useState({ name: '', code: '', category: '잉크', customer_price: 0, dealer_price: 0, stock: 0, note: '' })
 
   useEffect(() => {
     fetchCompanies()
@@ -87,10 +96,36 @@ export default function ConsumablesTab({ partsList, refreshParts, showAddForm, s
     }
   }
 
-  // B. 품목 수정 저장
+  // B. 품목 수정 저장 (현재 재고 수량 강제 세팅 반영)
   const handleSaveEdit = async (e) => {
     e.preventDefault()
     if (!editingPart) return
+
+    const newTargetStock = Number(editForm.stock || 0)
+    
+    // 기존 로트 데이터 파싱
+    let currentLots = []
+    try {
+      currentLots = editingPart.lots ? (typeof editingPart.lots === 'string' ? JSON.parse(editingPart.lots) : editingPart.lots) : []
+    } catch (err) { currentLots = [] }
+
+    // 수정 창에서 입력한 재고 수량과 기존 로트들의 총합이 다를 경우 로트 보정
+    const currentLotSum = currentLots.reduce((sum, l) => sum + Number(l.qty || 0), 0)
+    if (newTargetStock !== currentLotSum) {
+      if (currentLots.length > 0) {
+        // 기존 로트가 있다면 첫 번째 로트의 수량을 조절하여 총합을 맞춤
+        const diff = newTargetStock - currentLotSum
+        currentLots[0].qty = Math.max(0, Number(currentLots[0].qty || 0) + diff)
+      } else {
+        // 로트가 아예 없었다면 '재고보정' 로트 생성
+        currentLots.push({
+          lot_number: '재고보정',
+          received_date: getTodayLocalDate(),
+          expiry: '',
+          qty: newTargetStock
+        })
+      }
+    }
 
     const { error } = await supabase.from('parts').update({
       name: editForm.name.trim(),
@@ -98,11 +133,13 @@ export default function ConsumablesTab({ partsList, refreshParts, showAddForm, s
       category: editForm.category,
       customer_price: Number(editForm.customer_price),
       dealer_price: Number(editForm.dealer_price),
+      stock: newTargetStock,
+      lots: JSON.stringify(currentLots),
       note: editForm.note
     }).eq('id', editingPart.id)
 
     if (!error) {
-      alert('품목 정보가 수정되었습니다.')
+      alert('품목 정보 및 재고 수량이 수정되었습니다.')
       setEditingPart(null)
       refreshParts()
     } else {
@@ -133,9 +170,11 @@ export default function ConsumablesTab({ partsList, refreshParts, showAddForm, s
       currentLots = quickLotPart.lots ? (typeof quickLotPart.lots === 'string' ? JSON.parse(quickLotPart.lots) : quickLotPart.lots) : []
     } catch (err) { currentLots = [] }
 
+    const inboundDateVal = quickReceivedDate || getTodayLocalDate()
+
     const newLot = {
       lot_number: quickLotNo.trim(),
-      received_date: quickReceivedDate || new Date().toISOString().split('T')[0],
+      received_date: inboundDateVal,
       expiry: quickExpiry || '',
       qty: Number(quickQty)
     }
@@ -154,13 +193,14 @@ export default function ConsumablesTab({ partsList, refreshParts, showAddForm, s
     const summaryText = `${partCodeStr}${quickLotPart.name} (${quickQty}개)`
 
     await supabase.from('delivery_history').insert([{
-      date: quickReceivedDate || new Date().toISOString().split('T')[0],
+      date: inboundDateVal,
       company_name: '본사 창고 (입고)',
       equipment_sn: quickLotNo.trim() ? `LOT: ${quickLotNo.trim()}` : '로트 입고',
       summary: summaryText,
       author: '배진철',
       note: quickExpiry ? `유통기한: ${quickExpiry}` : '유통기한 미지정',
-      type: 'INBOUND'
+      type: 'INBOUND',
+      part_id: quickLotPart.id
     }])
 
     alert('입고 로트가 추가되고 이력에 등록되었습니다.')
@@ -180,48 +220,68 @@ export default function ConsumablesTab({ partsList, refreshParts, showAddForm, s
     } catch (err) { currentLots = [] }
 
     let totalOutboundQty = 0
-    const updatedLots = currentLots.map((lot, idx) => {
-      const inputVal = outboundLotInputs[idx]
-      const deductQty = inputVal ? Number(inputVal) : 0
-      if (deductQty < 0) return lot
-      if (deductQty > Number(lot.qty || 0)) {
-        alert(`Lot [${lot.lot_number || '미지정'}]의 재고 수량(${lot.qty}개)보다 많은 수량을 출고할 수 없습니다!`)
-        throw new Error('Over-deduct')
-      }
-      totalOutboundQty += deductQty
-      return {
-        ...lot,
-        qty: Number(lot.qty || 0) - deductQty
-      }
-    }).filter(lot => Number(lot.qty) > 0)
+    const deductedDetails = [] 
 
-    if (totalOutboundQty <= 0) return alert('출고할 수량을 하나 이상 입력해주세요!')
+    try {
+      const updatedLots = currentLots.map((lot, idx) => {
+        const inputVal = outboundLotInputs[idx]
+        const deductQty = inputVal ? Number(inputVal) : 0
+        if (deductQty < 0) return lot
+        if (deductQty > Number(lot.qty || 0)) {
+          alert(`Lot [${lot.lot_number || '미지정'}]의 재고 수량(${lot.qty}개)보다 많은 수량을 출고할 수 없습니다!`)
+          throw new Error('Over-deduct')
+        }
+        if (deductQty > 0) {
+          totalOutboundQty += deductQty
+          deductedDetails.push({
+            lot_number: lot.lot_number || '',
+            expiry: lot.expiry || '',
+            received_date: lot.received_date || '',
+            qty: deductQty
+          })
+        }
+        return {
+          ...lot,
+          qty: Number(lot.qty || 0) - deductQty
+        }
+      }).filter(lot => Number(lot.qty) > 0)
 
-    const calculatedTotalStock = updatedLots.reduce((sum, l) => sum + Number(l.qty || 0), 0)
+      if (totalOutboundQty <= 0) return alert('출고할 수량을 하나 이상 입력해주세요!')
 
-    const { error: partError } = await supabase.from('parts').update({
-      lots: JSON.stringify(updatedLots),
-      stock: calculatedTotalStock
-    }).eq('id', outboundPart.id)
+      const calculatedTotalStock = updatedLots.reduce((sum, l) => sum + Number(l.qty || 0), 0)
 
-    if (partError) return alert('출고 처리 오류: ' + partError.message)
+      const { error: partError } = await supabase.from('parts').update({
+        lots: JSON.stringify(updatedLots),
+        stock: calculatedTotalStock
+      }).eq('id', outboundPart.id)
 
-    const partCodeStr = outboundPart.code ? `[${outboundPart.code}] ` : ''
-    const summaryText = `${partCodeStr}${outboundPart.name} (${totalOutboundQty}개)`
+      if (partError) return alert('출고 처리 오류: ' + partError.message)
 
-    await supabase.from('delivery_history').insert([{
-      date: outboundDate || new Date().toISOString().split('T')[0],
-      company_name: outboundCompany.trim(),
-      equipment_sn: '-',
-      summary: summaryText,
-      author: '배진철',
-      note: outboundNote.trim(),
-      type: 'OUTBOUND'
-    }])
+      const outboundDateVal = outboundDate || getTodayLocalDate()
+      const partCodeStr = outboundPart.code ? `[${outboundPart.code}] ` : ''
+      const summaryText = `${partCodeStr}${outboundPart.name} (${totalOutboundQty}개)`
+      
+      const lotSummaryStr = deductedDetails.map(d => `${d.lot_number || '미지정'}(${d.qty}개)`).join(', ')
+      const restoreTag = `[LOT_RESTORE:${JSON.stringify(deductedDetails)}]`
+      const finalNote = outboundNote.trim() ? `${outboundNote.trim()} ${restoreTag}` : restoreTag
 
-    alert('출고가 완료되고 이력에 등록되었습니다.')
-    setOutboundPart(null); setOutboundCompany(''); setOutboundNote(''); setOutboundLotInputs({})
-    refreshParts()
+      await supabase.from('delivery_history').insert([{
+        date: outboundDateVal,
+        company_name: outboundCompany.trim(),
+        equipment_sn: lotSummaryStr || '-',
+        summary: summaryText,
+        author: '배진철',
+        note: finalNote,
+        type: 'OUTBOUND',
+        part_id: outboundPart.id
+      }])
+
+      alert('출고가 완료되고 이력에 등록되었습니다.')
+      setOutboundPart(null); setOutboundCompany(''); setOutboundNote(''); setOutboundLotInputs({})
+      refreshParts()
+    } catch (err) {
+      if (err.message !== 'Over-deduct') console.error(err)
+    }
   }
 
   const filteredParts = partsList.filter(p => {
@@ -353,7 +413,16 @@ export default function ConsumablesTab({ partsList, refreshParts, showAddForm, s
                           type="button" 
                           onClick={() => {
                             setEditingPart(p)
-                            setEditForm({ name: p.name, code: p.code, category: p.category || '잉크', customer_price: p.customer_price || 0, dealer_price: p.dealer_price || 0, note: p.note || '' })
+                            // 💡 수정 모달을 열 때 현재 stock 값을 editForm에 함께 세팅
+                            setEditForm({ 
+                              name: p.name, 
+                              code: p.code, 
+                              category: p.category || '잉크', 
+                              customer_price: p.customer_price || 0, 
+                              dealer_price: p.dealer_price || 0, 
+                              stock: p.stock ?? 0, 
+                              note: p.note || '' 
+                            })
                           }} 
                           style={{ background: '#EFF6FF', color: '#2563EB', border: 'none', padding: '5px 8px', borderRadius: '6px', fontSize: '12px', fontWeight: '700', cursor: 'pointer' }}
                         >
@@ -472,12 +541,12 @@ export default function ConsumablesTab({ partsList, refreshParts, showAddForm, s
         </div>
       )}
 
-      {/* 품목 정보 수정 모달 */}
+      {/* ✏️ 품목 정보 수정 모달 (현재 재고 수량 수정 필드 포함) */}
       {editingPart && (
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }}>
           <div style={{ backgroundColor: '#ffffff', borderRadius: '16px', padding: '24px', width: '480px', boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1)', boxSizing: 'border-box' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', borderBottom: '1px solid #F1F5F9', paddingBottom: '10px' }}>
-              <h3 style={{ margin: 0, fontSize: '16px', color: '#0F172A', fontWeight: '800' }}>✏️ 소모품 품목 정보 수정</h3>
+              <h3 style={{ margin: 0, fontSize: '16px', color: '#0F172A', fontWeight: '800' }}>✏️ 소모품 품목 정보 및 재고 수정</h3>
               <button type="button" onClick={() => setEditingPart(null)} style={{ border: 'none', background: 'none', fontSize: '16px', color: '#64748B', cursor: 'pointer', fontWeight: '700' }}>✕</button>
             </div>
 
@@ -492,6 +561,21 @@ export default function ConsumablesTab({ partsList, refreshParts, showAddForm, s
                   <option value="소모품">소모품</option>
                 </select>
               </div>
+
+              {/* 💡 현재 재고 수량 강제 설정 필드 */}
+              <div>
+                <label style={{ ...labelStyle, color: '#059669' }}>📦 현재 재고 수량 (개)*</label>
+                <input 
+                  type="number" 
+                  min="0"
+                  value={editForm.stock} 
+                  onChange={e => setEditForm({ ...editForm, stock: e.target.value })} 
+                  style={{ ...inputStyle, fontWeight: '700', color: '#059669', backgroundColor: '#F0FDF4', border: '1px solid #10B981' }} 
+                  required 
+                />
+                <div style={{ fontSize: '11px', color: '#64748B', marginTop: '3px' }}>* 테스트 중 엉킨 재고를 원하시는 숫자로 즉시 강제 세팅할 수 있습니다.</div>
+              </div>
+
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
                 <div><label style={labelStyle}>소비자 기본가 (원)</label><input type="number" value={editForm.customer_price} onChange={e => setEditForm({ ...editForm, customer_price: e.target.value })} style={inputStyle} /></div>
                 <div><label style={labelStyle}>딜러 기본가 (원)</label><input type="number" value={editForm.dealer_price} onChange={e => setEditForm({ ...editForm, dealer_price: e.target.value })} style={inputStyle} /></div>
@@ -577,7 +661,7 @@ export default function ConsumablesTab({ partsList, refreshParts, showAddForm, s
                 <input type="date" value={outboundDate} onChange={e => setOutboundDate(e.target.value)} style={inputStyle} />
               </div>
 
-              {/* 💡 로트별 현황 및 출고 수량 입력 영역 */}
+              {/* 로트별 현황 및 출고 수량 입력 영역 */}
               <div>
                 <label style={labelStyle}>⏳ 로트 및 유통기한별 출고 수량 지정*</label>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '220px', overflowY: 'auto', border: '1px solid #E2E8F0', padding: '10px', borderRadius: '10px', backgroundColor: '#F8FAFC' }}>

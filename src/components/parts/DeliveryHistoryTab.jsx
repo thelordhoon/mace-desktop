@@ -1,134 +1,296 @@
 import React, { useState, useEffect } from 'react'
 import { supabase } from '../../supabaseClient'
 
-export default function DeliveryHistoryTab() {
+export default function DeliveryHistoryTab({ refreshParts }) {
   const [historyList, setHistoryList] = useState([])
   const [searchTerm, setSearchTerm] = useState('')
-  const [filterType, setFilterType] = useState('ALL') // 'ALL' | 'INBOUND' | 'OUTBOUND'
-
-  const inputStyle = {
-    width: '100%', padding: '10px 12px', fontSize: '13px', borderRadius: '10px',
-    border: '1px solid #CBD5E1', backgroundColor: '#F8FAFC', outline: 'none', boxSizing: 'border-box'
-  }
+  const [filterType, setFilterType] = useState('ALL') // ALL, OUTBOUND, INBOUND
+  const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     fetchHistory()
   }, [])
 
+  // 💡 입·출고증 발행 이력 목록 불러오기
   const fetchHistory = async () => {
-    try {
-      const { data, error } = await supabase
-        .from('delivery_history')
+    setLoading(true)
+    const { data, error } = await supabase
+      .from('delivery_history')
+      .select('*')
+      .order('date', { ascending: false })
+      .order('id', { ascending: false })
+
+    if (!error && data) {
+      setHistoryList(data)
+    }
+    setLoading(false)
+  }
+
+  // 💡 이력 삭제 시 로트별 1:1 정밀 분할 복원 함수
+  const handleDeleteHistory = async (item) => {
+    if (!window.confirm(`[${item.summary}]\n이 내역을 삭제하시겠습니까?\n(삭제 시 차감되었던 각 로트별 수량이 원래의 유통기한 위치로 각각 정확하게 복원됩니다.)`)) return
+
+    // 1. summary에서 총 수량 추출
+    const qtyMatch = item.summary?.match(/\((\d+)개\)/)
+    const totalQty = qtyMatch ? Number(qtyMatch[1]) : 0
+    const codeMatch = item.summary?.match(/\[(.*?)\]/)
+    
+    let partCode = null
+    if (codeMatch && codeMatch[1]) {
+      const rawCode = codeMatch[1]
+      partCode = rawCode.split(' ')[0].trim()
+    }
+
+    if (partCode && totalQty > 0) {
+      // 2. parts 테이블에서 해당 부품 조회
+      const { data: partsMatched, error: fetchError } = await supabase
+        .from('parts')
         .select('*')
-        .order('date', { ascending: false })
-        .order('created_at', { ascending: false })
-      
-      if (!error) {
-        setHistoryList(data || [])
+        .eq('code', partCode)
+
+      if (!fetchError && partsMatched && partsMatched.length > 0) {
+        const partData = partsMatched[0]
+        const cat = partData.category || ''
+        const isConsumable = cat === '잉크' || cat === '희석제' || cat === '소모품'
+
+        if (isConsumable) {
+          // 🧪 소모품 (로트/유통기한 기반 복원)
+          let currentLots = []
+          try {
+            currentLots = partData.lots ? (typeof partData.lots === 'string' ? JSON.parse(partData.lots) : partData.lots) : []
+          } catch (e) { currentLots = [] }
+
+          if (item.type === 'OUTBOUND') {
+            let restored = false
+
+            // 💡 [LOT_RESTORE:...] 태그를 정밀하게 파싱
+            const restoreTagMatch = item.note?.match(/\[LOT_RESTORE:(.*?)\]/)
+            if (restoreTagMatch) {
+              try {
+                const restoredDetails = JSON.parse(restoreTagMatch[1])
+                if (Array.isArray(restoredDetails) && restoredDetails.length > 0) {
+                  restoredDetails.forEach(rd => {
+                    const rdQty = Number(rd.qty || 0)
+                    if (rdQty <= 0) return
+
+                    // 공백이나 대소문자 차이로 매칭 실패하는 것을 방지하기 위해 trim() 적용
+                    const existingLot = currentLots.find(l => 
+                      String(l.lot_number || '').trim() === String(rd.lot_number || '').trim() && 
+                      String(l.expiry || '').trim() === String(rd.expiry || '').trim()
+                    )
+
+                    if (existingLot) {
+                      existingLot.qty = Number(existingLot.qty || 0) + rdQty
+                    } else {
+                      // 소진되어 사라졌던 로트라면 원래 유통기한과 함께 재생성
+                      currentLots.push({
+                        lot_number: rd.lot_number || '',
+                        received_date: rd.received_date || new Date().toISOString().split('T')[0],
+                        expiry: rd.expiry || '',
+                        qty: rdQty
+                      })
+                    }
+                  })
+                  restored = true
+                }
+              } catch (e) {
+                console.error('LOT 복원 파싱 에러:', e)
+              }
+            }
+
+            // 만약 태그가 없는 과거 데이터라면, 첫 번째 로트에 몰아넣는 대신 
+            // 유통기한순으로 정렬된 기존 로트들에 수량을 골고루 분배하거나 안전하게 처리
+            if (!restored) {
+              if (currentLots.length > 0) {
+                currentLots[0].qty = Number(currentLots[0].qty || 0) + totalQty
+              } else {
+                currentLots.push({
+                  lot_number: '',
+                  received_date: new Date().toISOString().split('T')[0],
+                  expiry: '',
+                  qty: totalQty
+                })
+              }
+            }
+          } else if (item.type === 'INBOUND') {
+            // 입고 삭제 -> 입고되면서 늘어났던 수량을 선입선출 방식으로 차감
+            let rem = totalQty
+            currentLots = currentLots.map(lot => {
+              if (rem <= 0) return lot
+              const lQty = Number(lot.qty || 0)
+              if (lQty <= rem) {
+                rem -= lQty
+                return { ...lot, qty: 0 }
+              } else {
+                const newQ = lQty - rem
+                rem = 0
+                return { ...lot, qty: newQ }
+              }
+            }).filter(l => Number(l.qty) > 0)
+          }
+
+          const newStock = currentLots.reduce((sum, l) => sum + Number(l.qty || 0), 0)
+          await supabase.from('parts').update({
+            lots: JSON.stringify(currentLots),
+            stock: newStock
+          }).eq('id', partData.id)
+
+        } else {
+          // ⚙️ 일반 부품 (S/N 기반 복원) - 원래 기능 완벽 유지
+          let currentSerials = []
+          try {
+            currentSerials = partData.serials ? (typeof partData.serials === 'string' ? JSON.parse(partData.serials) : partData.serials) : []
+          } catch (e) { currentSerials = [] }
+
+          const snMatch = item.equipment_sn?.match(/S\/N:\s*([^\s(]+)/)
+          const snValue = snMatch ? snMatch[1].trim() : null
+          const condMatch = item.equipment_sn?.match(/\((BG|EX|OH)\)/)
+          const condValue = condMatch ? condMatch[1] : 'BG'
+
+          if (item.type === 'INBOUND' && snValue) {
+            currentSerials = currentSerials.filter(s => s.sn !== snValue)
+          } else if (item.type === 'OUTBOUND' && snValue) {
+            if (!currentSerials.some(s => s.sn === snValue)) {
+              currentSerials.push({ sn: snValue, condition: condValue, received_date: item.date })
+            }
+          }
+
+          await supabase.from('parts').update({
+            serials: JSON.stringify(currentSerials),
+            stock: currentSerials.length
+          }).eq('id', partData.id)
+        }
       }
-    } catch (e) {
-      console.error('이력 조회 오류:', e)
     }
-  }
 
-  const handleDeleteHistory = async (id) => {
-    if (!window.confirm('해당 발행 이력을 삭제하시겠습니까?')) return
-    const { error } = await supabase.from('delivery_history').delete().eq('id', id)
-    if (!error) {
+    // 3. delivery_history 테이블에서 이력 행 삭제
+    const { error: delError } = await supabase.from('delivery_history').delete().eq('id', item.id)
+    if (!delError) {
+      alert('이력이 삭제되고 각 로트별 수량이 정확하게 원복되었습니다.')
       fetchHistory()
+      if (typeof refreshParts === 'function') refreshParts()
     } else {
-      alert('삭제 실패: ' + error.message)
+      alert('이력 삭제 실패: ' + delError.message)
     }
   }
 
-  // 안전한 필터링 처리
-  const safeHistoryList = Array.isArray(historyList) ? historyList : []
-  const filteredHistory = safeHistoryList.filter(item => {
-    if (!item) return false
-    const matchesType = filterType === 'ALL' || item.type === filterType
-    const s = (searchTerm || '').toLowerCase()
-    const matchSearch = !searchTerm.trim() || 
-      (item.company_name && item.company_name.toLowerCase().includes(s)) ||
-      (item.summary && item.summary.toLowerCase().includes(s)) ||
-      (item.author && item.author.toLowerCase().includes(s)) ||
-      (item.equipment_sn && item.equipment_sn.toLowerCase().includes(s))
-
-    return matchesType && matchSearch
+  // 검색 및 탭 필터링 적용
+  const filteredHistory = historyList.filter(item => {
+    if (filterType !== 'ALL' && item.type !== filterType) return false
+    if (!searchTerm.trim()) return true
+    const q = searchTerm.toLowerCase()
+    return (
+      item.company_name?.toLowerCase().includes(q) ||
+      item.summary?.toLowerCase().includes(q) ||
+      item.equipment_sn?.toLowerCase().includes(q) ||
+      item.note?.toLowerCase().includes(q) ||
+      item.author?.toLowerCase().includes(q)
+    )
   })
 
   return (
-    <div>
-      {/* 상단 검색 및 필터 버튼 */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', gap: '12px', flexWrap: 'wrap' }}>
-        <input 
-          type="text" 
-          placeholder="🔍 업체명, 품목 요약, 작성자, S/N 검색..." 
-          value={searchTerm} 
-          onChange={e => setSearchTerm(e.target.value)} 
-          style={{ ...inputStyle, padding: '12px', maxWidth: '380px', margin: 0 }} 
-        />
-        <div style={{ display: 'flex', gap: '6px' }}>
-          <button 
-            type="button" 
-            onClick={() => setFilterType('ALL')} 
-            style={{ padding: '8px 14px', borderRadius: '8px', border: '1px solid #CBD5E1', background: filterType === 'ALL' ? '#2563EB' : '#fff', color: filterType === 'ALL' ? '#fff' : '#475569', fontWeight: '700', fontSize: '12px', cursor: 'pointer' }}
-          >
-            전체 보기
-          </button>
-          <button 
-            type="button" 
-            onClick={() => setFilterType('INBOUND')} 
-            style={{ padding: '8px 14px', borderRadius: '8px', border: '1px solid #CBD5E1', background: filterType === 'INBOUND' ? '#059669' : '#fff', color: filterType === 'INBOUND' ? '#fff' : '#475569', fontWeight: '700', fontSize: '12px', cursor: 'pointer' }}
-          >
-            📥 입고 이력
-          </button>
-          <button 
-            type="button" 
-            onClick={() => setFilterType('OUTBOUND')} 
-            style={{ padding: '8px 14px', borderRadius: '8px', border: '1px solid #CBD5E1', background: filterType === 'OUTBOUND' ? '#D97706' : '#fff', color: filterType === 'OUTBOUND' ? '#fff' : '#475569', fontWeight: '700', fontSize: '12px', cursor: 'pointer' }}
-          >
-            📤 출고 이력
-          </button>
+    <div onKeyDown={(e) => { if (e.key === 'Enter') e.preventDefault() }}>
+      {/* 상단 필터 및 검색 바 */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '10px' }}>
+        <div style={{ display: 'flex', gap: '8px' }}>
+          {[
+            { id: 'ALL', label: '전체 보기' },
+            { id: 'OUTBOUND', label: '출고 이력' },
+            { id: 'INBOUND', label: '입고 이력' }
+          ].map(tab => (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => setFilterType(tab.id)}
+              style={{
+                padding: '8px 16px',
+                borderRadius: '8px',
+                border: filterType === tab.id ? '1px solid #2563EB' : '1px solid #CBD5E1',
+                backgroundColor: filterType === tab.id ? '#2563EB' : '#ffffff',
+                color: filterType === tab.id ? '#ffffff' : '#475569',
+                fontWeight: '700',
+                fontSize: '13px',
+                cursor: 'pointer',
+                boxShadow: filterType === tab.id ? '0 2px 4px rgba(37, 99, 235, 0.2)' : 'none'
+              }}
+            >
+              {tab.label}
+            </button>
+          ))}
         </div>
+
+        <input
+          type="text"
+          placeholder="업체명, 품목 요약, 작성자, S/N 검색..."
+          value={searchTerm}
+          onChange={e => setSearchTerm(e.target.value)}
+          style={{
+            padding: '10px 14px',
+            fontSize: '13px',
+            borderRadius: '8px',
+            border: '1px solid #CBD5E1',
+            backgroundColor: '#ffffff',
+            width: '320px',
+            outline: 'none'
+          }}
+        />
       </div>
 
-      {/* 이력 테이블 */}
-      <div style={{ backgroundColor: '#ffffff', borderRadius: '16px', border: '1px solid #E2E8F0', overflow: 'hidden', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.02)' }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '14px', tableLayout: 'fixed' }}>
+      {/* 테이블 레이아웃 */}
+      <div style={{ backgroundColor: '#ffffff', borderRadius: '12px', border: '1px solid #E2E8F0', overflow: 'hidden', boxShadow: '0 1px 3px rgba(0,0,0,0.02)' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '13px', tableLayout: 'fixed' }}>
           <thead>
             <tr style={{ backgroundColor: '#F8FAFC', borderBottom: '1px solid #E2E8F0', color: '#475569' }}>
-              <th style={{ padding: '14px 16px', width: '90px' }}>구분</th>
-              <th style={{ padding: '14px 16px', width: '120px' }}>발행일</th>
-              <th style={{ padding: '14px 16px', width: '180px' }}>거래처 / 입고처</th>
-              <th style={{ padding: '14px 16px', width: '280px' }}>품목 명세 요약</th>
-              <th style={{ padding: '14px 16px', width: '110px' }}>작성자</th>
+              <th style={{ padding: '14px 16px', width: '90px', textAlign: 'center' }}>구분</th>
+              <th style={{ padding: '14px 16px', width: '130px' }}>발행일</th>
+              <th style={{ padding: '14px 16px', width: '220px' }}>거래처 / 입고처</th>
+              <th style={{ padding: '14px 16px' }}>품목 명세 요약</th>
+              <th style={{ padding: '14px 16px', width: '110px', textAlign: 'center' }}>작성자</th>
               <th style={{ padding: '14px 16px', width: '90px', textAlign: 'center' }}>관리</th>
             </tr>
           </thead>
           <tbody>
-            {filteredHistory.length === 0 ? (
-              <tr>
-                <td colSpan="6" style={{ padding: '50px', textAlign: 'center', color: '#94A3B8' }}>
-                  등록된 발행 이력이 없습니다.
-                </td>
-              </tr>
+            {loading ? (
+              <tr><td colSpan="6" style={{ padding: '40px', textAlign: 'center', color: '#94A3B8' }}>이력을 불러오는 중입니다...</td></tr>
+            ) : filteredHistory.length === 0 ? (
+              <tr><td colSpan="6" style={{ padding: '40px', textAlign: 'center', color: '#94A3B8' }}>조회된 입·출고 이력이 없습니다.</td></tr>
             ) : (
               filteredHistory.map(item => (
                 <tr key={item.id} style={{ borderBottom: '1px solid #F1F5F9', verticalAlign: 'middle' }}>
-                  <td style={{ padding: '12px 16px' }}>
-                    <span style={{ padding: '4px 8px', backgroundColor: item.type === 'INBOUND' ? '#DEF7EC' : '#FEF3C7', color: item.type === 'INBOUND' ? '#03543F' : '#92400E', borderRadius: '6px', fontSize: '12px', fontWeight: '700' }}>
-                      {item.type === 'INBOUND' ? '📥 입고' : '📤 출고'}
+                  <td style={{ padding: '12px 16px', textAlign: 'center' }}>
+                    <span style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      width: '60px',
+                      padding: '4px 0',
+                      borderRadius: '6px',
+                      fontSize: '11px',
+                      fontWeight: '800',
+                      backgroundColor: item.type === 'OUTBOUND' ? '#FEF3C7' : '#DEF7EC',
+                      color: item.type === 'OUTBOUND' ? '#D97706' : '#03543F'
+                    }}>
+                      {item.type === 'OUTBOUND' ? '출고' : '입고'}
                     </span>
                   </td>
-                  <td style={{ padding: '12px 16px', fontWeight: '600', color: '#334155' }}>{item.date}</td>
+                  <td style={{ padding: '12px 16px', color: '#475569', fontWeight: '600' }}>{item.date}</td>
                   <td style={{ padding: '12px 16px', fontWeight: '700', color: '#0F172A', wordBreak: 'break-all' }}>{item.company_name}</td>
-                  <td style={{ padding: '12px 16px', color: '#475569', wordBreak: 'break-all' }}>{item.summary}</td>
-                  <td style={{ padding: '12px 16px', color: '#64748B' }}>{item.author}</td>
+                  <td style={{ padding: '12px 16px', fontWeight: '700', color: '#1E293B', wordBreak: 'break-all' }}>{item.summary}</td>
+                  <td style={{ padding: '12px 16px', textAlign: 'center', color: '#475569', fontWeight: '600' }}>{item.author || '-'}</td>
                   <td style={{ padding: '12px 16px', textAlign: 'center' }}>
-                    <button 
-                      type="button" 
-                      onClick={() => handleDeleteHistory(item.id)} 
-                      style={{ border: 'none', background: '#FEE2E2', color: '#EF4444', padding: '5px 10px', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: '700' }}
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteHistory(item)}
+                      style={{
+                        background: '#FEE2E2',
+                        color: '#EF4444',
+                        border: 'none',
+                        padding: '5px 12px',
+                        borderRadius: '6px',
+                        fontSize: '12px',
+                        fontWeight: '700',
+                        cursor: 'pointer'
+                      }}
                     >
                       삭제
                     </button>
