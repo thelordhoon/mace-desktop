@@ -45,12 +45,12 @@ export default function Sidebar({ currentMenu, setCurrentMenu, isAdmin, resetVie
         📊 기술 서비스 내용 및 관리
       </button>
 
-      <button 
+    {/*  <button 
         onClick={() => handleMenuClick('delivery_history')}
         style={{ width: '100%', padding: '12px 14px', backgroundColor: currentMenu === 'delivery_history' ? '#2563eb' : 'transparent', color: currentMenu === 'delivery_history' ? '#ffffff' : '#cbd5e1', border: 'none', borderRadius: '8px', textAlign: 'left', fontWeight: '600', fontSize: '14px', cursor: 'pointer' }}
       >
-        📦 입·출고증 이력관리
-      </button>
+        📦 현장 사용 파트 출고 확인 리스트
+      </button>  */}
 
       {isAdmin && (
         <button 

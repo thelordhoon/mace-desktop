@@ -12,13 +12,13 @@ export default function ConsumablesTab({ partsList, refreshParts, showAddForm, s
   const [quickExpiry, setQuickExpiry] = useState('')
   const [quickQty, setQuickQty] = useState('')
 
-  // 2. 소모품 전용 출고 모달 상태
+  // 2. 소모품 전용 출고 모달 상태 (로트별 입력 필드 포함)
   const [outboundPart, setOutboundPart] = useState(null)
   const [outboundCompany, setOutboundCompany] = useState('')
-  const [outboundQty, setOutboundQty] = useState('')
   const [outboundDate, setOutboundDate] = useState(new Date().toISOString().split('T')[0])
   const [outboundNote, setOutboundNote] = useState('')
   const [showCompanyDropdown, setShowCompanyDropdown] = useState(false)
+  const [outboundLotInputs, setOutboundLotInputs] = useState({}) // { lotIndex: 출고할수량 }
 
   // 3. 신규 소모품 등록 폼 상태
   const [partName, setPartName] = useState('')
@@ -122,7 +122,7 @@ export default function ConsumablesTab({ partsList, refreshParts, showAddForm, s
     }
   }
 
-  // D. 입고 처리 (품번/코드 포함하도록 요약 수정)
+  // D. 입고 처리
   const handleQuickAddLot = async (e) => {
     e.preventDefault()
     if (!quickLotPart) return
@@ -150,7 +150,6 @@ export default function ConsumablesTab({ partsList, refreshParts, showAddForm, s
 
     if (partError) return alert('입고 처리 오류: ' + partError.message)
 
-    // 💡 품번/코드가 있으면 [코드] 명칭 형태로 요약 생성
     const partCodeStr = quickLotPart.code ? `[${quickLotPart.code}] ` : ''
     const summaryText = `${partCodeStr}${quickLotPart.name} (${quickQty}개)`
 
@@ -169,34 +168,34 @@ export default function ConsumablesTab({ partsList, refreshParts, showAddForm, s
     refreshParts()
   }
 
-  // E. 출고 처리 (품번/코드 포함하도록 요약 수정)
+  // E. 로트별 수동 지정 출고 처리
   const handleOutboundSubmit = async (e) => {
     e.preventDefault()
     if (!outboundPart) return
     if (!outboundCompany.trim()) return alert('공급받는 업체명을 입력해주세요!')
-    const reqSubQty = Number(outboundQty)
-    if (!reqSubQty || reqSubQty <= 0) return alert('출고 수량을 올바르게 입력해주세요!')
 
     let currentLots = []
     try {
       currentLots = outboundPart.lots ? (typeof outboundPart.lots === 'string' ? JSON.parse(outboundPart.lots) : outboundPart.lots) : []
     } catch (err) { currentLots = [] }
 
-    currentLots.sort((a, b) => new Date(a.expiry || '9999-12-31') - new Date(b.expiry || '9999-12-31'))
-
-    let remainingToDeduct = reqSubQty
-    const updatedLots = currentLots.map(lot => {
-      if (remainingToDeduct <= 0) return lot
-      const lotQty = Number(lot.qty || 0)
-      if (lotQty <= remainingToDeduct) {
-        remainingToDeduct -= lotQty
-        return { ...lot, qty: 0 }
-      } else {
-        const newQty = lotQty - remainingToDeduct
-        remainingToDeduct = 0
-        return { ...lot, qty: newQty }
+    let totalOutboundQty = 0
+    const updatedLots = currentLots.map((lot, idx) => {
+      const inputVal = outboundLotInputs[idx]
+      const deductQty = inputVal ? Number(inputVal) : 0
+      if (deductQty < 0) return lot
+      if (deductQty > Number(lot.qty || 0)) {
+        alert(`Lot [${lot.lot_number || '미지정'}]의 재고 수량(${lot.qty}개)보다 많은 수량을 출고할 수 없습니다!`)
+        throw new Error('Over-deduct')
+      }
+      totalOutboundQty += deductQty
+      return {
+        ...lot,
+        qty: Number(lot.qty || 0) - deductQty
       }
     }).filter(lot => Number(lot.qty) > 0)
+
+    if (totalOutboundQty <= 0) return alert('출고할 수량을 하나 이상 입력해주세요!')
 
     const calculatedTotalStock = updatedLots.reduce((sum, l) => sum + Number(l.qty || 0), 0)
 
@@ -207,9 +206,8 @@ export default function ConsumablesTab({ partsList, refreshParts, showAddForm, s
 
     if (partError) return alert('출고 처리 오류: ' + partError.message)
 
-    // 💡 품번/코드가 있으면 [코드] 명칭 형태로 요약 생성
     const partCodeStr = outboundPart.code ? `[${outboundPart.code}] ` : ''
-    const summaryText = `${partCodeStr}${outboundPart.name} (${reqSubQty}개)`
+    const summaryText = `${partCodeStr}${outboundPart.name} (${totalOutboundQty}개)`
 
     await supabase.from('delivery_history').insert([{
       date: outboundDate || new Date().toISOString().split('T')[0],
@@ -222,7 +220,7 @@ export default function ConsumablesTab({ partsList, refreshParts, showAddForm, s
     }])
 
     alert('출고가 완료되고 이력에 등록되었습니다.')
-    setOutboundPart(null); setOutboundCompany(''); setOutboundQty(''); setOutboundNote('')
+    setOutboundPart(null); setOutboundCompany(''); setOutboundNote(''); setOutboundLotInputs({})
     refreshParts()
   }
 
@@ -344,7 +342,7 @@ export default function ConsumablesTab({ partsList, refreshParts, showAddForm, s
                         <button type="button" onClick={() => setQuickLotPart(p)} style={{ background: '#059669', color: '#fff', border: 'none', padding: '5px 9px', borderRadius: '6px', fontSize: '12px', fontWeight: '700', cursor: 'pointer' }}>
                           + 입고
                         </button>
-                        <button type="button" onClick={() => setOutboundPart(p)} style={{ background: '#D97706', color: '#fff', border: 'none', padding: '5px 9px', borderRadius: '6px', fontSize: '12px', fontWeight: '700', cursor: 'pointer' }}>
+                        <button type="button" onClick={() => { setOutboundPart(p); setOutboundLotInputs({}); }} style={{ background: '#D97706', color: '#fff', border: 'none', padding: '5px 9px', borderRadius: '6px', fontSize: '12px', fontWeight: '700', cursor: 'pointer' }}>
                           - 출고
                         </button>
                       </div>
@@ -536,19 +534,19 @@ export default function ConsumablesTab({ partsList, refreshParts, showAddForm, s
         </div>
       )}
 
-      {/* 출고 모달 */}
+      {/* 📤 로트별 수동 지정 출고 모달 */}
       {outboundPart && (
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }}>
-          <div style={{ backgroundColor: '#ffffff', borderRadius: '16px', padding: '24px', width: '460px', boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1)', boxSizing: 'border-box' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', borderBottom: '1px solid #F1F5F9', paddingBottom: '10px' }}>
+          <div style={{ backgroundColor: '#ffffff', borderRadius: '16px', padding: '24px', width: '540px', maxHeight: '85vh', display: 'flex', flexDirection: 'column', boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1)', boxSizing: 'border-box' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', borderBottom: '1px solid #F1F5F9', paddingBottom: '10px', flexShrink: 0 }}>
               <div>
-                <h3 style={{ margin: 0, fontSize: '16px', color: '#0F172A', fontWeight: '800' }}>📤 소모품 출고 처리</h3>
-                <div style={{ fontSize: '12px', color: '#D97706', fontWeight: '700', marginTop: '2px' }}>{outboundPart.code} - {outboundPart.name} (현재 재고: {outboundPart.stock || 0}개)</div>
+                <h3 style={{ margin: 0, fontSize: '16px', color: '#0F172A', fontWeight: '800' }}>📤 소모품 출고 처리 (로트/유통기한 지정)</h3>
+                <div style={{ fontSize: '12px', color: '#D97706', fontWeight: '700', marginTop: '2px' }}>{outboundPart.code} - {outboundPart.name} (총 재고: {outboundPart.stock || 0}개)</div>
               </div>
               <button type="button" onClick={() => setOutboundPart(null)} style={{ border: 'none', background: 'none', fontSize: '16px', color: '#64748B', cursor: 'pointer', fontWeight: '700' }}>✕</button>
             </div>
 
-            <form onSubmit={handleOutboundSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            <form onSubmit={handleOutboundSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '14px', flexGrow: 1, overflowY: 'auto', paddingRight: '4px' }}>
               <div style={{ position: 'relative' }}>
                 <label style={labelStyle}>공급받는 자 (업체명)*</label>
                 <input 
@@ -574,14 +572,55 @@ export default function ConsumablesTab({ partsList, refreshParts, showAddForm, s
                 )}
               </div>
 
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-                <div><label style={labelStyle}>출고 수량 (개)*</label><input type="number" placeholder="예: 10" value={outboundQty} onChange={e => setOutboundQty(e.target.value)} style={inputStyle} required autoFocus /></div>
-                <div><label style={labelStyle}>출고일</label><input type="date" value={outboundDate} onChange={e => setOutboundDate(e.target.value)} style={inputStyle} /></div>
+              <div>
+                <label style={labelStyle}>출고일</label>
+                <input type="date" value={outboundDate} onChange={e => setOutboundDate(e.target.value)} style={inputStyle} />
               </div>
 
-              <div><label style={labelStyle}>비고 및 특이사항</label><textarea rows="2" placeholder="메모 입력" value={outboundNote} onChange={e => setOutboundNote(e.target.value)} style={inputStyle} /></div>
+              {/* 💡 로트별 현황 및 출고 수량 입력 영역 */}
+              <div>
+                <label style={labelStyle}>⏳ 로트 및 유통기한별 출고 수량 지정*</label>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '220px', overflowY: 'auto', border: '1px solid #E2E8F0', padding: '10px', borderRadius: '10px', backgroundColor: '#F8FAFC' }}>
+                  {(!outboundPart.lots || (typeof outboundPart.lots === 'string' ? JSON.parse(outboundPart.lots) : outboundPart.lots).length === 0) ? (
+                    <div style={{ padding: '20px', textAlign: 'center', color: '#94A3B8', fontSize: '13px' }}>등록된 로트 정보가 없습니다.</div>
+                  ) : (
+                    (typeof outboundPart.lots === 'string' ? JSON.parse(outboundPart.lots) : outboundPart.lots).map((l, idx) => (
+                      <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#fff', padding: '10px 12px', borderRadius: '8px', border: '1px solid #CBD5E1', gap: '10px' }}>
+                        <div style={{ flex: 1.5 }}>
+                          <div style={{ fontSize: '12px', fontWeight: '700', color: '#0F172A' }}>
+                            Lot: {l.lot_number || '(미지정)'} <span style={{ color: '#10B981' }}>(잔여: {l.qty}개)</span>
+                          </div>
+                          <div style={{ fontSize: '11px', color: '#D97706', marginTop: '2px' }}>
+                            유통기한: {l.expiry || '미입력'}
+                          </div>
+                        </div>
+                        <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: '4px' }}>
+                          <input 
+                            type="number" 
+                            min="0" 
+                            max={l.qty} 
+                            placeholder="출고수량" 
+                            value={outboundLotInputs[idx] || ''} 
+                            onChange={e => {
+                              const val = e.target.value;
+                              setOutboundLotInputs(prev => ({ ...prev, [idx]: val }));
+                            }}
+                            style={{ ...inputStyle, textAlign: 'right', padding: '6px 8px', fontWeight: '700' }} 
+                          />
+                          <span style={{ fontSize: '12px', color: '#64748B' }}>개</span>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
 
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '12px' }}>
+              <div>
+                <label style={labelStyle}>비고 및 특이사항</label>
+                <textarea rows="2" placeholder="메모 입력" value={outboundNote} onChange={e => setOutboundNote(e.target.value)} style={inputStyle} />
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '10px', flexShrink: 0, borderTop: '1px solid #F1F5F9', paddingTop: '12px' }}>
                 <button type="button" onClick={() => setOutboundPart(null)} style={{ padding: '8px 16px', border: '1px solid #CBD5E1', background: 'white', color: '#64748B', borderRadius: '8px', fontWeight: '600', cursor: 'pointer' }}>취소</button>
                 <button type="submit" style={{ padding: '8px 20px', background: '#D97706', color: 'white', border: 'none', borderRadius: '8px', fontWeight: '700', cursor: 'pointer' }}>출고 차감 및 이력 기록</button>
               </div>
