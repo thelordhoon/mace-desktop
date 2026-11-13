@@ -9,17 +9,19 @@ import EstimateForm from './components/EstimateForm'
 import ServiceManagement from './components/ServiceManagement'
 import UserManagement from './components/UserManagement'
 import DeliveryHistory from './components/DeliveryHistory'
-import EngineerCalendar from './components/EngineerCalendar' // 💡 캘린더 컴포넌트 임포트 추가
+import EngineerCalendar from './components/EngineerCalendar'
+import PurchaseRequest from './components/PurchaseRequest'
 
 export default function App() {
   const [user, setUser] = useState(null)
-  // 💡 첫 화면(초기 메뉴)을 'calendar'로 지정
   const [currentMenu, setCurrentMenu] = useState('calendar')
   const [partsList, setPartsList] = useState([])
+  const [purchaseAlerts, setPurchaseAlerts] = useState([]) // 헤더 알림용 상태
 
   useEffect(() => {
     checkUserSession()
     fetchParts()
+    fetchPurchaseAlerts()
   }, [])
 
   const checkUserSession = async () => {
@@ -34,9 +36,41 @@ export default function App() {
     setPartsList(data || [])
   }
 
+  // 헤더 표시용 최근 구매요청 상태 조회
+  const fetchPurchaseAlerts = async () => {
+    try {
+      const { data: reqData } = await supabase
+        .from('purchase_requests')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(5)
+
+      if (!reqData || reqData.length === 0) {
+        setPurchaseAlerts([])
+        return
+      }
+
+      const reqIds = reqData.map(r => r.id)
+      const { data: itemData } = await supabase
+        .from('purchase_request_items')
+        .select('*')
+        .in('request_id', reqIds)
+
+      const combined = reqData.map(req => ({
+        ...req,
+        items: (itemData || []).filter(item => item.request_id === req.id)
+      }))
+
+      setPurchaseAlerts(combined)
+    } catch (err) {
+      console.error('헤더 알림 조회 오류:', err)
+    }
+  }
+
   const handleLoginSuccess = (loggedInUser) => {
     setUser(loggedInUser)
     localStorage.setItem('mace_desk_user', JSON.stringify(loggedInUser))
+    fetchPurchaseAlerts()
   }
 
   const handleLogout = () => {
@@ -53,10 +87,14 @@ export default function App() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', backgroundColor: '#F1F5F9', fontFamily: '-apple-system, sans-serif', overflow: 'hidden' }}>
       
-      <Header user={user} onLogout={handleLogout} />
+      <Header 
+        user={user} 
+        onLogout={handleLogout} 
+        purchaseAlerts={purchaseAlerts}
+        onNavigatePurchase={() => setCurrentMenu('purchase_request')}
+      />
 
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
-        
         <Sidebar 
           currentMenu={currentMenu} 
           setCurrentMenu={setCurrentMenu} 
@@ -64,7 +102,6 @@ export default function App() {
         />
 
         <main style={{ flex: 1, padding: '24px', overflowY: 'auto', boxSizing: 'border-box' }}>
-          {/* 💡 메인(첫 화면) 분기 추가 */}
           {currentMenu === 'calendar' && <EngineerCalendar user={user} />}
           {currentMenu === 'companies' && <CompanyManagement partsList={partsList} />}
           {currentMenu === 'parts' && <PartManagement />}
@@ -72,6 +109,13 @@ export default function App() {
           {currentMenu === 'service_management' && <ServiceManagement />}
           {currentMenu === 'delivery_history' && <DeliveryHistory partsList={partsList} />}
           {currentMenu === 'users' && isAdmin && <UserManagement />}
+          {currentMenu === 'purchase_request' && (
+            <PurchaseRequest 
+              user={user} 
+              isAdmin={isAdmin} 
+              onUpdateRequests={fetchPurchaseAlerts} 
+            />
+          )}
         </main>
       </div>
 

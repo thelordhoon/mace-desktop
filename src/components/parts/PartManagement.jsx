@@ -8,7 +8,7 @@ import DeliveryHistoryTab from './DeliveryHistoryTab'
 export default function PartManagement() {
   const [activeTab, setActiveTab] = useState('소모품') // '소모품' | '일반부품' | '프린터' | '이력관리'
   const [partsList, setPartsList] = useState([])
-  const [showAddPartForm, setShowAddPartForm] = useState(false)
+  const [showAddPartForm, setShowAddPartForm] = useState(false) // 💡 올바른 상태 이름 정의
 
   useEffect(() => {
     fetchParts()
@@ -33,7 +33,11 @@ export default function PartManagement() {
           </p>
         </div>
         {activeTab !== '이력관리' && (
-          <button type="button" onClick={() => setShowAddPartForm(!showAddPartForm)} style={{ padding: '10px 18px', background: '#2563EB', color: 'white', border: 'none', borderRadius: '10px', fontWeight: '700', cursor: 'pointer', fontSize: '14px' }}>
+          <button 
+            type="button" 
+            onClick={() => setShowAddPartForm(!showAddPartForm)} 
+            style={{ padding: '10px 18px', background: '#2563EB', color: 'white', border: 'none', borderRadius: '10px', fontWeight: '700', cursor: 'pointer', fontSize: '14px' }}
+          >
             {showAddPartForm ? '✕ 닫기' : `+ 신규 ${activeTab} 품목 등록`}
           </button>
         )}
@@ -60,10 +64,10 @@ export default function PartManagement() {
         ))}
       </div>
 
-      {/* 탭별 컴포넌트 렌더링 */}
+      {/* 탭별 컴포넌트 렌더링 (올바른 prop명인 setShowAddPartForm 전달) */}
       {activeTab === '소모품' && <ConsumablesTab partsList={partsList} refreshParts={fetchParts} showAddForm={showAddPartForm} setShowAddForm={setShowAddPartForm} />}
-      {activeTab === '일반부품' && <GeneralPartsTab partsList={partsList} refreshParts={fetchParts} showAddForm={showAddPartForm} setShowAddForm={setShowAddForm} />}
-      {activeTab === '프린터' && <PrintersTab partsList={partsList} refreshParts={fetchParts} showAddForm={showAddPartForm} setShowAddForm={setShowAddForm} />}
+      {activeTab === '일반부품' && <GeneralPartsTab partsList={partsList} refreshParts={fetchParts} showAddForm={showAddPartForm} setShowAddForm={setShowAddPartForm} />}
+      {activeTab === '프린터' && <PrintersTab partsList={partsList} refreshParts={fetchParts} showAddForm={showAddPartForm} setShowAddForm={setShowAddPartForm} />}
       {activeTab === '이력관리' && <DeliveryHistoryTab refreshParts={fetchParts} />}
     </div>
   )
