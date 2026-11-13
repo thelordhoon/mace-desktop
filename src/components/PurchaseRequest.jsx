@@ -6,7 +6,6 @@ export default function PurchaseRequest({ user, isAdmin, onUpdateRequests }) {
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
 
-  // 💡 로그인한 유저의 이름을 '배진철', '이현희', '김우연' 중 하나로 매핑 ('관리자'인 경우 기본값 '배진철')
   const getInitialAuthor = () => {
     const rawName = user?.author || user?.full_name || user?.username || ''
     if (rawName.includes('이현희')) return '이현희'
@@ -106,7 +105,7 @@ export default function PurchaseRequest({ user, isAdmin, onUpdateRequests }) {
         .insert([
           {
             requester_id: String(user.id || user.username || selectedRequester),
-            requester_name: selectedRequester, // 💡 선택된 실명(배진철, 이현희, 김우연) 저장
+            requester_name: selectedRequester,
             request_date: today,
             status: 'requested'
           }
@@ -236,7 +235,6 @@ export default function PurchaseRequest({ user, isAdmin, onUpdateRequests }) {
             <h3 style={{ fontSize: '16px', fontWeight: '700', color: '#1e293b', margin: '0 0 4px 0' }}>신규 구매요청</h3>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '4px' }}>
               <span style={{ fontSize: '13px', color: '#475569' }}>요청자:</span>
-              {/* 💡 요청자 실명 선택 드롭다운 (배진철, 이현희, 김우연) */}
               <select 
                 value={selectedRequester} 
                 onChange={(e) => setSelectedRequester(e.target.value)}
@@ -415,7 +413,7 @@ export default function PurchaseRequest({ user, isAdmin, onUpdateRequests }) {
                         {badge.label}
                       </span>
 
-                      {/* 💡 관리자 또는 누구나 처리할 수 있도록 요청 상태일 때 구매완료 버튼 노출 */}
+                      {/* 💡 배진철, 이현희, 김우연 누구나 '구매완료 처리' 가능 */}
                       {req.status === 'requested' && ['배진철', '이현희', '김우연'].includes(selectedRequester) && (
                         <button
                           onClick={() => handleStatusChange(req.id, 'purchased')}
@@ -443,17 +441,17 @@ export default function PurchaseRequest({ user, isAdmin, onUpdateRequests }) {
                     </div>
                   </div>
 
-                  {/* 품목 테이블 */}
+                  {/* 💡 품목 테이블 (고정 너비 tableLayout 적용으로 완벽한 Align 맞춤) */}
                   <div style={{ overflowX: 'auto' }}>
-                    <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '13px' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '13px', tableLayout: 'fixed' }}>
                       <thead>
                         <tr style={{ borderBottom: '1px solid #e2e8f0', color: '#64748b', backgroundColor: '#ffffff' }}>
-                          <th style={{ padding: '10px 16px', fontWeight: '600' }}>품목명</th>
-                          <th style={{ padding: '10px 16px', fontWeight: '600' }}>수량</th>
-                          <th style={{ padding: '10px 16px', fontWeight: '600' }}>단가</th>
-                          <th style={{ padding: '10px 16px', fontWeight: '600' }}>금액</th>
-                          <th style={{ padding: '10px 16px', fontWeight: '600' }}>사용처 (구입 목적)</th>
-                          <th style={{ padding: '10px 16px', fontWeight: '600' }}>구매처 링크</th>
+                          <th style={{ padding: '10px 16px', fontWeight: '600', width: '25%' }}>품목명</th>
+                          <th style={{ padding: '10px 16px', fontWeight: '600', width: '10%' }}>수량</th>
+                          <th style={{ padding: '10px 16px', fontWeight: '600', width: '12%' }}>단가</th>
+                          <th style={{ padding: '10px 16px', fontWeight: '600', width: '13%' }}>금액</th>
+                          <th style={{ padding: '10px 16px', fontWeight: '600', width: '20%' }}>사용처 (구입 목적)</th>
+                          <th style={{ padding: '10px 16px', fontWeight: '600', width: '20%' }}>구매처 링크</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -465,15 +463,15 @@ export default function PurchaseRequest({ user, isAdmin, onUpdateRequests }) {
 
                           return (
                             <tr key={idx} style={{ borderBottom: idx < req.items.length - 1 ? '1px solid #f1f5f9' : 'none' }}>
-                              <td style={{ padding: '12px 16px', color: '#1e293b', fontWeight: '600' }}>{item.item_name}</td>
+                              <td style={{ padding: '12px 16px', color: '#1e293b', fontWeight: '600', wordBreak: 'break-all' }}>{item.item_name}</td>
                               <td style={{ padding: '12px 16px', color: '#475569' }}>{item.quantity} {item.unit}</td>
                               <td style={{ padding: '12px 16px', color: '#475569' }}>{item.unit_price ? `${item.unit_price.toLocaleString()}원` : '0원'}</td>
                               <td style={{ padding: '12px 16px', color: '#1e293b', fontWeight: '600' }}>{itemTotal ? `${itemTotal.toLocaleString()}원` : '0원'}</td>
-                              <td style={{ padding: '12px 16px', color: '#334155' }}>{item.specification || '-'}</td>
-                              <td style={{ padding: '12px 16px' }}>
+                              <td style={{ padding: '12px 16px', color: '#334155', wordBreak: 'break-all' }}>{item.specification || '-'}</td>
+                              <td style={{ padding: '12px 16px', wordBreak: 'break-all' }}>
                                 {validUrl ? (
                                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                    <span style={{ color: '#64748b', fontSize: '12px', maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                    <span style={{ color: '#64748b', fontSize: '12px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
                                       {item.site_url}
                                     </span>
                                     <a 
