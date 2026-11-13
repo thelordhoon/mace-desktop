@@ -6,15 +6,8 @@ export default function PurchaseRequest({ user, isAdmin, onUpdateRequests }) {
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
 
-  const getInitialAuthor = () => {
-    const rawName = user?.author || user?.full_name || user?.username || ''
-    if (rawName.includes('이현희')) return '이현희'
-    if (rawName.includes('김우연')) return '김우연'
-    if (rawName.includes('배진철') || rawName === 'bae' || rawName === '관리자' || isAdmin) return '배진철'
-    return rawName || '배진철'
-  }
-
-  const [selectedRequester, setSelectedRequester] = useState(getInitialAuthor())
+  // 💡 로그인한 사용자 이름을 자동으로 가져오기 (기본값: 배진철)
+  const currentUserName = user?.author || user?.full_name || user?.username || '배진철'
 
   const [items, setItems] = useState([
     { item_name: '', quantity: 1, unit: 'EA', unit_price: '', purpose: '', site_url: '' }
@@ -104,8 +97,8 @@ export default function PurchaseRequest({ user, isAdmin, onUpdateRequests }) {
         .from('purchase_requests')
         .insert([
           {
-            requester_id: String(user.id || user.username || selectedRequester),
-            requester_name: selectedRequester,
+            requester_id: String(user?.id || currentUserName),
+            requester_name: currentUserName, // 💡 로그인한 사람의 이름이 자동으로 요청자로 등록됨
             request_date: today,
             status: 'requested'
           }
@@ -146,7 +139,7 @@ export default function PurchaseRequest({ user, isAdmin, onUpdateRequests }) {
   const handleStatusChange = async (reqId, newStatus) => {
     const confirmMsg = newStatus === 'purchased' 
       ? '구매완료(배송중) 상태로 변경하시겠습니까?' 
-      : `"${selectedRequester}" 님 명의로 수령완료 처리하시겠습니까?`
+      : `"${currentUserName}" 님 명의로 수령완료 처리하시겠습니까?`
 
     if (!window.confirm(confirmMsg)) return
 
@@ -156,11 +149,11 @@ export default function PurchaseRequest({ user, isAdmin, onUpdateRequests }) {
 
       if (newStatus === 'purchased') {
         updatePayload.paid_at = now
-        updatePayload.paid_by = selectedRequester
+        updatePayload.paid_by = currentUserName
       } else if (newStatus === 'received') {
         updatePayload.received_at = now
-        updatePayload.received_by = selectedRequester
-        updatePayload.recipient_name = selectedRequester
+        updatePayload.received_by = currentUserName
+        updatePayload.recipient_name = currentUserName
       }
 
       const { error } = await supabase
@@ -233,17 +226,8 @@ export default function PurchaseRequest({ user, isAdmin, onUpdateRequests }) {
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '10px' }}>
           <div>
             <h3 style={{ fontSize: '16px', fontWeight: '700', color: '#1e293b', margin: '0 0 4px 0' }}>신규 구매요청</h3>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '4px' }}>
-              <span style={{ fontSize: '13px', color: '#475569' }}>요청자:</span>
-              <select 
-                value={selectedRequester} 
-                onChange={(e) => setSelectedRequester(e.target.value)}
-                style={{ padding: '4px 8px', fontSize: '13px', fontWeight: '700', borderRadius: '6px', border: '1px solid #cbd5e1', backgroundColor: '#f8fafc', color: '#0f172a', outline: 'none' }}
-              >
-                <option value="배진철">배진철</option>
-                <option value="이현희">이현희</option>
-                <option value="김우연">김우연</option>
-              </select>
+            <div style={{ fontSize: '13px', color: '#475569', marginTop: '4px' }}>
+              요청자: <strong style={{ color: '#0f172a' }}>{currentUserName}</strong>
             </div>
           </div>
           <button 
@@ -413,8 +397,8 @@ export default function PurchaseRequest({ user, isAdmin, onUpdateRequests }) {
                         {badge.label}
                       </span>
 
-                      {/* 💡 배진철, 이현희, 김우연 누구나 '구매완료 처리' 가능 */}
-                      {req.status === 'requested' && ['배진철', '이현희', '김우연'].includes(selectedRequester) && (
+                      {/* 💡 배진철, 이현희, 김우연 누구나 '구매완료 처리' 가능하도록 허용 */}
+                      {req.status === 'requested' && ['배진철', '이현희', '김우연'].includes(currentUserName) && (
                         <button
                           onClick={() => handleStatusChange(req.id, 'purchased')}
                           style={{ padding: '5px 12px', backgroundColor: '#f59e0b', color: '#ffffff', border: 'none', borderRadius: '6px', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}
@@ -428,7 +412,7 @@ export default function PurchaseRequest({ user, isAdmin, onUpdateRequests }) {
                           onClick={() => handleStatusChange(req.id, 'received')}
                           style={{ padding: '5px 12px', backgroundColor: '#16a34a', color: '#ffffff', border: 'none', borderRadius: '6px', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}
                         >
-                          수령완료 ({selectedRequester})
+                          수령완료 ({currentUserName})
                         </button>
                       )}
 
@@ -441,7 +425,7 @@ export default function PurchaseRequest({ user, isAdmin, onUpdateRequests }) {
                     </div>
                   </div>
 
-                  {/* 💡 품목 테이블 (고정 너비 tableLayout 적용으로 완벽한 Align 맞춤) */}
+                  {/* 품목 테이블 (고정 너비 tableLayout 적용으로 정렬 라인 일치) */}
                   <div style={{ overflowX: 'auto' }}>
                     <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '13px', tableLayout: 'fixed' }}>
                       <thead>
