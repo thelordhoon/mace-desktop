@@ -6,9 +6,17 @@ export default function PurchaseRequest({ user, isAdmin, onUpdateRequests }) {
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
 
-  const currentUserName = user?.author || user?.full_name || user?.username || '사용자'
+  // 💡 로그인한 유저의 이름을 '배진철', '이현희', '김우연' 중 하나로 매핑 ('관리자'인 경우 기본값 '배진철')
+  const getInitialAuthor = () => {
+    const rawName = user?.author || user?.full_name || user?.username || ''
+    if (rawName.includes('이현희')) return '이현희'
+    if (rawName.includes('김우연')) return '김우연'
+    if (rawName.includes('배진철') || rawName === 'bae' || rawName === '관리자' || isAdmin) return '배진철'
+    return rawName || '배진철'
+  }
 
-  // 💡 purpose(사용처/구입목적) 필드 추가
+  const [selectedRequester, setSelectedRequester] = useState(getInitialAuthor())
+
   const [items, setItems] = useState([
     { item_name: '', quantity: 1, unit: 'EA', unit_price: '', purpose: '', site_url: '' }
   ])
@@ -30,6 +38,7 @@ export default function PurchaseRequest({ user, isAdmin, onUpdateRequests }) {
       if (!reqData || reqData.length === 0) {
         setRequests([])
         setLoading(false)
+        if (onUpdateRequests) onUpdateRequests([])
         return
       }
 
@@ -47,7 +56,7 @@ export default function PurchaseRequest({ user, isAdmin, onUpdateRequests }) {
       }))
 
       setRequests(combined)
-      if (onUpdateRequests) onUpdateRequests()
+      if (onUpdateRequests) onUpdateRequests(combined)
     } catch (error) {
       console.error('구매요청 조회 오류:', error.message)
     } finally {
@@ -78,7 +87,6 @@ export default function PurchaseRequest({ user, isAdmin, onUpdateRequests }) {
 
   const handleSubmit = async (e) => {
     e.preventDefault()
-
     if (submitting) return
 
     for (let i = 0; i < items.length; i++) {
@@ -97,8 +105,8 @@ export default function PurchaseRequest({ user, isAdmin, onUpdateRequests }) {
         .from('purchase_requests')
         .insert([
           {
-            requester_id: String(user.id || user.username),
-            requester_name: currentUserName,
+            requester_id: String(user.id || user.username || selectedRequester),
+            requester_name: selectedRequester, // 💡 선택된 실명(배진철, 이현희, 김우연) 저장
             request_date: today,
             status: 'requested'
           }
@@ -109,7 +117,6 @@ export default function PurchaseRequest({ user, isAdmin, onUpdateRequests }) {
 
       const newRequestId = reqInsertData[0].id
 
-      // 💡 사용처(purpose) 데이터를 기존 specification 컬럼에 저장
       const itemsToInsert = items.map(item => ({
         request_id: newRequestId,
         item_name: item.item_name,
@@ -139,8 +146,8 @@ export default function PurchaseRequest({ user, isAdmin, onUpdateRequests }) {
 
   const handleStatusChange = async (reqId, newStatus) => {
     const confirmMsg = newStatus === 'purchased' 
-      ? '구매완료(발주/결제 완료) 상태로 변경하시겠습니까?' 
-      : `"${currentUserName}" 님 명의로 수령완료 처리하시겠습니까?`
+      ? '구매완료(배송중) 상태로 변경하시겠습니까?' 
+      : `"${selectedRequester}" 님 명의로 수령완료 처리하시겠습니까?`
 
     if (!window.confirm(confirmMsg)) return
 
@@ -150,11 +157,11 @@ export default function PurchaseRequest({ user, isAdmin, onUpdateRequests }) {
 
       if (newStatus === 'purchased') {
         updatePayload.paid_at = now
-        updatePayload.paid_by = currentUserName
+        updatePayload.paid_by = selectedRequester
       } else if (newStatus === 'received') {
         updatePayload.received_at = now
-        updatePayload.received_by = currentUserName
-        updatePayload.recipient_name = currentUserName
+        updatePayload.received_by = selectedRequester
+        updatePayload.recipient_name = selectedRequester
       }
 
       const { error } = await supabase
@@ -224,10 +231,22 @@ export default function PurchaseRequest({ user, isAdmin, onUpdateRequests }) {
 
       {/* 신규 구매요청 등록 카드 */}
       <div style={{ backgroundColor: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '12px', padding: '24px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '10px' }}>
           <div>
             <h3 style={{ fontSize: '16px', fontWeight: '700', color: '#1e293b', margin: '0 0 4px 0' }}>신규 구매요청</h3>
-            <span style={{ fontSize: '13px', color: '#475569' }}>요청자: <strong>{currentUserName}</strong></span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '4px' }}>
+              <span style={{ fontSize: '13px', color: '#475569' }}>요청자:</span>
+              {/* 💡 요청자 실명 선택 드롭다운 (배진철, 이현희, 김우연) */}
+              <select 
+                value={selectedRequester} 
+                onChange={(e) => setSelectedRequester(e.target.value)}
+                style={{ padding: '4px 8px', fontSize: '13px', fontWeight: '700', borderRadius: '6px', border: '1px solid #cbd5e1', backgroundColor: '#f8fafc', color: '#0f172a', outline: 'none' }}
+              >
+                <option value="배진철">배진철</option>
+                <option value="이현희">이현희</option>
+                <option value="김우연">김우연</option>
+              </select>
+            </div>
           </div>
           <button 
             type="button" 
@@ -299,12 +318,11 @@ export default function PurchaseRequest({ user, isAdmin, onUpdateRequests }) {
                   </div>
                 </div>
 
-                {/* 💡 예상 금액과 구매처 링크 사이에 추가된 사용처(구입 목적) 입력란 */}
                 <div style={{ flex: '1.8', minWidth: '160px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
                   <label style={{ fontSize: '11px', fontWeight: '600', color: '#64748b' }}>사용처 (구입 목적)</label>
                   <input 
                     type="text" 
-                    placeholder="예:사무실 비품 , 부자재" 
+                    placeholder="예: 사무실 비품, 부자재" 
                     value={item.purpose}
                     onChange={(e) => handleItemChange(index, 'purpose', e.target.value)}
                     style={{ width: '100%', padding: '8px 12px', border: '1px solid #cbd5e1', borderRadius: '6px', fontSize: '13px', boxSizing: 'border-box' }}
@@ -397,7 +415,8 @@ export default function PurchaseRequest({ user, isAdmin, onUpdateRequests }) {
                         {badge.label}
                       </span>
 
-                      {req.status === 'requested' && isAdmin && (
+                      {/* 💡 관리자 또는 누구나 처리할 수 있도록 요청 상태일 때 구매완료 버튼 노출 */}
+                      {req.status === 'requested' && ['배진철', '이현희', '김우연'].includes(selectedRequester) && (
                         <button
                           onClick={() => handleStatusChange(req.id, 'purchased')}
                           style={{ padding: '5px 12px', backgroundColor: '#f59e0b', color: '#ffffff', border: 'none', borderRadius: '6px', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}
@@ -411,7 +430,7 @@ export default function PurchaseRequest({ user, isAdmin, onUpdateRequests }) {
                           onClick={() => handleStatusChange(req.id, 'received')}
                           style={{ padding: '5px 12px', backgroundColor: '#16a34a', color: '#ffffff', border: 'none', borderRadius: '6px', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}
                         >
-                          수령완료 ({currentUserName})
+                          수령완료 ({selectedRequester})
                         </button>
                       )}
 
@@ -424,7 +443,7 @@ export default function PurchaseRequest({ user, isAdmin, onUpdateRequests }) {
                     </div>
                   </div>
 
-                  {/* 품목 테이블 (사용처 컬럼 포함) */}
+                  {/* 품목 테이블 */}
                   <div style={{ overflowX: 'auto' }}>
                     <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '13px' }}>
                       <thead>
