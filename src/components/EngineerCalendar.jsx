@@ -10,11 +10,14 @@ const getLocalTodayString = () => {
   return `${year}-${month}-${day}`
 }
 
-export default function EngineerCalendar({ user }) {
+export default function EngineerCalendar({ user, isMobileView = false }) {
   const [schedules, setSchedules] = useState([])
   const [companies, setCompanies] = useState([])
   const [currentDate, setCurrentDate] = useState(new Date())
   const [selectedEngineerFilter, setSelectedEngineerFilter] = useState('ALL')
+  
+  // 💡 모바일 3일 뷰를 위한 기준 날짜 상태 (YYYY-MM-DD)
+  const [mobileSelectedDateStr, setMobileSelectedDateStr] = useState(getLocalTodayString())
   
   // 💡 엔지니어 3명 
   const engineerList = ['배진철', '진희찬', '국민석', '관리부']
@@ -59,7 +62,7 @@ export default function EngineerCalendar({ user }) {
 
   useEffect(() => {
     fetchSchedules()
-  }, [currentDate])
+  }, [currentDate, isMobileView, mobileSelectedDateStr])
 
   const handleFormChange = (e) => {
     const { name, value } = e.target
@@ -110,11 +113,20 @@ export default function EngineerCalendar({ user }) {
   }
 
   const fetchSchedules = async () => {
-    const year = currentDate.getFullYear()
-    const month = currentDate.getMonth() + 1
-    
-    const firstDay = `${year}-${String(month).padStart(2, '0')}-01`
-    const lastDay = new Date(year, month, 0).toISOString().substring(0, 10)
+    let firstDay, lastDay
+    if (isMobileView) {
+      // 모바일은 선택된 날짜 주변 한 달 폭을 넉넉히 가져옴
+      const parts = mobileSelectedDateStr.split('-')
+      const year = Number(parts[0])
+      const month = Number(parts[1])
+      firstDay = `${year}-${String(month).padStart(2, '0')}-01`
+      lastDay = new Date(year, month, 0).toISOString().substring(0, 10)
+    } else {
+      const year = currentDate.getFullYear()
+      const month = currentDate.getMonth() + 1
+      firstDay = `${year}-${String(month).padStart(2, '0')}-01`
+      lastDay = new Date(year, month, 0).toISOString().substring(0, 10)
+    }
 
     const { data, error } = await supabase
       .from('engineer_schedules')
@@ -140,10 +152,51 @@ export default function EngineerCalendar({ user }) {
     setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 1))
   }
 
+  // 💡 모바일 날짜 하루씩 이동 핸들러
+  const handleMoveMobileDate = (days) => {
+    const parts = mobileSelectedDateStr.split('-')
+    const d = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]))
+    d.setDate(d.getDate() + days)
+    const year = d.getFullYear()
+    const month = String(d.getMonth() + 1).padStart(2, '0')
+    const day = String(d.getDate()).padStart(2, '0')
+    setMobileSelectedDateStr(`${year}-${month}-${day}`)
+  }
+
+  // 터치 스와이프 좌표 계산용
+  const [touchStartX, setTouchStartX] = useState(0)
+  const handleTouchStart = (e) => setTouchStartX(e.touches[0].clientX)
+  const handleTouchEnd = (e) => {
+    const touchEndX = e.changedTouches[0].clientX
+    if (touchStartX - touchEndX > 50) {
+      handleMoveMobileDate(1) // 왼쪽으로 쓸으면 다음 날
+    } else if (touchEndX - touchStartX > 50) {
+      handleMoveMobileDate(-1) // 오른쪽으로 쓸으면 전날
+    }
+  }
+
+  // 날짜 스트링 포맷터 (예: "11월 15일 (일)")
+  const formatMobileDateLabel = (dateStr) => {
+    const parts = dateStr.split('-')
+    const d = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]))
+    const days = ['일', '월', '화', '수', '목', '금', '토']
+    return `${Number(parts[1])}월 ${Number(parts[2])}일 (${days[d.getDay()]})`
+  }
+
+  const getAdjacentDateStr = (dateStr, days) => {
+    const parts = dateStr.split('-')
+    const d = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]))
+    d.setDate(d.getDate() + days)
+    const year = d.getFullYear()
+    const month = String(d.getMonth() + 1).padStart(2, '0')
+    const day = String(d.getDate()).padStart(2, '0')
+    return `${year}-${month}-${day}`
+  }
+
   const handleOpenAddModal = (dateStr = null) => {
     setIsEditMode(false)
     setCurrentScheduleId(null)
-    const targetDate = dateStr || getLocalTodayString()
+    const targetDate = dateStr || (isMobileView ? mobileSelectedDateStr : getLocalTodayString())
     
     const myName = user?.full_name || user?.username || '배진철'
     const defaultName = engineerList.includes(myName) ? myName : '배진철'
@@ -223,20 +276,6 @@ export default function EngineerCalendar({ user }) {
     }
   }
 
-  const year = currentDate.getFullYear()
-  const month = currentDate.getMonth()
-  const firstDayIndex = new Date(year, month, 1).getDay()
-  const totalDays = new Date(year, month + 1, 0).getDate()
-
-  const calendarCells = []
-  for (let i = 0; i < firstDayIndex; i++) {
-    calendarCells.push(null)
-  }
-  for (let d = 1; d <= totalDays; d++) {
-    const formattedDate = `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`
-    calendarCells.push(formattedDate)
-  }
-
   // 💡 배지 스타일: 관리부는 연보라색(#f3e8ff)
   const getBadgeStyle = (type, engineerName) => {
     if (engineerName === '관리부') {
@@ -262,6 +301,199 @@ export default function EngineerCalendar({ user }) {
 
   const inputStyle = { width: '100%', padding: '10px 12px', fontSize: '14px', borderRadius: '8px', border: '1px solid #CBD5E1', backgroundColor: '#F8FAFC', outline: 'none', boxSizing: 'border-box' }
   const labelStyle = { fontSize: '13px', fontWeight: '600', color: '#64748B', marginBottom: '4px', display: 'block' }
+
+  // 📱 휴대폰(모바일) 전용 뷰 렌더링
+  if (isMobileView) {
+    const yesterdayStr = getAdjacentDateStr(mobileSelectedDateStr, -1)
+    const tomorrowStr = getAdjacentDateStr(mobileSelectedDateStr, 1)
+    const todaySchedules = filteredSchedules.filter(sch => sch.start_date <= mobileSelectedDateStr && sch.end_date >= mobileSelectedDateStr)
+
+    return (
+      <div 
+        onTouchStart={handleTouchStart} 
+        onTouchEnd={handleTouchEnd}
+        style={{ display: 'flex', flexDirection: 'column', gap: '16px', paddingBottom: '40px' }}
+      >
+        {/* 상단 파란색 영역: 3일 캘린더 네비게이션 */}
+        <div style={{ backgroundColor: '#2563EB', borderRadius: '16px', padding: '16px', color: '#fff', boxShadow: '0 4px 6px rgba(0,0,0,0.1)' }}>
+          
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <button onClick={() => handleMoveMobileDate(-1)} style={{ background: 'rgba(255,255,255,0.2)', border: 'none', color: '#fff', padding: '6px 12px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer' }}>◀</button>
+              <span style={{ fontSize: '16px', fontWeight: '800' }}>{formatMobileDateLabel(mobileSelectedDateStr)}</span>
+              <button onClick={() => handleMoveMobileDate(1)} style={{ background: 'rgba(255,255,255,0.2)', border: 'none', color: '#fff', padding: '6px 12px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer' }}>▶</button>
+            </div>
+            <button 
+              onClick={() => setMobileSelectedDateStr(getLocalTodayString())}
+              style={{ background: '#ffffff', color: '#2563EB', border: 'none', padding: '4px 10px', borderRadius: '6px', fontSize: '12px', fontWeight: '700', cursor: 'pointer' }}
+            >
+              오늘
+            </button>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.4fr 1fr', gap: '8px', alignItems: 'center' }}>
+            <div 
+              onClick={() => setMobileSelectedDateStr(yesterdayStr)}
+              style={{ background: 'rgba(255,255,255,0.2)', borderRadius: '10px', padding: '10px 6px', textAlign: 'center', cursor: 'pointer', opacity: 0.8, fontSize: '12px' }}
+            >
+              <div style={{ fontSize: '11px', opacity: 0.9 }}>어제</div>
+              <div style={{ fontWeight: '700', marginTop: '2px' }}>{yesterdayStr.slice(5)}</div>
+            </div>
+
+            <div style={{ background: '#ffffff', color: '#1E293B', borderRadius: '12px', padding: '14px 8px', textAlign: 'center', boxShadow: '0 4px 12px rgba(0,0,0,0.15)', transform: 'scale(1.05)' }}>
+              <div style={{ fontSize: '12px', fontWeight: '800', color: '#2563EB' }}>✨ 오늘</div>
+              <div style={{ fontSize: '15px', fontWeight: '900', marginTop: '4px' }}>{mobileSelectedDateStr}</div>
+              <div style={{ fontSize: '11px', color: '#64748B', marginTop: '2px' }}>일정 {todaySchedules.length}건</div>
+            </div>
+
+            <div 
+              onClick={() => setMobileSelectedDateStr(tomorrowStr)}
+              style={{ background: 'rgba(255,255,255,0.2)', borderRadius: '10px', padding: '10px 6px', textAlign: 'center', cursor: 'pointer', opacity: 0.8, fontSize: '12px' }}
+            >
+              <div style={{ fontSize: '11px', opacity: 0.9 }}>내일</div>
+              <div style={{ fontWeight: '700', marginTop: '2px' }}>{tomorrowStr.slice(5)}</div>
+            </div>
+          </div>
+        </div>
+
+        {/* 하단 영역: 선택된 날짜의 상세 일정 리스트 & 등록 버튼 */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0 4px' }}>
+            <h3 style={{ margin: 0, fontSize: '15px', fontWeight: '800', color: '#0F172A' }}>
+              📋 {mobileSelectedDateStr} 작업 일정
+            </h3>
+            <button 
+              onClick={() => handleOpenAddModal(mobileSelectedDateStr)}
+              style={{ background: '#2563EB', color: '#fff', border: 'none', padding: '6px 12px', borderRadius: '8px', fontSize: '12px', fontWeight: '700', cursor: 'pointer' }}
+            >
+              + 일정 등록
+            </button>
+          </div>
+
+          {todaySchedules.length === 0 ? (
+            <div style={{ backgroundColor: '#fff', borderRadius: '12px', padding: '30px', textAlign: 'center', color: '#64748B', fontSize: '13px', border: '1px solid #E2E8F0' }}>
+              등록된 일정이 없습니다. 좌우로 쓸어 다른 날짜를 확인해보세요!
+            </div>
+          ) : (
+            todaySchedules.map(sch => {
+              const badge = getBadgeStyle(sch.work_type, sch.engineer_name)
+              return (
+                <div 
+                  key={sch.id}
+                  onClick={() => handleOpenEditModal(sch)}
+                  style={{
+                    backgroundColor: '#fff',
+                    border: `1px solid ${badge.border}`,
+                    borderLeft: `5px solid ${badge.color}`,
+                    borderRadius: '10px',
+                    padding: '12px',
+                    boxShadow: '0 1px 3px rgba(0,0,0,0.05)',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '6px'
+                  }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ fontWeight: '800', fontSize: '13px', color: badge.color }}>[{sch.engineer_name}] {sch.work_type}</span>
+                    <span style={{ fontSize: '11px', color: '#64748B' }}>{sch.start_date} ~ {sch.end_date}</span>
+                  </div>
+                  <div style={{ fontSize: '14px', fontWeight: '700', color: '#1E293B' }}>
+                    {sch.company_name ? `${sch.company_name} - ` : ''}{sch.title}
+                  </div>
+                  {sch.note && <div style={{ fontSize: '12px', color: '#475569', background: '#F8FAFC', padding: '6px', borderRadius: '6px' }}>{sch.note}</div>}
+                </div>
+              )
+            })
+          )}
+        </div>
+
+        {/* 일정 등록 / 수정 모달 */}
+        {showModal && (
+          <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }}>
+            <div style={{ backgroundColor: '#ffffff', borderRadius: '12px', padding: '24px', width: '90%', maxWidth: '400px', boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1)', boxSizing: 'border-box' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+                <h3 style={{ margin: 0, fontSize: '18px', color: '#0F172A', fontWeight: '800' }}>
+                  {isEditMode ? '✏️ 현장 일정 수정' : '📅 신규 현장 일정 등록'}
+                </h3>
+                <button onClick={() => setShowModal(false)} style={{ border: 'none', background: 'none', fontSize: '16px', color: '#64748B', cursor: 'pointer', fontWeight: '700' }}>✕</button>
+              </div>
+
+              <form onSubmit={handleSubmitSchedule} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                  <div>
+                    <label style={labelStyle}>담당 엔지니어*</label>
+                    <select name="engineer_name" value={form.engineer_name} onChange={handleFormChange} style={inputStyle}>
+                      {engineerList.map(eng => <option key={eng} value={eng}>{eng}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label style={labelStyle}>업무 구분*</label>
+                    <select name="work_type" value={form.work_type} onChange={handleFormChange} style={inputStyle}>
+                      {workTypes.map(t => <option key={t} value={t}>{t}</option>)}
+                    </select>
+                  </div>
+                </div>
+
+                <div>
+                  <label style={labelStyle}>작업 제목 / 이슈 요약*</label>
+                  <input type="text" name="title" placeholder="예: 인쇄불가, 부팅실패등" value={form.title} onChange={handleFormChange} style={inputStyle} required />
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                  <div>
+                    <label style={labelStyle}>시작일*</label>
+                    <input type="date" name="start_date" value={form.start_date} onChange={handleFormChange} style={inputStyle} required />
+                  </div>
+                  <div>
+                    <label style={labelStyle}>종료일</label>
+                    <input type="date" name="end_date" value={form.end_date} onChange={handleFormChange} style={inputStyle} />
+                  </div>
+                </div>
+
+                <div>
+                  <label style={labelStyle}>상세 메모 및 특이사항</label>
+                  <textarea rows="3" name="note" placeholder="메모 입력..." value={form.note} onChange={handleFormChange} style={inputStyle} />
+                </div>
+
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '10px' }}>
+                  {isEditMode ? (
+                    <button type="button" onClick={() => handleDeleteSchedule(currentScheduleId)} style={{ padding: '10px 16px', background: '#FEE2E2', color: '#EF4444', border: 'none', borderRadius: '8px', fontWeight: '700', cursor: 'pointer' }}>
+                      삭제
+                    </button>
+                  ) : <div />}
+                  
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <button type="button" onClick={() => setShowModal(false)} style={{ padding: '10px 16px', background: '#F1F5F9', color: '#64748B', border: '1px solid #CBD5E1', borderRadius: '8px', fontWeight: '600', cursor: 'pointer' }}>
+                      취소
+                    </button>
+                    <button type="submit" style={{ padding: '10px 20px', background: '#2563EB', color: '#FFFFFF', border: 'none', borderRadius: '8px', fontWeight: '700', cursor: 'pointer' }}>
+                      {isEditMode ? '수정 저장' : '등록 저장'}
+                    </button>
+                  </div>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  // 🖥️ 데스크탑 버전 기존 렌더링 코드
+  const year = currentDate.getFullYear()
+  const month = currentDate.getMonth()
+  const firstDayIndex = new Date(year, month, 1).getDay()
+  const totalDays = new Date(year, month + 1, 0).getDate()
+
+  const calendarCells = []
+  for (let i = 0; i < firstDayIndex; i++) {
+    calendarCells.push(null)
+  }
+  for (let d = 1; d <= totalDays; d++) {
+    const formattedDate = `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`
+    calendarCells.push(formattedDate)
+  }
 
   return (
     <div style={{ maxWidth: '1600px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '20px' }}>
@@ -630,23 +862,13 @@ export default function EngineerCalendar({ user }) {
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
                 <div>
                   <label style={labelStyle}>담당 엔지니어*</label>
-                  <select 
-                    name="engineer_name"
-                    value={form.engineer_name} 
-                    onChange={handleFormChange} 
-                    style={inputStyle}
-                  >
+                  <select name="engineer_name" value={form.engineer_name} onChange={handleFormChange} style={inputStyle}>
                     {engineerList.map(eng => <option key={eng} value={eng}>{eng}</option>)}
                   </select>
                 </div>
                 <div>
                   <label style={labelStyle}>업무 구분*</label>
-                  <select 
-                    name="work_type"
-                    value={form.work_type} 
-                    onChange={handleFormChange} 
-                    style={inputStyle}
-                  >
+                  <select name="work_type" value={form.work_type} onChange={handleFormChange} style={inputStyle}>
                     {workTypes.map(t => <option key={t} value={t}>{t}</option>)}
                   </select>
                 </div>
@@ -693,15 +915,7 @@ export default function EngineerCalendar({ user }) {
 
               <div>
                 <label style={labelStyle}>작업 제목 / 이슈 요약*</label>
-                <input 
-                  type="text" 
-                  name="title"
-                  placeholder="예: 인쇄불가, 부팅실패등" 
-                  value={form.title} 
-                  onChange={handleFormChange} 
-                  style={inputStyle} 
-                  required 
-                />
+                <input type="text" name="title" placeholder="예: 인쇄불가, 부팅실패등" value={form.title} onChange={handleFormChange} style={inputStyle} required />
               </div>
 
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
