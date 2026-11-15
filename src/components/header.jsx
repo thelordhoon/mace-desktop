@@ -1,7 +1,6 @@
 import React from 'react'
 
-export default function Header({ user, onLogout, purchaseAlerts = [], onNavigatePurchase }) {
-  // 💡 1순위: user.author, 2순위: user.full_name, 3순위: user.username (단, 'admin'이나 'bae'인 경우 실제 이름으로 매핑하거나 그대로 출력)
+export default function Header({ user, onLogout, purchaseAlerts = [], onNavigatePurchase, isMobileView = false }) {
   const displayName = user?.author || user?.full_name || user?.username || '사용자'
 
   const visibleAlerts = purchaseAlerts.filter(req => {
@@ -24,15 +23,34 @@ export default function Header({ user, onLogout, purchaseAlerts = [], onNavigate
   const latestAlert = visibleAlerts.length > 0 ? visibleAlerts[0] : null
 
   return (
-    <header style={{ width: '100%', height: '60px', backgroundColor: '#ffffff', borderBottom: '1px solid #e2e8f0', padding: '0 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', boxSizing: 'border-box', zIndex: 10 }}>
+    <header style={{ 
+      width: '100%', 
+      height: isMobileView ? '46px' : '60px', 
+      backgroundColor: '#ffffff', 
+      borderBottom: '1px solid #e2e8f0', 
+      padding: isMobileView ? '0 12px' : '0 24px', 
+      display: 'flex', 
+      justifyContent: 'space-between', 
+      alignItems: 'center', 
+      boxSizing: 'border-box', 
+      zIndex: 10 
+    }}>
       
       {/* 좌측 영역: 로고 + 알림 배너 */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '24px' }}>
-        <div style={{ fontSize: '18px', fontWeight: '800', color: '#0f172a', display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <span style={{ color: '#2563EB' }}>MACE</span> DESK 대시보드
+      <div style={{ display: 'flex', alignItems: 'center', gap: isMobileView ? '10px' : '24px' }}>
+        <div style={{ 
+          fontSize: isMobileView ? '13px' : '18px', 
+          fontWeight: '800', 
+          color: '#0f172a', 
+          display: 'flex', 
+          alignItems: 'center', 
+          gap: '6px' 
+        }}>
+          <span style={{ color: '#2563EB' }}>MACE</span> {isMobileView ? '대시보드' : 'DESK 대시보드'}
         </div>
 
-        {latestAlert && (
+        {/* 알림 배너 (모바일에서는 공간 절약을 위해 축소) */}
+        {latestAlert && !isMobileView && (
           <div 
             onClick={onNavigatePurchase}
             title="클릭하여 구매요청 페이지로 이동"
@@ -59,7 +77,6 @@ export default function Header({ user, onLogout, purchaseAlerts = [], onNavigate
                 </span>
               </>
             )}
-
             {latestAlert.status === 'purchased' && latestAlert.items?.length > 0 && (
               <>
                 <span>🚚</span>
@@ -69,7 +86,6 @@ export default function Header({ user, onLogout, purchaseAlerts = [], onNavigate
                 </span>
               </>
             )}
-
             {latestAlert.status === 'received' && latestAlert.items?.length > 0 && (
               <>
                 <span>✅</span>
@@ -83,11 +99,23 @@ export default function Header({ user, onLogout, purchaseAlerts = [], onNavigate
       </div>
 
       {/* 우측 사용자 이름 및 로그아웃 */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-        <div style={{ fontSize: '13px', color: '#334155', fontWeight: '500' }}>
-          👤 환영합니다. <strong>{displayName}</strong> 님
+      <div style={{ display: 'flex', alignItems: 'center', gap: isMobileView ? '8px' : '16px' }}>
+        <div style={{ fontSize: isMobileView ? '10px' : '13px', color: '#334155', fontWeight: '500' }}>
+          👤 <strong style={{ fontSize: isMobileView ? '11px' : '13px' }}>{displayName}</strong>님
         </div>
-        <button onClick={onLogout} style={{ padding: '6px 12px', background: '#f1f5f9', color: '#475569', border: '1px solid #cbd5e1', borderRadius: '6px', cursor: 'pointer', fontWeight: '600', fontSize: '12px' }}>
+        <button 
+          onClick={onLogout} 
+          style={{ 
+            padding: isMobileView ? '4px 8px' : '6px 12px', 
+            background: '#f1f5f9', 
+            color: '#475569', 
+            border: '1px solid #cbd5e1', 
+            borderRadius: '6px', 
+            cursor: 'pointer', 
+            fontWeight: '600', 
+            fontSize: isMobileView ? '10px' : '12px' 
+          }}
+        >
           로그아웃
         </button>
       </div>
@@ -95,3 +123,22 @@ export default function Header({ user, onLogout, purchaseAlerts = [], onNavigate
     </header>
   )
 }
+```[cite: 7]
+
+---
+
+### 💡 `App.jsx`에서 헤더에 모바일 여부 전달하기
+`App.jsx` 내부에 모바일 뷰용 `<Header ... isMobileView="{true}"/>` 코드가 들어가 있는지 확인해주세요! 아래와 같이 `isMobileView={true}`를 넘겨주어야 모바일에서만 크기가 줄어듭니다.
+
+```jsx
+// App.jsx의 모바일 렌더링 부분 예시
+{isMobile && (
+  <div style={{ maxWidth: '440px', width: '100%', margin: '0 auto', minHeight: '100vh', backgroundColor: '#F1F5F9', display: 'flex', flexDirection: 'column' }}>
+    <Header 
+      user={user} 
+      onLogout={handleLogout} 
+      purchaseAlerts={purchaseAlerts}
+      onNavigatePurchase={() => setCurrentMenu('purchase_request')}
+      isMobileView={true} // 👈 이 부분이 있어야 모바일에서만 작아집니다!
+    />
+    ...
