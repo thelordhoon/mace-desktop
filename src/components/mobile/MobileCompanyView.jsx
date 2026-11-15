@@ -5,12 +5,10 @@ import html2canvas from 'html2canvas'
 
 export default function MobileCompanyView({ user, companies, allHistories, partsList, onRefreshData, onBackToCalendar }) {
   const [viewMode, setViewMode] = useState('list') // 'list' | 'detail' | 'report'
-  const [mainTab, setMainTab] = useState('companies') // 'companies' | 'parts'
   const [selectedCompany, setSelectedCompany] = useState(null)
   
   // 검색 및 정렬 상태
   const [companySearchTerm, setCompanySearchTerm] = useState('')
-  const [snPartSearchTerm, setSnPartSearchTerm] = useState('')
   const [companySortType, setCompanySortType] = useState('recent_history')
   const [detailSnSearchTerm, setDetailSnSearchTerm] = useState('')
 
@@ -55,31 +53,6 @@ export default function MobileCompanyView({ user, companies, allHistories, parts
       if (Array.isArray(parsed) && parsed.length > 0) return parsed
     } catch (e) {}
     return [{ name: managerData || '', phone: phoneData || '', role: '', email: defaultEmail || '' }]
-  }
-
-  // 부품 단가 정보 조회
-  const getPartPriceInfo = (itemCodeOrName, companyName) => {
-    if (!itemCodeOrName || !itemCodeOrName.trim()) return null
-    const query = itemCodeOrName.trim().toLowerCase()
-    const matchedPart = partsList.find(p => (p.code && p.code.toLowerCase() === query) || (p.name && p.name.toLowerCase() === query))
-    if (!matchedPart) return { found: false }
-
-    let companySpecialPrice = null
-    try {
-      if (matchedPart.company_prices) {
-        const cpList = typeof matchedPart.company_prices === 'string' ? JSON.parse(matchedPart.company_prices) : matchedPart.company_prices
-        if (Array.isArray(cpList)) {
-          const matchedCp = cpList.find(cp => cp.company_name && cp.company_name.toLowerCase() === companyName.toLowerCase())
-          if (matchedCp && matchedCp.price) companySpecialPrice = Number(matchedCp.price)
-        }
-      }
-    } catch (e) {}
-
-    return {
-      found: true,
-      finalPrice: companySpecialPrice !== null ? companySpecialPrice : (matchedPart.customer_price || 0),
-      isSpecial: companySpecialPrice !== null
-    }
   }
 
   // 서비스 이력 불러오기
@@ -286,7 +259,7 @@ export default function MobileCompanyView({ user, companies, allHistories, parts
               style={{ ...inputStyle, backgroundColor: '#FFFFFF', boxShadow: '0 2px 6px rgba(0,0,0,0.05)', height: '40px' }}
             />
             {companySearchTerm && (
-              <span onClick={() => setCompanySearchTerm('')} style={{ position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50körper)', cursor: 'pointer', color: '#94A3B8' }}>✕</span>
+              <span onClick={() => setCompanySearchTerm('')} style={{ position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)', cursor: 'pointer', color: '#94A3B8' }}>✕</span>
             )}
           </div>
 
@@ -375,24 +348,74 @@ export default function MobileCompanyView({ user, companies, allHistories, parts
                   {selectedCompany.managersList.map((m, idx) => (
                     <div key={idx} style={{ backgroundColor: '#F8FAFC', padding: '8px 10px', borderRadius: '8px', fontSize: '12px' }}>
                       <b>{m.name}</b> ({m.role || '직책 없음'}) - 📞 {m.phone || '-'}
+                      {m.email && <div style={{ color: '#64748B', marginTop: '2px' }}>✉️ {m.email}</div>}
                     </div>
                   ))}
                 </div>
 
-                <button onClick={() => setIsEditing(true)} style={{ width: '100%', padding: '8px', background: '#F1F5F9', border: '1px solid #CBD5E1', borderRadius: '8px', fontWeight: '700', cursor: 'pointer' }}>
+                <button onClick={() => setIsEditing(true)} style={{ width: '100%', padding: '10px', background: '#F1F5F9', border: '1px solid #CBD5E1', borderRadius: '8px', fontWeight: '700', cursor: 'pointer' }}>
                   업체 정보 수정 및 담당자 추가
                 </button>
               </div>
             ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                <h4 style={{ margin: '0 0 6px 0', fontSize: '15px' }}>✏️ 업체 정보 수정</h4>
-                <input value={editData.name} onChange={(e) => setEditData({ ...editData, name: e.target.value })} style={inputStyle} />
-                <input placeholder="주소" value={editData.address} onChange={(e) => setEditData({ ...editData, address: e.target.value })} style={inputStyle} />
-                <textarea rows="3" placeholder="비고" value={editData.note} onChange={(e) => setEditData({ ...editData, note: e.target.value })} style={inputStyle} />
+              /* 💡 수정 모드 폼 (담당자 추가 및 이름, 부서/직책, 연락처, 이메일 입력 가능) */
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                <h4 style={{ margin: '0 0 6px 0', fontSize: '15px', fontWeight: '800' }}>✏️ 업체 정보 수정</h4>
                 
-                <div style={{ display: 'flex', gap: '8px' }}>
-                  <button onClick={() => setIsEditing(false)} style={{ flex: 1, padding: '8px', background: '#E2E8F0', border: 'none', borderRadius: '8px', cursor: 'pointer' }}>취소</button>
-                  <button onClick={handleSaveCompanyEdit} style={{ flex: 1, padding: '8px', background: '#2563EB', color: '#fff', border: 'none', borderRadius: '8px', fontWeight: '700', cursor: 'pointer' }}>저장</button>
+                <div>
+                  <label style={labelStyle}>업체명*</label>
+                  <input value={editData.name} onChange={(e) => setEditData({ ...editData, name: e.target.value })} style={inputStyle} />
+                </div>
+
+                <div>
+                  <label style={labelStyle}>주소</label>
+                  <input value={editData.address} onChange={(e) => setEditData({ ...editData, address: e.target.value })} style={inputStyle} />
+                </div>
+
+                <div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                    <label style={{ ...labelStyle, margin: 0 }}>👤 담당자 목록</label>
+                    <button 
+                      type="button" 
+                      onClick={() => setEditData({ ...editData, managers: [...editData.managers, { name: '', phone: '', role: '', email: '' }] })} 
+                      style={{ border: 'none', background: '#EFF6FF', color: '#2563EB', padding: '4px 8px', borderRadius: '6px', fontSize: '12px', fontWeight: '700', cursor: 'pointer' }}
+                    >
+                      + 담당자 추가
+                    </button>
+                  </div>
+
+                  {editData.managers.map((m, idx) => (
+                    <div key={idx} style={{ padding: '10px', backgroundColor: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: '8px', marginBottom: '8px', position: 'relative' }}>
+                      {editData.managers.length > 1 && (
+                        <button 
+                          type="button" 
+                          onClick={() => setEditData({ ...editData, managers: editData.managers.filter((_, i) => i !== idx) })} 
+                          style={{ position: 'absolute', right: '8px', top: '8px', border: 'none', background: 'none', color: '#EF4444', fontSize: '14px', cursor: 'pointer', fontWeight: 'bold' }}
+                        >
+                          ✕
+                        </button>
+                      )}
+                      
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px', marginBottom: '6px' }}>
+                        <input placeholder="이름 (예: 홍길동)" value={m.name} onChange={(e) => { const n = [...editData.managers]; n[idx].name = e.target.value; setEditData({ ...editData, managers: n }); }} style={inputStyle} />
+                        <input placeholder="부서/직책 (예: 생산팀)" value={m.role} onChange={(e) => { const n = [...editData.managers]; n[idx].role = e.target.value; setEditData({ ...editData, managers: n }); }} style={inputStyle} />
+                      </div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                        <input placeholder="연락처 (예: 010-1234-5678)" value={m.phone} onChange={(e) => { const n = [...editData.managers]; n[idx].phone = e.target.value; setEditData({ ...editData, managers: n }); }} style={inputStyle} />
+                        <input placeholder="이메일 주소" value={m.email} onChange={(e) => { const n = [...editData.managers]; n[idx].email = e.target.value; setEditData({ ...editData, managers: n }); }} style={inputStyle} />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <div>
+                  <label style={labelStyle}>비고</label>
+                  <textarea rows="3" placeholder="비고 입력" value={editData.note} onChange={(e) => setEditData({ ...editData, note: e.target.value })} style={inputStyle} />
+                </div>
+
+                <div style={{ display: 'flex', gap: '8px', marginTop: '4px' }}>
+                  <button onClick={() => setIsEditing(false)} style={{ flex: 1, padding: '10px', background: '#E2E8F0', border: 'none', borderRadius: '8px', fontWeight: '600', cursor: 'pointer' }}>취소</button>
+                  <button onClick={handleSaveCompanyEdit} style={{ flex: 1, padding: '10px', background: '#2563EB', color: '#fff', border: 'none', borderRadius: '8px', fontWeight: '700', cursor: 'pointer' }}>저장</button>
                 </div>
               </div>
             )}

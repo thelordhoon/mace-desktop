@@ -10,9 +10,9 @@ const getLocalTodayString = () => {
   return `${year}-${month}-${day}`
 }
 
-export default function EngineerCalendar({ user, isMobileView = false }) {
+export default function EngineerCalendar({ user, isMobileView = false, companies = [], onNavigateToCompany }) {
   const [schedules, setSchedules] = useState([])
-  const [companies, setCompanies] = useState([])
+  const [dbCompanies, setDbCompanies] = useState([])
   const [currentDate, setCurrentDate] = useState(new Date())
   const [selectedEngineerFilter, setSelectedEngineerFilter] = useState('ALL')
   
@@ -51,12 +51,14 @@ export default function EngineerCalendar({ user, isMobileView = false }) {
   const [companySearchTerm, setCompanySearchTerm] = useState('')
   const [showCompanyDropdown, setShowCompanyDropdown] = useState(false)
 
+  const activeCompanies = companies.length > 0 ? companies : dbCompanies
+
   useEffect(() => {
     const myName = user?.full_name || user?.username || '배진철'
     const defaultName = engineerList.includes(myName) ? myName : '배진철'
     
     setForm(prev => ({ ...prev, engineer_name: defaultName }))
-    fetchCompanies()
+    if (companies.length === 0) fetchCompanies()
     fetchBulletins()
   }, [])
 
@@ -141,7 +143,7 @@ export default function EngineerCalendar({ user, isMobileView = false }) {
 
   const fetchCompanies = async () => {
     const { data } = await supabase.from('companies').select('*').order('name', { ascending: true })
-    if (data) setCompanies(data)
+    if (data) setDbCompanies(data)
   }
 
   const handlePrevMonth = () => {
@@ -293,14 +295,14 @@ export default function EngineerCalendar({ user, isMobileView = false }) {
     return sch.engineer_name === selectedEngineerFilter
   })
 
-  const filteredCompanies = companies.filter(c => 
+  const filteredCompanies = activeCompanies.filter(c => 
     c.name && c.name.toLowerCase().includes((companySearchTerm || '').toLowerCase())
   )
 
   const inputStyle = { width: '100%', padding: '10px 12px', fontSize: '14px', borderRadius: '8px', border: '1px solid #CBD5E1', backgroundColor: '#F8FAFC', outline: 'none', boxSizing: 'border-box' }
   const labelStyle = { fontSize: '13px', fontWeight: '600', color: '#64748B', marginBottom: '4px', display: 'block' }
 
-  // 📱 휴대폰(모바일) 전용 뷰 렌더링 (어제/오늘/내일 텍스트 제거 및 3일 날짜 카드 형태 유지)
+  // 📱 휴대폰(모바일) 전용 뷰 렌더링
   if (isMobileView) {
     const yesterdayStr = getAdjacentDateStr(mobileSelectedDateStr, -1)
     const tomorrowStr = getAdjacentDateStr(mobileSelectedDateStr, 1)
@@ -329,7 +331,6 @@ export default function EngineerCalendar({ user, isMobileView = false }) {
             </button>
           </div>
 
-          {/* 💡 '어제', '오늘', '내일' 고정 텍스트를 지우고 날짜(MM-DD)만 깔끔하게 노출 */}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.4fr 1fr', gap: '8px', alignItems: 'center' }}>
             <div 
               onClick={() => setMobileSelectedDateStr(yesterdayStr)}
@@ -352,78 +353,142 @@ export default function EngineerCalendar({ user, isMobileView = false }) {
           </div>
         </div>
 
-        {/* 하단 영역: 선택된 날짜의 상세 일정 리스트 & 등록 버튼 */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0 4px' }}>
-            <h3 style={{ margin: 0, fontSize: '15px', fontWeight: '800', color: '#0F172A' }}>
-              📋 {mobileSelectedDateStr} 작업 일정
-            </h3>
-            <button 
-              onClick={() => handleOpenAddModal(mobileSelectedDateStr)}
-              style={{ background: '#2563EB', color: '#fff', border: 'none', padding: '6px 12px', borderRadius: '8px', fontSize: '12px', fontWeight: '700', cursor: 'pointer' }}
-            >
-              + 일정 등록
-            </button>
+        {/* 하단 영역: 선택된 날짜 일정 & 향후 예정된 다음 일정 */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+          
+          {/* 1. 선택된 날짜의 일정 */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0 4px' }}>
+              <h3 style={{ margin: 0, fontSize: '15px', fontWeight: '800', color: '#0F172A' }}>
+                📋 {mobileSelectedDateStr} 작업 일정
+              </h3>
+              <button 
+                onClick={() => handleOpenAddModal(mobileSelectedDateStr)}
+                style={{ background: '#2563EB', color: '#fff', border: 'none', padding: '6px 12px', borderRadius: '8px', fontSize: '12px', fontWeight: '700', cursor: 'pointer' }}
+              >
+                + 일정 등록
+              </button>
+            </div>
+
+            {todaySchedules.length === 0 ? (
+              <div style={{ backgroundColor: '#fff', borderRadius: '12px', padding: '24px', textAlign: 'center', color: '#64748B', fontSize: '13px', border: '1px solid #E2E8F0' }}>
+                선택된 날짜에 등록된 일정이 없습니다.
+              </div>
+            ) : (
+              todaySchedules.map(sch => {
+                const badge = getBadgeStyle(sch.work_type, sch.engineer_name)
+                return (
+                  <div 
+                    key={sch.id}
+                    onClick={() => {
+                      if (sch.company_name) {
+                        const matched = activeCompanies.find(c => c.name.toLowerCase() === sch.company_name.toLowerCase())
+                        if (matched && onNavigateToCompany) {
+                          onNavigateToCompany(matched.name)
+                          return
+                        }
+                      }
+                      handleOpenEditModal(sch)
+                    }}
+                    style={{
+                      backgroundColor: '#fff',
+                      border: `1px solid ${badge.border}`,
+                      borderLeft: `5px solid ${badge.color}`,
+                      borderRadius: '10px',
+                      padding: '12px',
+                      boxShadow: '0 1px 3px rgba(0,0,0,0.05)',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '6px'
+                    }}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span style={{ fontWeight: '800', fontSize: '13px', color: badge.color }}>[{sch.engineer_name}] {sch.work_type}</span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <span style={{ fontSize: '11px', color: '#64748B' }}>{sch.start_date} ~ {sch.end_date}</span>
+                        <button 
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            handleOpenEditModal(sch)
+                          }}
+                          style={{ fontSize: '11px', padding: '2px 6px', background: '#F1F5F9', border: '1px solid #CBD5E1', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', color: '#475569' }}
+                        >
+                          수정
+                        </button>
+                      </div>
+                    </div>
+                    <div style={{ fontSize: '14px', fontWeight: '700', color: '#1E293B' }}>
+                      {sch.company_name ? `${sch.company_name} - ` : ''}{sch.title}
+                    </div>
+                    {sch.note && <div style={{ fontSize: '12px', color: '#475569', background: '#F8FAFC', padding: '6px', borderRadius: '6px' }}>{sch.note}</div>}
+                  </div>
+                )
+              })
+            )}
           </div>
 
-          {todaySchedules.length === 0 ? (
-            <div style={{ backgroundColor: '#fff', borderRadius: '12px', padding: '30px', textAlign: 'center', color: '#64748B', fontSize: '13px', border: '1px solid #E2E8F0' }}>
-              등록된 일정이 없습니다. 좌우로 쓸어 다른 날짜를 확인해보세요!
+          {/* 2. 오늘 이후로 예정된 다음 일정들 */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '8px' }}>
+            <div style={{ borderTop: '2px dashed #CBD5E1', paddingTop: '14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingLeft: '4px', paddingRight: '4px' }}>
+              <h3 style={{ margin: 0, fontSize: '14px', fontWeight: '800', color: '#334155' }}>
+                🗓️ 이후 예정된 다음 일정
+              </h3>
+              <span style={{ fontSize: '11px', color: '#64748B', fontWeight: '600' }}>
+                ({mobileSelectedDateStr} 이후)
+              </span>
             </div>
-          ) : (
-        todaySchedules.map(sch => {
-  const badge = getBadgeStyle(sch.work_type, sch.engineer_name)
-  return (
-    <div 
-      key={sch.id}
-      onClick={() => {
-        // 💡 일정에 거래처가 있으면 해당 업체 상세 화면으로 이동
-        if (sch.company_name) {
-          const matched = companies.find(c => c.name.toLowerCase() === sch.company_name.toLowerCase())
-          if (matched && onNavigateToCompany) {
-            onNavigateToCompany(matched.name)
-            return
-          }
-        }
-        // 거래처가 없으면 바로 수정 모달 오픈
-        handleOpenEditModal(sch)
-      }}
-      style={{
-        backgroundColor: '#fff',
-        border: `1px solid ${badge.border}`,
-        borderLeft: `5px solid ${badge.color}`,
-        borderRadius: '10px',
-        padding: '12px',
-        boxShadow: '0 1px 3px rgba(0,0,0,0.05)',
-        cursor: 'pointer',
-        display: 'flex',
-        flexDirection: 'column',
-        gap: '6px'
-      }}
-    >
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <span style={{ fontWeight: '800', fontSize: '13px', color: badge.color }}>[{sch.engineer_name}] {sch.work_type}</span>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-          <span style={{ fontSize: '11px', color: '#64748B' }}>{sch.start_date}</span>
-          <button 
-            onClick={(e) => {
-              e.stopPropagation() // 카드 전체 클릭(업체 이동) 이벤트 차단 후 수정 모달 오픈
-              handleOpenEditModal(sch)
-            }}
-            style={{ fontSize: '11px', padding: '2px 6px', background: '#F1F5F9', border: '1px solid #CBD5E1', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', color: '#475569' }}
-          >
-            수정
-          </button>
-        </div>
-      </div>
-      <div style={{ fontSize: '14px', fontWeight: '700', color: '#1E293B' }}>
-        {sch.company_name ? `${sch.company_name} - ` : ''}{sch.title}
-      </div>
-      {sch.note && <div style={{ fontSize: '12px', color: '#475569', background: '#F8FAFC', padding: '6px', borderRadius: '6px' }}>{sch.note}</div>}
-    </div>
-  )
-})
-          )}
+
+            {filteredSchedules.filter(sch => sch.start_date > mobileSelectedDateStr).length === 0 ? (
+              <div style={{ backgroundColor: '#F8FAFC', borderRadius: '12px', padding: '20px', textAlign: 'center', color: '#94A3B8', fontSize: '12px', border: '1px dashed #CBD5E1' }}>
+                이후에 예정된 일정이 없습니다.
+              </div>
+            ) : (
+              filteredSchedules
+                .filter(sch => sch.start_date > mobileSelectedDateStr)
+                .map(sch => {
+                  const badge = getBadgeStyle(sch.work_type, sch.engineer_name)
+                  return (
+                    <div 
+                      key={sch.id}
+                      onClick={() => {
+                        if (sch.company_name) {
+                          const matched = activeCompanies.find(c => c.name.toLowerCase() === sch.company_name.toLowerCase())
+                          if (matched && onNavigateToCompany) {
+                            onNavigateToCompany(matched.name)
+                            return
+                          }
+                        }
+                        handleOpenEditModal(sch)
+                      }}
+                      style={{
+                        backgroundColor: '#F8FAFC',
+                        border: `1px solid #E2E8F0`,
+                        borderLeft: `4px solid ${badge.color}`,
+                        borderRadius: '10px',
+                        padding: '10px 12px',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '4px',
+                        opacity: 0.95
+                      }}
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span style={{ fontWeight: '700', fontSize: '12px', color: badge.color }}>[{sch.engineer_name}] {sch.work_type}</span>
+                        <span style={{ fontSize: '11px', fontWeight: '700', color: '#2563EB', backgroundColor: '#EFF6FF', padding: '1px 6px', borderRadius: '4px' }}>
+                          {sch.start_date}
+                        </span>
+                      </div>
+                      <div style={{ fontSize: '13px', fontWeight: '700', color: '#1E293B' }}>
+                        {sch.company_name ? `${sch.company_name} - ` : ''}{sch.title}
+                      </div>
+                    </div>
+                  )
+                })
+            )}
+          </div>
+
         </div>
 
         {/* 일정 등록 / 수정 모달 */}
