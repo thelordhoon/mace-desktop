@@ -115,7 +115,6 @@ export default function EngineerCalendar({ user, isMobileView = false }) {
   const fetchSchedules = async () => {
     let firstDay, lastDay
     if (isMobileView) {
-      // 모바일은 선택된 날짜 주변 한 달 폭을 넉넉히 가져옴
       const parts = mobileSelectedDateStr.split('-')
       const year = Number(parts[0])
       const month = Number(parts[1])
@@ -276,7 +275,6 @@ export default function EngineerCalendar({ user, isMobileView = false }) {
     }
   }
 
-  // 💡 배지 스타일: 관리부는 연보라색(#f3e8ff)
   const getBadgeStyle = (type, engineerName) => {
     if (engineerName === '관리부') {
       return { bg: '#f3e8ff', color: '#6b21a8', border: '#d8b4fe' }
@@ -302,7 +300,7 @@ export default function EngineerCalendar({ user, isMobileView = false }) {
   const inputStyle = { width: '100%', padding: '10px 12px', fontSize: '14px', borderRadius: '8px', border: '1px solid #CBD5E1', backgroundColor: '#F8FAFC', outline: 'none', boxSizing: 'border-box' }
   const labelStyle = { fontSize: '13px', fontWeight: '600', color: '#64748B', marginBottom: '4px', display: 'block' }
 
-  // 📱 휴대폰(모바일) 전용 뷰 렌더링
+  // 📱 휴대폰(모바일) 전용 뷰 렌더링 (어제/오늘/내일 텍스트 제거 및 3일 날짜 카드 형태 유지)
   if (isMobileView) {
     const yesterdayStr = getAdjacentDateStr(mobileSelectedDateStr, -1)
     const tomorrowStr = getAdjacentDateStr(mobileSelectedDateStr, 1)
@@ -331,27 +329,25 @@ export default function EngineerCalendar({ user, isMobileView = false }) {
             </button>
           </div>
 
+          {/* 💡 '어제', '오늘', '내일' 고정 텍스트를 지우고 날짜(MM-DD)만 깔끔하게 노출 */}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.4fr 1fr', gap: '8px', alignItems: 'center' }}>
             <div 
               onClick={() => setMobileSelectedDateStr(yesterdayStr)}
-              style={{ background: 'rgba(255,255,255,0.2)', borderRadius: '10px', padding: '10px 6px', textAlign: 'center', cursor: 'pointer', opacity: 0.8, fontSize: '12px' }}
+              style={{ background: 'rgba(255,255,255,0.2)', borderRadius: '10px', padding: '12px 6px', textAlign: 'center', cursor: 'pointer', opacity: 0.8, fontSize: '12px' }}
             >
-              <div style={{ fontSize: '11px', opacity: 0.9 }}>어제</div>
-              <div style={{ fontWeight: '700', marginTop: '2px' }}>{yesterdayStr.slice(5)}</div>
+              <div style={{ fontWeight: '700' }}>{yesterdayStr.slice(5)}</div>
             </div>
 
             <div style={{ background: '#ffffff', color: '#1E293B', borderRadius: '12px', padding: '14px 8px', textAlign: 'center', boxShadow: '0 4px 12px rgba(0,0,0,0.15)', transform: 'scale(1.05)' }}>
-              <div style={{ fontSize: '12px', fontWeight: '800', color: '#2563EB' }}>✨ 오늘</div>
-              <div style={{ fontSize: '15px', fontWeight: '900', marginTop: '4px' }}>{mobileSelectedDateStr}</div>
-              <div style={{ fontSize: '11px', color: '#64748B', marginTop: '2px' }}>일정 {todaySchedules.length}건</div>
+              <div style={{ fontSize: '14px', fontWeight: '900' }}>{mobileSelectedDateStr}</div>
+              <div style={{ fontSize: '11px', color: '#2563EB', fontWeight: '700', marginTop: '2px' }}>일정 {todaySchedules.length}건</div>
             </div>
 
             <div 
               onClick={() => setMobileSelectedDateStr(tomorrowStr)}
-              style={{ background: 'rgba(255,255,255,0.2)', borderRadius: '10px', padding: '10px 6px', textAlign: 'center', cursor: 'pointer', opacity: 0.8, fontSize: '12px' }}
+              style={{ background: 'rgba(255,255,255,0.2)', borderRadius: '10px', padding: '12px 6px', textAlign: 'center', cursor: 'pointer', opacity: 0.8, fontSize: '12px' }}
             >
-              <div style={{ fontSize: '11px', opacity: 0.9 }}>내일</div>
-              <div style={{ fontWeight: '700', marginTop: '2px' }}>{tomorrowStr.slice(5)}</div>
+              <div style={{ fontWeight: '700' }}>{tomorrowStr.slice(5)}</div>
             </div>
           </div>
         </div>

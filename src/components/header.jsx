@@ -123,22 +123,3 @@ export default function Header({ user, onLogout, purchaseAlerts = [], onNavigate
     </header>
   )
 }
-```[cite: 7]
-
----
-
-### 💡 `App.jsx`에서 헤더에 모바일 여부 전달하기
-`App.jsx` 내부에 모바일 뷰용 `<Header ... isMobileView="{true}"/>` 코드가 들어가 있는지 확인해주세요! 아래와 같이 `isMobileView={true}`를 넘겨주어야 모바일에서만 크기가 줄어듭니다.
-
-```jsx
-// App.jsx의 모바일 렌더링 부분 예시
-{isMobile && (
-  <div style={{ maxWidth: '440px', width: '100%', margin: '0 auto', minHeight: '100vh', backgroundColor: '#F1F5F9', display: 'flex', flexDirection: 'column' }}>
-    <Header 
-      user={user} 
-      onLogout={handleLogout} 
-      purchaseAlerts={purchaseAlerts}
-      onNavigatePurchase={() => setCurrentMenu('purchase_request')}
-      isMobileView={true} // 👈 이 부분이 있어야 모바일에서만 작아집니다!
-    />
-    ...
