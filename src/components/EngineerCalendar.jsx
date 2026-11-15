@@ -371,36 +371,58 @@ export default function EngineerCalendar({ user, isMobileView = false }) {
               등록된 일정이 없습니다. 좌우로 쓸어 다른 날짜를 확인해보세요!
             </div>
           ) : (
-            todaySchedules.map(sch => {
-              const badge = getBadgeStyle(sch.work_type, sch.engineer_name)
-              return (
-                <div 
-                  key={sch.id}
-                  onClick={() => handleOpenEditModal(sch)}
-                  style={{
-                    backgroundColor: '#fff',
-                    border: `1px solid ${badge.border}`,
-                    borderLeft: `5px solid ${badge.color}`,
-                    borderRadius: '10px',
-                    padding: '12px',
-                    boxShadow: '0 1px 3px rgba(0,0,0,0.05)',
-                    cursor: 'pointer',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: '6px'
-                  }}
-                >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <span style={{ fontWeight: '800', fontSize: '13px', color: badge.color }}>[{sch.engineer_name}] {sch.work_type}</span>
-                    <span style={{ fontSize: '11px', color: '#64748B' }}>{sch.start_date} ~ {sch.end_date}</span>
-                  </div>
-                  <div style={{ fontSize: '14px', fontWeight: '700', color: '#1E293B' }}>
-                    {sch.company_name ? `${sch.company_name} - ` : ''}{sch.title}
-                  </div>
-                  {sch.note && <div style={{ fontSize: '12px', color: '#475569', background: '#F8FAFC', padding: '6px', borderRadius: '6px' }}>{sch.note}</div>}
-                </div>
-              )
-            })
+        todaySchedules.map(sch => {
+  const badge = getBadgeStyle(sch.work_type, sch.engineer_name)
+  return (
+    <div 
+      key={sch.id}
+      onClick={() => {
+        // 💡 일정에 거래처가 있으면 해당 업체 상세 화면으로 이동
+        if (sch.company_name) {
+          const matched = companies.find(c => c.name.toLowerCase() === sch.company_name.toLowerCase())
+          if (matched && onNavigateToCompany) {
+            onNavigateToCompany(matched.name)
+            return
+          }
+        }
+        // 거래처가 없으면 바로 수정 모달 오픈
+        handleOpenEditModal(sch)
+      }}
+      style={{
+        backgroundColor: '#fff',
+        border: `1px solid ${badge.border}`,
+        borderLeft: `5px solid ${badge.color}`,
+        borderRadius: '10px',
+        padding: '12px',
+        boxShadow: '0 1px 3px rgba(0,0,0,0.05)',
+        cursor: 'pointer',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '6px'
+      }}
+    >
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <span style={{ fontWeight: '800', fontSize: '13px', color: badge.color }}>[{sch.engineer_name}] {sch.work_type}</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <span style={{ fontSize: '11px', color: '#64748B' }}>{sch.start_date}</span>
+          <button 
+            onClick={(e) => {
+              e.stopPropagation() // 카드 전체 클릭(업체 이동) 이벤트 차단 후 수정 모달 오픈
+              handleOpenEditModal(sch)
+            }}
+            style={{ fontSize: '11px', padding: '2px 6px', background: '#F1F5F9', border: '1px solid #CBD5E1', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', color: '#475569' }}
+          >
+            수정
+          </button>
+        </div>
+      </div>
+      <div style={{ fontSize: '14px', fontWeight: '700', color: '#1E293B' }}>
+        {sch.company_name ? `${sch.company_name} - ` : ''}{sch.title}
+      </div>
+      {sch.note && <div style={{ fontSize: '12px', color: '#475569', background: '#F8FAFC', padding: '6px', borderRadius: '6px' }}>{sch.note}</div>}
+    </div>
+  )
+})
           )}
         </div>
 
