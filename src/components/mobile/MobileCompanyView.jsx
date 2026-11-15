@@ -1,14 +1,14 @@
-import React, { useState, useRef } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { supabase } from '../../supabaseClient'
 import SignatureCanvas from 'react-signature-canvas'
 import html2canvas from 'html2canvas'
 
-export default function MobileCompanyView({ user, companies, allHistories, partsList, onRefreshData, onBackToCalendar }) {
+export default function MobileCompanyView({ user, companies, allHistories, partsList, initialSearchTerm = '', onRefreshData, onBackToCalendar }) {
   const [viewMode, setViewMode] = useState('list') // 'list' | 'detail' | 'report'
   const [selectedCompany, setSelectedCompany] = useState(null)
   
-  // 검색 및 정렬 상태
-  const [companySearchTerm, setCompanySearchTerm] = useState('')
+  // 검색 및 정렬 상태 (중복 선언 해결 완료)
+  const [companySearchTerm, setCompanySearchTerm] = useState(initialSearchTerm)
   const [companySortType, setCompanySortType] = useState('recent_history')
   const [detailSnSearchTerm, setDetailSnSearchTerm] = useState('')
 
@@ -44,6 +44,17 @@ export default function MobileCompanyView({ user, companies, allHistories, parts
   
   const sigCanvas = useRef({})
   const reportFormRef = useRef(null)
+
+  // 💡 캘린더 등에서 전달받은 검색어가 있을 경우 자동 매칭하여 상세 뷰 진입
+  useEffect(() => {
+    if (initialSearchTerm) {
+      setCompanySearchTerm(initialSearchTerm)
+      const matched = companies.find(c => c.name.toLowerCase() === initialSearchTerm.toLowerCase())
+      if (matched) {
+        handleSelectCompany(matched)
+      }
+    }
+  }, [initialSearchTerm, companies])
 
   // 담당자 파싱 유틸
   const parseManagers = (managerData, phoneData, defaultEmail) => {
@@ -358,7 +369,7 @@ export default function MobileCompanyView({ user, companies, allHistories, parts
                 </button>
               </div>
             ) : (
-              /* 💡 수정 모드 폼 (담당자 추가 및 이름, 부서/직책, 연락처, 이메일 입력 가능) */
+              /* 수정 모드 폼 */
               <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                 <h4 style={{ margin: '0 0 6px 0', fontSize: '15px', fontWeight: '800' }}>✏️ 업체 정보 수정</h4>
                 
