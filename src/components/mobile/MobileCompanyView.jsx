@@ -463,9 +463,23 @@ export default function MobileCompanyView({ user, companies, allHistories, parts
               <h3 style={{ margin: 0, fontSize: '16px', fontWeight: '800', color: '#0F172A' }}>서비스 리포트 작성 ({selectedCompany.name})</h3>
 
               <div>
-                <label style={labelStyle}>작업일자</label>
-                <input type="date" value={workDate} onChange={(e) => setWorkDate(e.target.value)} style={inputStyle} />
-              </div>
+  <label style={labelStyle}>작업일자</label>
+  <input 
+    type="date" 
+    value={workDate} 
+    onChange={(e) => setWorkDate(e.target.value)} 
+    style={{ 
+      ...inputStyle, 
+      width: '100%',
+      minWidth: 0,
+      maxWidth: '100%',
+      boxSizing: 'border-box',
+      appearance: 'none',
+      WebkitAppearance: 'none',
+      display: 'block'
+    }} 
+  />
+</div>
 
               {/* 💡 작업 시간 간편 입력 영역 */}
               <div style={{ backgroundColor: '#F8FAFC', padding: '10px', borderRadius: '8px', border: '1px solid #E2E8F0', display: 'flex', flexDirection: 'column', gap: '8px' }}>
