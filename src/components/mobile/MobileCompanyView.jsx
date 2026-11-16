@@ -455,19 +455,71 @@ export default function MobileCompanyView({ user, companies, allHistories, parts
 
       {/* 3. 서비스 리포트 작성 화면 */}
       {viewMode === 'report' && selectedCompany && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-          <button onClick={() => setViewMode('detail')} style={{ border: 'none', background: 'none', fontWeight: 'bold', color: '#2563EB', cursor: 'pointer', textAlign: 'left' }}>← 상세로 돌아가기</button>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', width: '100%', boxSizing: 'border-box' }}>
+          <button onClick={() => setViewMode('detail')} style={{ border: 'none', background: 'none', fontWeight: 'bold', color: '#2563EB', cursor: 'pointer', textAlign: 'left', padding: 0 }}>← 상세로 돌아가기</button>
 
-          <div ref={reportFormRef} style={{ backgroundColor: '#fff', padding: '16px', borderRadius: '12px', border: '1px solid #E2E8F0' }}>
-            <form onSubmit={handleSaveReport} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              <h3 style={{ margin: 0, fontSize: '16px', fontWeight: '800' }}>서비스 리포트 작성 ({selectedCompany.name})</h3>
+          <div ref={reportFormRef} style={{ backgroundColor: '#fff', padding: '16px', borderRadius: '12px', border: '1px solid #E2E8F0', width: '100%', boxSizing: 'border-box', overflow: 'hidden' }}>
+            <form onSubmit={handleSaveReport} style={{ display: 'flex', flexDirection: 'column', gap: '12px', width: '100%', boxSizing: 'border-box' }}>
+              <h3 style={{ margin: 0, fontSize: '16px', fontWeight: '800', color: '#0F172A' }}>서비스 리포트 작성 ({selectedCompany.name})</h3>
 
               <div>
                 <label style={labelStyle}>작업일자</label>
-                <input type="date" value={workDate} onChange={(e) => setWorkDate(e.target.value)} style={inputStyle} required />
+                <input type="date" value={workDate} onChange={(e) => setWorkDate(e.target.value)} style={inputStyle} />
               </div>
 
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+              {/* 💡 작업 시간 간편 입력 영역 */}
+              <div style={{ backgroundColor: '#F8FAFC', padding: '10px', borderRadius: '8px', border: '1px solid #E2E8F0', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <label style={{ ...labelStyle, margin: 0 }}>⏱️ 작업 시간</label>
+                  <button 
+                    type="button" 
+                    onClick={() => {
+                      const now = new Date()
+                      setStartHour(String(now.getHours()).padStart(2, '0'))
+                      setStartMin(String(Math.floor(now.getMinutes() / 10) * 10).padStart(2, '0'))
+                      setEndHour(String((now.getHours() + 1) % 24).padStart(2, '0'))
+                      setEndMin(String(Math.floor(now.getMinutes() / 10) * 10).padStart(2, '0'))
+                    }}
+                    style={{ background: '#EFF6FF', color: '#2563EB', border: 'none', padding: '3px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: '700', cursor: 'pointer' }}
+                  >
+                    ⚡ 현재 시간으로 채우기
+                  </button>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                  <div>
+                    <span style={{ fontSize: '11px', color: '#64748B', display: 'block', marginBottom: '2px' }}>시작 시간</span>
+                    <div style={{ display: 'flex', gap: '4px' }}>
+                      <select value={startHour} onChange={(e) => setStartHour(e.target.value)} style={{ ...inputStyle, padding: '6px' }}>
+                        {Array.from({length: 24}).map((_, i) => {
+                          const h = String(i).padStart(2, '0')
+                          return <option key={h} value={h}>{h}시</option>
+                        })}
+                      </select>
+                      <select value={startMin} onChange={(e) => setStartMin(e.target.value)} style={{ ...inputStyle, padding: '6px' }}>
+                        {['00', '10', '20', '30', '40', '50'].map(m => <option key={m} value={m}>{m}분</option>)}
+                      </select>
+                    </div>
+                  </div>
+
+                  <div>
+                    <span style={{ fontSize: '11px', color: '#64748B', display: 'block', marginBottom: '2px' }}>종료 시간</span>
+                    <div style={{ display: 'flex', gap: '4px' }}>
+                      <select value={endHour} onChange={(e) => setEndHour(e.target.value)} style={{ ...inputStyle, padding: '6px' }}>
+                        {Array.from({length: 24}).map((_, i) => {
+                          const h = String(i).padStart(2, '0')
+                          return <option key={h} value={h}>{h}시</option>
+                        })}
+                      </select>
+                      <select value={endMin} onChange={(e) => setEndMin(e.target.value)} style={{ ...inputStyle, padding: '6px' }}>
+                        {['00', '10', '20', '30', '40', '50'].map(m => <option key={m} value={m}>{m}분</option>)}
+                      </select>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', width: '100%', boxSizing: 'border-box' }}>
                 <div>
                   <label style={labelStyle}>모델명</label>
                   <select value={modelName} onChange={(e) => setModelName(e.target.value)} style={inputStyle}>
@@ -500,25 +552,33 @@ export default function MobileCompanyView({ user, companies, allHistories, parts
               <div>
                 <label style={labelStyle}>교체 부품 및 수량</label>
                 {usedParts.map((p, idx) => (
-                  <div key={idx} style={{ display: 'flex', gap: '6px', marginBottom: '6px' }}>
+                  <div key={idx} style={{ display: 'flex', gap: '6px', marginBottom: '6px', width: '100%', boxSizing: 'border-box' }}>
                     <input placeholder="부품명 또는 품번" value={p.name} onChange={(e) => { const n = [...usedParts]; n[idx].name = e.target.value; setUsedParts(n); }} style={{ ...inputStyle, flex: 2 }} />
                     <input type="number" min="1" value={p.quantity} onChange={(e) => { const n = [...usedParts]; n[idx].quantity = e.target.value; setUsedParts(n); }} style={{ ...inputStyle, flex: 1 }} />
                   </div>
                 ))}
-                <button type="button" onClick={() => setUsedParts([...usedParts, { name: '', quantity: 1 }])} style={{ background: '#EFF6FF', color: '#2563EB', border: 'none', padding: '6px', borderRadius: '6px', fontSize: '11px', fontWeight: 'bold', cursor: 'pointer', width: '100%' }}>+ 부품 추가</button>
+                <button type="button" onClick={() => setUsedParts([...usedParts, { name: '', quantity: 1 }])} style={{ background: '#EFF6FF', color: '#2563EB', border: 'none', padding: '8px', borderRadius: '6px', fontSize: '12px', fontWeight: 'bold', cursor: 'pointer', width: '100%', boxSizing: 'border-box' }}>+ 부품 추가</button>
               </div>
 
+              {/* 💡 서명 영역 폭 벗어남 방지 (반응형 캔버스 래퍼) */}
               <div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
                   <label style={labelStyle}>고객 서명</label>
-                  <button type="button" onClick={() => sigCanvas.current.clear()} style={{ border: 'none', background: '#F1F5F9', fontSize: '10px', padding: '2px 6px', borderRadius: '4px', cursor: 'pointer' }}>초기화</button>
+                  <button type="button" onClick={() => sigCanvas.current.clear()} style={{ border: 'none', background: '#F1F5F9', fontSize: '11px', padding: '3px 8px', borderRadius: '4px', cursor: 'pointer', fontWeight: '600', color: '#475569' }}>초기화</button>
                 </div>
-                <div style={{ border: '1px solid #CBD5E1', borderRadius: '8px', backgroundColor: '#fff' }}>
-                  <SignatureCanvas ref={sigCanvas} canvasProps={{ width: 400, height: 150, className: 'sigCanvas' }} />
+                <div style={{ width: '100%', border: '1px solid #CBD5E1', borderRadius: '8px', backgroundColor: '#fff', overflow: 'hidden', boxSizing: 'border-box' }}>
+                  <SignatureCanvas 
+                    ref={sigCanvas} 
+                    canvasProps={{ 
+                      style: { width: '100%', height: '150px', display: 'block', touchAction: 'none' },
+                      width: 380, 
+                      height: 150 
+                    }} 
+                  />
                 </div>
               </div>
 
-              <button type="submit" disabled={uploading} style={{ padding: '12px', background: '#2563EB', color: '#fff', border: 'none', borderRadius: '8px', fontWeight: '700', cursor: 'pointer' }}>
+              <button type="submit" disabled={uploading} style={{ padding: '12px', background: '#2563EB', color: '#fff', border: 'none', borderRadius: '8px', fontWeight: '700', cursor: 'pointer', width: '100%', boxSizing: 'border-box', marginTop: '6px' }}>
                 {uploading ? '저장 중...' : '서비스 리포트 저장 및 재고 차감'}
               </button>
             </form>
