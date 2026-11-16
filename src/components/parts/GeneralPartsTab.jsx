@@ -44,6 +44,16 @@ export default function GeneralPartsTab({ partsList, refreshParts, showAddForm, 
   const [editForm, setEditForm] = useState({ name: '', code: '', category: '일반부품', customer_price: 0, dealer_price: 0, note: '', is_serial_managed: false, stock: 0 })
   const [editImageFile, setEditImageFile] = useState(null)
 
+  // 8. [내근 출고증 모달 상태]
+  const [isInternalIssueModalOpen, setIsInternalIssueModalOpen] = useState(false)
+  const [deliveryDate, setDeliveryDate] = useState(new Date().toISOString().split('T')[0])
+  const [deliveryAuthor, setDeliveryAuthor] = useState('배진철')
+  const [equipmentSns, setEquipmentSns] = useState([''])
+  const [deliveryItems, setDeliveryItems] = useState([
+    { partId: '', searchKeyword: '', selectedSn: '', quantity: 1, note: '', showDropdown: false }
+  ])
+  const [deliveryNoteText, setDeliveryNoteText] = useState('')
+
   useEffect(() => {
     fetchCompanies()
   }, [])
@@ -241,14 +251,108 @@ export default function GeneralPartsTab({ partsList, refreshParts, showAddForm, 
     refreshParts()
   }
 
+  const handleInternalDeliverySubmit = async (e) => {
+    e.preventDefault()
+    if (deliveryItems.length === 0) return alert('출고할 부품 명세를 1개 이상 추가해주세요!')
+
+    for (let i = 0; i < deliveryItems.length; i++) {
+      const item = deliveryItems[i]
+      if (!item.partId) return alert((i + 1) + '행의 부품을 선택해주세요!')
+      const partObj = (partsList || []).find(p => String(p.id) === String(item.partId))
+      if (partObj && partObj.is_serial_managed && !item.selectedSn) {
+        return alert((i + 1) + '행(' + partObj.name + ')은 S/N 관리품입니다. 보유 S/N를 선택해주세요!')
+      }
+    }
+
+    let summaryPartsList = []
+    let serialListForNote = []
+
+    for (const item of deliveryItems) {
+      const partObj = (partsList || []).find(p => String(p.id) === String(item.partId))
+      if (!partObj) continue
+
+      let parsedSerials = []
+      try {
+        const temp = partObj.serials ? (typeof partObj.serials === 'string' ? JSON.parse(partObj.serials) : partObj.serials) : []
+        parsedSerials = Array.isArray(temp) ? temp : []
+      } catch (err) { parsedSerials = [] }
+
+      let newStock = Number(partObj.stock) || 0
+      let updatedSerials = [...parsedSerials]
+
+      if (partObj.is_serial_managed) {
+        updatedSerials = parsedSerials.filter(s => s.sn !== item.selectedSn)
+        newStock = updatedSerials.length
+        summaryPartsList.push(`${partObj.name} (S/N: ${item.selectedSn})`)
+        serialListForNote.push(`${item.selectedSn}: ${partObj.name} 교체`)
+      } else {
+        const amt = Number(item.quantity) || 1
+        if (newStock < amt) return alert(`[${partObj.name}] 부품의 재고가 부족합니다! (현재고: ${newStock}개)`)
+        newStock -= amt
+        summaryPartsList.push(`${partObj.name} (${amt}개)`)
+      }
+
+      const updatePayload = { stock: newStock }
+      if (partObj.is_serial_managed) {
+        updatePayload.serials = JSON.stringify(updatedSerials)
+      }
+      await supabase.from('parts').update(updatePayload).eq('id', partObj.id)
+    }
+
+    const validEquipSns = equipmentSns.filter(s => s && s.trim() !== '').join(', ')
+    const finalSummary = summaryPartsList.join(', ')
+
+    // 💡 이력 조회 시 출고증 보기 모달에 바로 활용될 수 있도록 상세 내역 JSON을 note에 함께 임베딩
+    const deliveryPayloadJson = JSON.stringify({
+      equipmentSns: equipmentSns.filter(s => s && s.trim() !== ''),
+      items: deliveryItems.map(item => {
+        const partObj = (partsList || []).find(p => String(p.id) === String(item.partId))
+        return {
+          code: partObj ? partObj.code : '-',
+          name: partObj ? partObj.name : item.searchKeyword,
+          isSerial: partObj ? partObj.is_serial_managed : false,
+          selectedSn: item.selectedSn,
+          quantity: item.quantity
+        }
+      })
+    })
+
+    const finalNote = (deliveryNoteText || serialListForNote.join(', ') || '엔지니어실 내근 출고') + ` [DELIVERY_DETAILS:${deliveryPayloadJson}]`
+
+    const { error: historyErr } = await supabase.from('delivery_history').insert([{
+      date: deliveryDate,
+      company_name: '엔지니어실 (내근)',
+      equipment_sn: validEquipSns || '-',
+      summary: finalSummary,
+      author: deliveryAuthor,
+      note: finalNote,
+      type: 'OUTBOUND'
+    }])
+
+    if (historyErr) {
+      return alert('출고증 저장 오류: ' + historyErr.message)
+    }
+
+    alert('내근 출고증이 성공적으로 발행 및 저장되었습니다!')
+    setIsInternalIssueModalOpen(false)
+    setEquipmentSns([''])
+    setDeliveryItems([{ partId: '', searchKeyword: '', selectedSn: '', quantity: 1, note: '', showDropdown: false }])
+    setDeliveryNoteText('')
+    refreshParts()
+  }
+
+  const handlePrintDeliveryNote = () => {
+    window.print()
+  }
+
   const toggleRowExpand = (id) => {
     setExpandedRows(prev => ({ ...prev, [id]: !prev[id] }))
   }
 
   const filteredParts = (partsList || []).filter(p => {
     if (!p) return false
-    const cat = p.category || ''
-    const isConsumable = cat === '잉크' || cat === '희석제' || cat === '소모품'
+    const cat = (p.category || '').toLowerCase()
+    const isConsumable = cat.includes('잉크') || cat.includes('희석제') || cat.includes('소모품')
     return !isConsumable && (!searchTerm.trim() || p.name?.toLowerCase().includes(searchTerm.toLowerCase()) || p.code?.toLowerCase().includes(searchTerm.toLowerCase()))
   }).sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ko-KR'))
 
@@ -334,8 +438,12 @@ export default function GeneralPartsTab({ partsList, refreshParts, showAddForm, 
         </div>
       )}
 
-      <div style={{ marginBottom: '16px' }}>
-        <input type="text" placeholder="🔍 부품 품명 또는 Ident No.(코드) 검색..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} style={{ ...inputStyle, padding: '12px', maxWidth: '360px' }} />
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', gap: '10px', flexWrap: 'wrap' }}>
+        <input type="text" placeholder="🔍 부품 품명 또는 Ident No.(코드) 검색..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} style={{ ...inputStyle, padding: '12px', maxWidth: '360px', flex: 1 }} />
+        
+        <button type="button" onClick={() => setIsInternalIssueModalOpen(true)} style={{ background: '#059669', color: '#fff', border: 'none', padding: '11px 16px', borderRadius: '8px', fontSize: '13px', fontWeight: '800', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', boxShadow: '0 2px 4px rgba(0,0,0,0.1)' }}>
+          📄 내근 출고증 발행
+        </button>
       </div>
 
       <div style={{ backgroundColor: '#ffffff', borderRadius: '16px', border: '1px solid #E2E8F0', overflow: 'hidden', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.02)' }}>
@@ -389,7 +497,6 @@ export default function GeneralPartsTab({ partsList, refreshParts, showAddForm, 
                       <td style={{ padding: '12px 16px', fontWeight: '700', color: '#0F172A', wordBreak: 'break-all' }}>{p.name}</td>
                       <td style={{ padding: '12px 16px' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                          {/* 💡 (부족) 경고 문구 완전 제거 및 깔끔한 수량 표시 */}
                           <span style={{ fontWeight: '800', fontSize: '14px', color: '#0F172A', backgroundColor: '#F1F5F9', padding: '3px 10px', borderRadius: '6px', border: '1px solid #CBD5E1' }}>
                             {totalStock} 개
                           </span>
@@ -475,8 +582,272 @@ export default function GeneralPartsTab({ partsList, refreshParts, showAddForm, 
         </table>
       </div>
 
+      {/* [내근 출고증 작성 모달] */}
+      {isInternalIssueModalOpen && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.6)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1100, padding: '20px' }}>
+          <div style={{ backgroundColor: '#ffffff', borderRadius: '16px', padding: '24px', width: '900px', maxWidth: '95vw', maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)' }}>
+            
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', borderBottom: '2px solid #0F172A', paddingBottom: '12px' }}>
+              <h2 style={{ margin: 0, fontSize: '20px', color: '#0F172A', fontWeight: '900' }}>출 고 증 (DELIVERY NOTE) - [엔지니어실 내근]</h2>
+              <button type="button" onClick={() => setIsInternalIssueModalOpen(false)} style={{ border: 'none', background: 'none', fontSize: '20px', color: '#64748B', cursor: 'pointer', fontWeight: 'bold' }}>✕</button>
+            </div>
+
+            <form onSubmit={handleInternalDeliverySubmit} style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+              
+              <div style={{ display: 'grid', gridTemplateColumns: '1.5fr 1fr 1fr', gap: '12px', backgroundColor: '#F8FAFC', padding: '14px', borderRadius: '12px', border: '1px solid #E2E8F0' }}>
+                <div>
+                  <label style={labelStyle}>공급받는 자 (업체명)</label>
+                  <input type="text" value="본사 엔지니어실 (내근용)" readOnly style={{ ...inputStyle, backgroundColor: '#E2E8F0', fontWeight: 'bold', color: '#334155' }} />
+                </div>
+                <div>
+                  <label style={labelStyle}>발행 일자</label>
+                  <input type="date" value={deliveryDate} onChange={e => setDeliveryDate(e.target.value)} style={inputStyle} required />
+                </div>
+                <div>
+                  <label style={labelStyle}>발행자 (작성자)</label>
+                  <select value={deliveryAuthor} onChange={e => setDeliveryAuthor(e.target.value)} style={inputStyle}>
+                    <option value="배진철">배진철</option>
+                    <option value="이현희">이현희</option>
+                    <option value="김우연">김우연</option>
+                  </select>
+                </div>
+              </div>
+
+              <div style={{ backgroundColor: '#F8FAFC', padding: '14px', borderRadius: '12px', border: '1px solid #E2E8F0' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                  <label style={{ fontSize: '13px', fontWeight: '800', color: '#1E293B' }}>장비 S/N 목록</label>
+                  <button type="button" onClick={() => setEquipmentSns([...equipmentSns, ''])} style={{ background: '#EFF6FF', color: '#2563EB', border: '1px solid #BFDBFE', padding: '4px 10px', borderRadius: '6px', fontSize: '11px', fontWeight: '700', cursor: 'pointer' }}>
+                    + S/N 추가
+                  </button>
+                </div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                  {equipmentSns.map((eqSn, idx) => (
+                    <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: '4px', backgroundColor: '#fff', padding: '4px 8px', borderRadius: '8px', border: '1px solid #CBD5E1' }}>
+                      <input type="text" placeholder="장비 S/N 입력" value={eqSn} onChange={e => {
+                        const updated = [...equipmentSns]; updated[idx] = e.target.value; setEquipmentSns(updated);
+                      }} style={{ border: 'none', outline: 'none', fontSize: '13px', width: '130px' }} />
+                      {equipmentSns.length > 1 && (
+                        <button type="button" onClick={() => setEquipmentSns(equipmentSns.filter((_, i) => i !== idx))} style={{ border: 'none', background: 'none', color: '#EF4444', fontWeight: 'bold', cursor: 'pointer' }}>✕</button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                  <h3 style={{ margin: 0, fontSize: '14px', fontWeight: '800', color: '#1E293B' }}>출고 부품 품목 명세</h3>
+                  <button type="button" onClick={() => setDeliveryItems([...deliveryItems, { partId: '', searchKeyword: '', selectedSn: '', quantity: 1, note: '', showDropdown: false }])} style={{ background: '#2563EB', color: '#fff', border: 'none', padding: '6px 12px', borderRadius: '6px', fontSize: '12px', fontWeight: '700', cursor: 'pointer' }}>
+                    + 부품 추가
+                  </button>
+                </div>
+
+                <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '13px' }}>
+                  <thead>
+                    <tr style={{ backgroundColor: '#F1F5F9', borderBottom: '1px solid #CBD5E1', color: '#475569' }}>
+                      <th style={{ padding: '10px', width: '50px', textAlign: 'center' }}>NO</th>
+                      <th style={{ padding: '10px', width: '150px' }}>부품 ID / 코드</th>
+                      <th style={{ padding: '10px', width: '160px' }}>부품 S/N (관리품 시)</th>
+                      <th style={{ padding: '10px', width: '310px' }}>품명 / 규격 (검색 및 선택)</th>
+                      <th style={{ padding: '10px', width: '70px' }}>수량</th>
+                      <th style={{ padding: '10px', width: '60px', textAlign: 'center' }}>삭제</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {deliveryItems.map((item, idx) => {
+                      const selectedPartObj = (partsList || []).find(p => String(p.id) === String(item.partId))
+                      
+                      const matchedParts = (partsList || []).filter(p => {
+                        const cat = (p.category || '').toLowerCase()
+                        const isConsumable = cat.includes('잉크') || cat.includes('희석제') || cat.includes('소모품')
+                        if (isConsumable) return false
+                        const kw = item.searchKeyword.trim().toLowerCase()
+                        const pName = (p.name || '').toLowerCase()
+                        const pCode = (p.code || '').toLowerCase()
+                        return !kw || pName.includes(kw) || pCode.includes(kw)
+                      })
+
+                      let activeSerials = []
+                      if (selectedPartObj && selectedPartObj.is_serial_managed) {
+                        try {
+                          const temp = selectedPartObj.serials ? (typeof selectedPartObj.serials === 'string' ? JSON.parse(selectedPartObj.serials) : selectedPartObj.serials) : []
+                          activeSerials = Array.isArray(temp) ? temp : []
+                        } catch (e) { activeSerials = [] }
+                      }
+
+                      return (
+                        <tr key={idx} style={{ borderBottom: '1px solid #E2E8F0', verticalAlign: 'middle' }}>
+                          <td style={{ padding: '10px', textAlign: 'center', fontWeight: 'bold', color: '#64748B' }}>{idx + 1}</td>
+                          
+                          <td style={{ padding: '10px' }}>
+                            <input type="text" value={selectedPartObj ? selectedPartObj.code : '-'} readOnly style={{ ...inputStyle, backgroundColor: '#E2E8F0', fontWeight: 'bold' }} />
+                          </td>
+
+                          <td style={{ padding: '10px' }}>
+                            {selectedPartObj && selectedPartObj.is_serial_managed ? (
+                              <select value={item.selectedSn} onChange={e => {
+                                const updated = [...deliveryItems]; updated[idx].selectedSn = e.target.value; setDeliveryItems(updated);
+                              }} style={inputStyle} required>
+                                <option value="">-- 보유 S/N 선택 --</option>
+                                {activeSerials.map((s, sIdx) => (
+                                  <option key={sIdx} value={s.sn}>S/N: {s.sn} ({s.condition})</option>
+                                ))}
+                              </select>
+                            ) : (
+                              <input type="text" value="해당없음" readOnly style={{ ...inputStyle, backgroundColor: '#F1F5F9', color: '#94A3B8', textAlign: 'center' }} />
+                            )}
+                          </td>
+
+                          <td style={{ padding: '10px', position: 'relative' }}>
+                            <input 
+                              type="text" 
+                              placeholder="🔍 품명을 입력하여 검색..." 
+                              value={item.searchKeyword} 
+                              onChange={e => {
+                                const keyword = e.target.value;
+                                const updated = [...deliveryItems]; 
+                                updated[idx].searchKeyword = keyword; 
+                                updated[idx].showDropdown = true;
+                                if (!keyword.trim()) {
+                                  updated[idx].partId = '';
+                                  updated[idx].selectedSn = '';
+                                }
+                                setDeliveryItems(updated);
+                              }}
+                              onFocus={() => {
+                                const updated = [...deliveryItems];
+                                updated[idx].showDropdown = true;
+                                setDeliveryItems(updated);
+                              }}
+                              style={{ 
+                                ...inputStyle, 
+                                backgroundColor: '#ffffff', 
+                                border: '2px solid #2563EB', 
+                                fontWeight: '700', 
+                                color: '#0F172A',
+                                padding: '10px 12px'
+                              }} 
+                            />
+
+                            {item.showDropdown && (
+                              <div style={{
+                                position: 'absolute',
+                                left: '10px',
+                                right: '10px',
+                                top: 'calc(100% + 4px)',
+                                backgroundColor: '#ffffff',
+                                border: '1px solid #CBD5E1',
+                                borderRadius: '8px',
+                                boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1)',
+                                maxHeight: '220px',
+                                overflowY: 'auto',
+                                zIndex: 1500
+                              }}>
+                                {matchedParts.length === 0 ? (
+                                  <div style={{ padding: '12px', fontSize: '12px', color: '#94A3B8', textAlign: 'center' }}>검색 결과가 없습니다.</div>
+                                ) : (
+                                  matchedParts.map(p => {
+                                    let pSerials = []
+                                    try {
+                                      const temp = p.serials ? (typeof p.serials === 'string' ? JSON.parse(p.serials) : p.serials) : []
+                                      pSerials = Array.isArray(temp) ? temp : []
+                                    } catch (err) {}
+                                    const stockCnt = p.is_serial_managed ? pSerials.length : (Number(p.stock) || 0)
+                                    return (
+                                      <div 
+                                        key={p.id}
+                                        onMouseDown={() => {
+                                          const updated = [...deliveryItems];
+                                          updated[idx].partId = p.id;
+                                          updated[idx].searchKeyword = p.name;
+                                          updated[idx].selectedSn = '';
+                                          updated[idx].showDropdown = false;
+                                          setDeliveryItems(updated);
+                                        }}
+                                        style={{
+                                          padding: '10px 12px',
+                                          fontSize: '12px',
+                                          borderBottom: '1px solid #F1F5F9',
+                                          cursor: 'pointer',
+                                          display: 'flex',
+                                          justifyContent: 'space-between',
+                                          alignItems: 'center'
+                                        }}
+                                        onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#EFF6FF'}
+                                        onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#ffffff'}
+                                      >
+                                        <span style={{ fontWeight: '700', color: '#0F172A' }}>{p.name} <span style={{ fontWeight: 'normal', color: '#64748B' }}>({p.code})</span></span>
+                                        <span style={{ fontSize: '11px', fontWeight: '800', color: p.is_serial_managed ? '#2563EB' : '#059669' }}>
+                                          잔여: {stockCnt}개 {p.is_serial_managed ? '[S/N]' : ''}
+                                        </span>
+                                      </div>
+                                    )
+                                  })
+                                )}
+                              </div>
+                            )}
+                          </td>
+
+                          <td style={{ padding: '10px' }}>
+                            {selectedPartObj && selectedPartObj.is_serial_managed ? (
+                              <input type="number" value="1" readOnly style={{ ...inputStyle, textAlign: 'center', backgroundColor: '#F1F5F9' }} />
+                            ) : (
+                              <input 
+                                type="number" 
+                                min="1" 
+                                value={item.quantity} 
+                                onChange={e => {
+                                  const updated = [...deliveryItems]; 
+                                  updated[idx].quantity = e.target.value; 
+                                  setDeliveryItems(updated);
+                                }} 
+                                style={{ ...inputStyle, textAlign: 'center' }} 
+                                required 
+                              />
+                            )}
+                          </td>
+
+                          <td style={{ padding: '10px', textAlign: 'center' }}>
+                            {deliveryItems.length > 1 && (
+                              <button type="button" onClick={() => setDeliveryItems(deliveryItems.filter((_, i) => i !== idx))} style={{ border: 'none', background: '#FEE2E2', color: '#EF4444', width: '28px', height: '28px', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer' }}>✕</button>
+                            )}
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              <div>
+                <label style={labelStyle}>특이사항 및 작업 내용</label>
+                <textarea 
+                  rows="3" 
+                  placeholder="예: 장비 수리 및 소모품 교체 완료" 
+                  value={deliveryNoteText} 
+                  onChange={e => setDeliveryNoteText(e.target.value)} 
+                  style={{ ...inputStyle, resize: 'vertical' }} 
+                />
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid #E2E8F0', paddingTop: '16px' }}>
+                <button type="button" onClick={handlePrintDeliveryNote} style={{ padding: '10px 18px', background: '#2563EB', color: 'white', border: 'none', borderRadius: '8px', fontWeight: '700', cursor: 'pointer', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  🖨️ 출고증 인쇄 / PDF 저장
+                </button>
+
+                <div style={{ display: 'flex', gap: '10px' }}>
+                  <button type="button" onClick={() => setIsInternalIssueModalOpen(false)} style={{ padding: '10px 20px', border: '1px solid #CBD5E1', background: 'white', color: '#64748B', borderRadius: '8px', fontWeight: '600', cursor: 'pointer' }}>취소</button>
+                  <button type="submit" style={{ padding: '10px 24px', background: '#059669', color: 'white', border: 'none', borderRadius: '8px', fontWeight: '800', cursor: 'pointer', fontSize: '14px', boxShadow: '0 4px 6px -1px rgba(5,150,105,0.2)' }}>발행 완료 처리 및 저장</button>
+                </div>
+              </div>
+
+            </form>
+          </div>
+        </div>
+      )}
+
       {previewImage && (
-        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.7)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1100 }} onClick={() => setPreviewImage(null)}>
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.7)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1200 }} onClick={() => setPreviewImage(null)}>
           <div style={{ backgroundColor: '#fff', padding: '16px', borderRadius: '16px', maxWidth: '90vw', maxHeight: '90vh', position: 'relative' }} onClick={e => e.stopPropagation()}>
             <button type="button" onClick={() => setPreviewImage(null)} style={{ position: 'absolute', top: '10px', right: '10px', border: 'none', background: '#EF4444', color: '#fff', width: '28px', height: '28px', borderRadius: '50%', fontWeight: '700', cursor: 'pointer' }}>✕</button>
             <img src={previewImage} alt="Preview" style={{ maxWidth: '80vw', maxHeight: '80vh', objectFit: 'contain', display: 'block', borderRadius: '8px' }} />

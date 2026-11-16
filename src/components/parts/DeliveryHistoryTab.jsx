@@ -7,6 +7,9 @@ export default function DeliveryHistoryTab({ refreshParts }) {
   const [filterType, setFilterType] = useState('ALL') // ALL, OUTBOUND, INBOUND
   const [loading, setLoading] = useState(true)
 
+  // 💡 출고증 상세 보기 모달 상태
+  const [viewingDeliveryItem, setViewingDeliveryItem] = useState(null)
+
   useEffect(() => {
     fetchHistory()
   }, [])
@@ -26,11 +29,10 @@ export default function DeliveryHistoryTab({ refreshParts }) {
     setLoading(false)
   }
 
-  // 💡 이력 삭제 시 로트별 1:1 정밀 분할 복원 함수
+  // 💡 이력 삭제 시 로트별 / S/N별 정밀 복원 함수
   const handleDeleteHistory = async (item) => {
-    if (!window.confirm(`[${item.summary}]\n이 내역을 삭제하시겠습니까?\n(삭제 시 차감되었던 각 로트별 수량이 원래의 유통기한 위치로 각각 정확하게 복원됩니다.)`)) return
+    if (!window.confirm(`[${item.summary}]\n이 내역을 삭제하시겠습니까?\n(삭제 시 차감되었던 수량이나 S/N가 원래 상태로 정확하게 복원됩니다.)`)) return
 
-    // 1. summary에서 총 수량 추출
     const qtyMatch = item.summary?.match(/\((\d+)개\)/)
     const totalQty = qtyMatch ? Number(qtyMatch[1]) : 0
     const codeMatch = item.summary?.match(/\[(.*?)\]/)
@@ -42,7 +44,6 @@ export default function DeliveryHistoryTab({ refreshParts }) {
     }
 
     if (partCode && totalQty > 0) {
-      // 2. parts 테이블에서 해당 부품 조회
       const { data: partsMatched, error: fetchError } = await supabase
         .from('parts')
         .select('*')
@@ -54,7 +55,6 @@ export default function DeliveryHistoryTab({ refreshParts }) {
         const isConsumable = cat === '잉크' || cat === '희석제' || cat === '소모품'
 
         if (isConsumable) {
-          // 🧪 소모품 (로트/유통기한 기반 복원)
           let currentLots = []
           try {
             currentLots = partData.lots ? (typeof partData.lots === 'string' ? JSON.parse(partData.lots) : partData.lots) : []
@@ -62,8 +62,6 @@ export default function DeliveryHistoryTab({ refreshParts }) {
 
           if (item.type === 'OUTBOUND') {
             let restored = false
-
-            // 💡 [LOT_RESTORE:...] 태그를 정밀하게 파싱
             const restoreTagMatch = item.note?.match(/\[LOT_RESTORE:(.*?)\]/)
             if (restoreTagMatch) {
               try {
@@ -73,7 +71,6 @@ export default function DeliveryHistoryTab({ refreshParts }) {
                     const rdQty = Number(rd.qty || 0)
                     if (rdQty <= 0) return
 
-                    // 공백이나 대소문자 차이로 매칭 실패하는 것을 방지하기 위해 trim() 적용
                     const existingLot = currentLots.find(l => 
                       String(l.lot_number || '').trim() === String(rd.lot_number || '').trim() && 
                       String(l.expiry || '').trim() === String(rd.expiry || '').trim()
@@ -82,7 +79,6 @@ export default function DeliveryHistoryTab({ refreshParts }) {
                     if (existingLot) {
                       existingLot.qty = Number(existingLot.qty || 0) + rdQty
                     } else {
-                      // 소진되어 사라졌던 로트라면 원래 유통기한과 함께 재생성
                       currentLots.push({
                         lot_number: rd.lot_number || '',
                         received_date: rd.received_date || new Date().toISOString().split('T')[0],
@@ -98,8 +94,6 @@ export default function DeliveryHistoryTab({ refreshParts }) {
               }
             }
 
-            // 만약 태그가 없는 과거 데이터라면, 첫 번째 로트에 몰아넣는 대신 
-            // 유통기한순으로 정렬된 기존 로트들에 수량을 골고루 분배하거나 안전하게 처리
             if (!restored) {
               if (currentLots.length > 0) {
                 currentLots[0].qty = Number(currentLots[0].qty || 0) + totalQty
@@ -113,7 +107,6 @@ export default function DeliveryHistoryTab({ refreshParts }) {
               }
             }
           } else if (item.type === 'INBOUND') {
-            // 입고 삭제 -> 입고되면서 늘어났던 수량을 선입선출 방식으로 차감
             let rem = totalQty
             currentLots = currentLots.map(lot => {
               if (rem <= 0) return lot
@@ -136,7 +129,6 @@ export default function DeliveryHistoryTab({ refreshParts }) {
           }).eq('id', partData.id)
 
         } else {
-          // ⚙️ 일반 부품 (S/N 기반 복원) - 원래 기능 완벽 유지
           let currentSerials = []
           try {
             currentSerials = partData.serials ? (typeof partData.serials === 'string' ? JSON.parse(partData.serials) : partData.serials) : []
@@ -163,15 +155,28 @@ export default function DeliveryHistoryTab({ refreshParts }) {
       }
     }
 
-    // 3. delivery_history 테이블에서 이력 행 삭제
     const { error: delError } = await supabase.from('delivery_history').delete().eq('id', item.id)
     if (!delError) {
-      alert('이력이 삭제되고 각 로트별 수량이 정확하게 원복되었습니다.')
+      alert('이력이 삭제되고 재고가 정확하게 원복되었습니다.')
       fetchHistory()
       if (typeof refreshParts === 'function') refreshParts()
     } else {
       alert('이력 삭제 실패: ' + delError.message)
     }
+  }
+
+  // 💡 저장된 note 속에서 상세 JSON 데이터를 파싱하는 함수
+  const parseDeliveryDetails = (noteText) => {
+    if (!noteText) return null
+    const match = noteText.match(/\[DELIVERY_DETAILS:(.*?)\]/)
+    if (match) {
+      try {
+        return JSON.parse(match[1])
+      } catch (e) {
+        return null
+      }
+    }
+    return null
   }
 
   // 검색 및 탭 필터링 적용
@@ -246,7 +251,7 @@ export default function DeliveryHistoryTab({ refreshParts }) {
               <th style={{ padding: '14px 16px', width: '220px' }}>거래처 / 입고처</th>
               <th style={{ padding: '14px 16px' }}>품목 명세 요약</th>
               <th style={{ padding: '14px 16px', width: '110px', textAlign: 'center' }}>작성자</th>
-              <th style={{ padding: '14px 16px', width: '90px', textAlign: 'center' }}>관리</th>
+              <th style={{ padding: '14px 16px', width: '160px', textAlign: 'center' }}>관리 / 보기</th>
             </tr>
           </thead>
           <tbody>
@@ -255,52 +260,178 @@ export default function DeliveryHistoryTab({ refreshParts }) {
             ) : filteredHistory.length === 0 ? (
               <tr><td colSpan="6" style={{ padding: '40px', textAlign: 'center', color: '#94A3B8' }}>조회된 입·출고 이력이 없습니다.</td></tr>
             ) : (
-              filteredHistory.map(item => (
-                <tr key={item.id} style={{ borderBottom: '1px solid #F1F5F9', verticalAlign: 'middle' }}>
-                  <td style={{ padding: '12px 16px', textAlign: 'center' }}>
-                    <span style={{
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      width: '60px',
-                      padding: '4px 0',
-                      borderRadius: '6px',
-                      fontSize: '11px',
-                      fontWeight: '800',
-                      backgroundColor: item.type === 'OUTBOUND' ? '#FEF3C7' : '#DEF7EC',
-                      color: item.type === 'OUTBOUND' ? '#D97706' : '#03543F'
-                    }}>
-                      {item.type === 'OUTBOUND' ? '출고' : '입고'}
-                    </span>
-                  </td>
-                  <td style={{ padding: '12px 16px', color: '#475569', fontWeight: '600' }}>{item.date}</td>
-                  <td style={{ padding: '12px 16px', fontWeight: '700', color: '#0F172A', wordBreak: 'break-all' }}>{item.company_name}</td>
-                  <td style={{ padding: '12px 16px', fontWeight: '700', color: '#1E293B', wordBreak: 'break-all' }}>{item.summary}</td>
-                  <td style={{ padding: '12px 16px', textAlign: 'center', color: '#475569', fontWeight: '600' }}>{item.author || '-'}</td>
-                  <td style={{ padding: '12px 16px', textAlign: 'center' }}>
-                    <button
-                      type="button"
-                      onClick={() => handleDeleteHistory(item)}
-                      style={{
-                        background: '#FEE2E2',
-                        color: '#EF4444',
-                        border: 'none',
-                        padding: '5px 12px',
+              filteredHistory.map(item => {
+                const hasDetails = parseDeliveryDetails(item.note)
+                return (
+                  <tr key={item.id} style={{ borderBottom: '1px solid #F1F5F9', verticalAlign: 'middle' }}>
+                    <td style={{ padding: '12px 16px', textAlign: 'center' }}>
+                      <span style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        width: '60px',
+                        padding: '4px 0',
                         borderRadius: '6px',
-                        fontSize: '12px',
-                        fontWeight: '700',
-                        cursor: 'pointer'
-                      }}
-                    >
-                      삭제
-                    </button>
-                  </td>
-                </tr>
-              ))
+                        fontSize: '11px',
+                        fontWeight: '800',
+                        backgroundColor: item.type === 'OUTBOUND' ? '#FEF3C7' : '#DEF7EC',
+                        color: item.type === 'OUTBOUND' ? '#D97706' : '#03543F'
+                      }}>
+                        {item.type === 'OUTBOUND' ? '출고' : '입고'}
+                      </span>
+                    </td>
+                    <td style={{ padding: '12px 16px', color: '#475569', fontWeight: '600' }}>{item.date}</td>
+                    <td style={{ padding: '12px 16px', fontWeight: '700', color: '#0F172A', wordBreak: 'break-all' }}>{item.company_name}</td>
+                    <td style={{ padding: '12px 16px', fontWeight: '700', color: '#1E293B', wordBreak: 'break-all' }}>{item.summary}</td>
+                    <td style={{ padding: '12px 16px', textAlign: 'center', color: '#475569', fontWeight: '600' }}>{item.author || '-'}</td>
+                    <td style={{ padding: '12px 16px', textAlign: 'center' }}>
+                      <div style={{ display: 'flex', justifyContent: 'center', gap: '6px' }}>
+                        {item.type === 'OUTBOUND' && hasDetails && (
+                          <button
+                            type="button"
+                            onClick={() => setViewingDeliveryItem(item)}
+                            style={{
+                              background: '#EFF6FF',
+                              color: '#2563EB',
+                              border: 'none',
+                              padding: '5px 10px',
+                              borderRadius: '6px',
+                              fontSize: '11px',
+                              fontWeight: '700',
+                              cursor: 'pointer'
+                            }}
+                          >
+                            출고증 보기
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteHistory(item)}
+                          style={{
+                            background: '#FEE2E2',
+                            color: '#EF4444',
+                            border: 'none',
+                            padding: '5px 10px',
+                            borderRadius: '6px',
+                            fontSize: '11px',
+                            fontWeight: '700',
+                            cursor: 'pointer'
+                          }}
+                        >
+                          삭제
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                )
+              })
             )}
           </tbody>
         </table>
       </div>
+
+      {/* 💡 [출고증 상세 보기 및 인쇄 모달] */}
+      {viewingDeliveryItem && (() => {
+        const details = parseDeliveryDetails(viewingDeliveryItem.note)
+        return (
+          <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.6)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1100, padding: '20px' }}>
+            <div style={{ backgroundColor: '#ffffff', borderRadius: '16px', padding: '24px', width: '900px', maxWidth: '95vw', maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)' }}>
+              
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', borderBottom: '2px solid #0F172A', paddingBottom: '12px' }}>
+                <h2 style={{ margin: 0, fontSize: '20px', color: '#0F172A', fontWeight: '900' }}>출 고 증 (DELIVERY NOTE) - [조회 및 인쇄]</h2>
+                <button type="button" onClick={() => setViewingDeliveryItem(null)} style={{ border: 'none', background: 'none', fontSize: '20px', color: '#64748B', cursor: 'pointer', fontWeight: 'bold' }}>✕</button>
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                {/* 상단 메타 정보 */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1.5fr 1fr 1fr', gap: '12px', backgroundColor: '#F8FAFC', padding: '14px', borderRadius: '12px', border: '1px solid #E2E8F0' }}>
+                  <div>
+                    <span style={{ fontSize: '11px', fontWeight: '800', color: '#64748B', display: 'block', marginBottom: '4px' }}>공급받는 자</span>
+                    <strong style={{ fontSize: '13px', color: '#0F172A' }}>{viewingDeliveryItem.company_name}</strong>
+                  </div>
+                  <div>
+                    <span style={{ fontSize: '11px', fontWeight: '800', color: '#64748B', display: 'block', marginBottom: '4px' }}>발행 일자</span>
+                    <strong style={{ fontSize: '13px', color: '#0F172A' }}>{viewingDeliveryItem.date}</strong>
+                  </div>
+                  <div>
+                    <span style={{ fontSize: '11px', fontWeight: '800', color: '#64748B', display: 'block', marginBottom: '4px' }}>발행자 (작성자)</span>
+                    <strong style={{ fontSize: '13px', color: '#0F172A' }}>{viewingDeliveryItem.author || '-'}</strong>
+                  </div>
+                </div>
+
+                {/* 장비 S/N 목록 */}
+                {details?.equipmentSns && details.equipmentSns.length > 0 && (
+                  <div style={{ backgroundColor: '#F8FAFC', padding: '14px', borderRadius: '12px', border: '1px solid #E2E8F0' }}>
+                    <span style={{ fontSize: '12px', fontWeight: '800', color: '#1E293B', display: 'block', marginBottom: '8px' }}>장비 S/N 목록</span>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                      {details.equipmentSns.map((eqSn, idx) => (
+                        <span key={idx} style={{ backgroundColor: '#fff', padding: '6px 12px', borderRadius: '8px', border: '1px solid #CBD5E1', fontSize: '13px', fontWeight: '700', color: '#0F172A' }}>
+                          {eqSn}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* 출고 부품 품목 명세 테이블 */}
+                <div>
+                  <h3 style={{ margin: '0 0 10px 0', fontSize: '14px', fontWeight: '800', color: '#1E293B' }}>출고 부품 품목 명세</h3>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '13px' }}>
+                    <thead>
+                      <tr style={{ backgroundColor: '#F1F5F9', borderBottom: '1px solid #CBD5E1', color: '#475569' }}>
+                        <th style={{ padding: '10px', width: '50px', textAlign: 'center' }}>NO</th>
+                        <th style={{ padding: '10px', width: '160px' }}>부품 ID / 코드</th>
+                        <th style={{ padding: '10px', width: '180px' }}>부품 S/N</th>
+                        <th style={{ padding: '10px' }}>품명 / 규격</th>
+                        <th style={{ padding: '10px', width: '90px', textAlign: 'center' }}>수량</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {details?.items?.map((it, idx) => (
+                        <tr key={idx} style={{ borderBottom: '1px solid #E2E8F0' }}>
+                          <td style={{ padding: '10px', textAlign: 'center', fontWeight: 'bold', color: '#64748B' }}>{idx + 1}</td>
+                          <td style={{ padding: '10px', fontWeight: '600', color: '#475569' }}>{it.code || '-'}</td>
+                          <td style={{ padding: '10px', fontWeight: '700', color: '#2563EB' }}>{it.selectedSn ? `S/N: ${it.selectedSn}` : '해당없음'}</td>
+                          <td style={{ padding: '10px', fontWeight: '800', color: '#0F172A' }}>{it.name}</td>
+                          <td style={{ padding: '10px', textAlign: 'center', fontWeight: '800' }}>{it.quantity} 개</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* 특이사항 */}
+                <div>
+                  <span style={{ fontSize: '12px', fontWeight: '800', color: '#475569', display: 'block', marginBottom: '4px' }}>특이사항 및 작업 내용</span>
+                  <div style={{ backgroundColor: '#F8FAFC', padding: '12px', borderRadius: '8px', border: '1px solid #E2E8F0', fontSize: '13px', color: '#334155', minHeight: '50px' }}>
+                    {viewingDeliveryItem.note?.replace(/\[DELIVERY_DETAILS:.*?\]/g, '').trim() || '특이사항 없음'}
+                  </div>
+                </div>
+
+                {/* 하단 버튼 */}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid #E2E8F0', paddingTop: '16px' }}>
+                  <button 
+                    type="button" 
+                    onClick={() => window.print()} 
+                    style={{ padding: '10px 18px', background: '#2563EB', color: 'white', border: 'none', borderRadius: '8px', fontWeight: '700', cursor: 'pointer', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '6px' }}
+                  >
+                    🖨️ 출고증 인쇄 / PDF 저장
+                  </button>
+
+                  <button 
+                    type="button" 
+                    onClick={() => setViewingDeliveryItem(null)} 
+                    style={{ padding: '10px 20px', border: '1px solid #CBD5E1', background: 'white', color: '#64748B', borderRadius: '8px', fontWeight: '600', cursor: 'pointer' }}
+                  >
+                    닫기
+                  </button>
+                </div>
+
+              </div>
+            </div>
+          </div>
+        )
+      })()}
     </div>
   )
 }
