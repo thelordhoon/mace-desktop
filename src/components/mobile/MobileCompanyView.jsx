@@ -35,7 +35,9 @@ export default function MobileCompanyView({ user, companies, allHistories, parts
   const [modelName, setModelName] = useState('JET2Neo')
   const [workContent, setWorkContent] = useState('')
   const [selectedManager, setSelectedManager] = useState('')
-  const [usedParts, setUsedParts] = useState([{ name: '', quantity: 1 }])
+  
+  // 💡 사용 부품 상태 (선택된 부품 정보 및 S/N 정보 포함하도록 확장)
+  const [usedParts, setUsedParts] = useState([{ partId: '', name: '', quantity: 1, selectedSn: '' }])
   
   // 💡 부품 검색 드롭다운 관리를 위한 상태
   const [activePartIndex, setActivePartIndex] = useState(null)
@@ -174,21 +176,52 @@ export default function MobileCompanyView({ user, companies, allHistories, parts
         }
       }
 
-      // 부품 재고 자동 차감
+      // 부품 재고 및 S/N 자동 차감 / 이력 연동 처리
       for (const p of usedParts) {
         if (!p.name || !p.name.trim()) continue
-        const usedQty = Number(p.quantity) || 0
-        if (usedQty <= 0) continue
+        
+        let matchedPart = null
+        if (p.partId) {
+          matchedPart = partsList.find(item => String(item.id) === String(p.partId))
+        }
+        if (!matchedPart) {
+          const query = p.name.trim().toLowerCase()
+          matchedPart = partsList.find(item => (item.name && item.name.toLowerCase() === query) || (item.code && item.code.toLowerCase() === query))
+        }
 
-        const query = p.name.trim().toLowerCase()
-        const matchedPart = partsList.find(item => (item.name && item.name.toLowerCase() === query) || (item.code && item.code.toLowerCase() === query))
         if (matchedPart) {
-          const newStock = Math.max(0, (Number(matchedPart.stock) || 0) - usedQty)
-          await supabase.from('parts').update({ stock: newStock }).eq('id', matchedPart.id)
+          let currentSerials = []
+          try {
+            currentSerials = matchedPart.serials ? (typeof matchedPart.serials === 'string' ? JSON.parse(matchedPart.serials) : matchedPart.serials) : []
+          } catch (err) { currentSerials = [] }
+
+          const isSerialItem = matchedPart.is_serial_managed || currentSerials.length > 0
+
+          if (isSerialItem && p.selectedSn) {
+            // S/N 관리품인 경우 해당 S/N 항목을 serials 배열에서 제거하고 재고(개수) 갱신
+            const updatedSerials = currentSerials.filter(s => String(s.sn).trim() !== String(p.selectedSn).trim())
+            await supabase.from('parts').update({
+              serials: JSON.stringify(updatedSerials),
+              stock: updatedSerials.length
+            }).eq('id', matchedPart.id)
+          } else {
+            // 일반 수량 관리품인 경우
+            const usedQty = Number(p.quantity) || 0
+            if (usedQty > 0) {
+              const newStock = Math.max(0, (Number(matchedPart.stock) || 0) - usedQty)
+              await supabase.from('parts').update({ stock: newStock }).eq('id', matchedPart.id)
+            }
+          }
         }
       }
 
-      const formattedParts = usedParts.filter(p => p.name && p.name.trim() !== '').map(p => `${p.name.trim()} (${p.quantity}개)`)
+      // 리포트에 기록될 부품 포맷 정리 (S/N 포함 여부 반영)
+      const formattedParts = usedParts.filter(p => p.name && p.name.trim() !== '').map(p => {
+        if (p.selectedSn) {
+          return `${p.name.trim()} (S/N: ${p.selectedSn})`
+        }
+        return `${p.name.trim()} (${p.quantity}개)`
+      })
 
       const { error } = await supabase.from('service_history').insert([{
         company_id: selectedCompany.id,
@@ -206,8 +239,8 @@ export default function MobileCompanyView({ user, companies, allHistories, parts
       if (error) {
         alert('리포트 저장 실패: ' + error.message)
       } else {
-        alert('서비스 리포트가 저장되고 재고가 자동 차감되었습니다!')
-        setWorkContent(''); setSn(''); setUsedParts([{ name: '', quantity: 1 }])
+        alert('서비스 리포트가 저장되고 부품 재고 및 S/N가 자동 차감되었습니다!')
+        setWorkContent(''); setSn(''); setUsedParts([{ partId: '', name: '', quantity: 1, selectedSn: '' }])
         onRefreshData()
         handleSelectCompany(selectedCompany)
         setViewMode('detail')
@@ -554,9 +587,9 @@ export default function MobileCompanyView({ user, companies, allHistories, parts
                 <textarea rows="3" placeholder="수리 및 점검 내용 입력" value={workContent} onChange={(e) => setWorkContent(e.target.value)} style={inputStyle} />
               </div>
 
-              {/* 💡 교체 부품 및 수량 (부품명/품번 검색 자동완성 기능 추가) */}
+              {/* 💡 교체 부품 및 수량 / S/N 선택 기능 추가 영역 */}
               <div>
-                <label style={labelStyle}>교체 부품 및 수량</label>
+                <label style={labelStyle}>교체 부품 및 수량 / S/N</label>
                 {usedParts.map((p, idx) => {
                   const query = (idx === activePartIndex ? partSearchQuery : p.name).toLowerCase()
                   const matchedParts = query.trim() === '' ? [] : partsList.filter(item => 
@@ -564,78 +597,130 @@ export default function MobileCompanyView({ user, companies, allHistories, parts
                     (item.code && item.code.toLowerCase().includes(query))
                   )
 
-                  return (
-                    <div key={idx} style={{ position: 'relative', display: 'flex', gap: '6px', marginBottom: '8px', width: '100%', boxSizing: 'border-box' }}>
-                      <div style={{ flex: 2, position: 'relative' }}>
-                        <input 
-                          placeholder="부품명 또는 품번 검색..." 
-                          value={p.name} 
-                          onChange={(e) => {
-                            const val = e.target.value
-                            const newParts = [...usedParts]
-                            newParts[idx].name = val
-                            setUsedParts(newParts)
-                            setActivePartIndex(idx)
-                            setPartSearchQuery(val)
-                          }}
-                          onFocus={() => {
-                            setActivePartIndex(idx)
-                            setPartSearchQuery(p.name)
-                          }}
-                          style={inputStyle} 
-                        />
+                  // 선택된 부품 객체 찾기
+                  const selectedPartObj = partsList.find(item => String(item.id) === String(p.partId))
+                  
+                  // 해당 부품의 보유 S/N 파싱
+                  let partSerials = []
+                  if (selectedPartObj) {
+                    try {
+                      partSerials = selectedPartObj.serials ? (typeof selectedPartObj.serials === 'string' ? JSON.parse(selectedPartObj.serials) : selectedPartObj.serials) : []
+                    } catch (err) { partSerials = [] }
+                  }
+                  const isSerialManaged = selectedPartObj ? (selectedPartObj.is_serial_managed || partSerials.length > 0) : false
 
-                        {/* 추천 검색어 드롭다운 목록 */}
-                        {activePartIndex === idx && matchedParts.length > 0 && (
-                          <ul style={{ 
-                            position: 'absolute', left: 0, right: 0, top: '100%', zIndex: 60, 
-                            maxHeight: '150px', overflowY: 'auto', backgroundColor: '#fff', 
-                            border: '1px solid #CBD5E1', borderRadius: '8px', listStyle: 'none', padding: 0, margin: '2px 0 0 0',
-                            boxShadow: '0 4px 6px rgba(0,0,0,0.1)'
-                          }}>
-                            {matchedParts.map(part => (
-                              <li 
-                                key={part.id}
-                                onClick={() => {
-                                  const newParts = [...usedParts]
-                                  newParts[idx].name = part.name
-                                  setUsedParts(newParts)
-                                  setActivePartIndex(null)
-                                  setPartSearchQuery('')
-                                }}
-                                style={{ padding: '8px 10px', cursor: 'pointer', borderBottom: '1px solid #F1F5F9', fontSize: '12px', display: 'flex', justifyContent: 'space-between' }}
-                              >
-                                <span style={{ fontWeight: '700', color: '#1E293B' }}>{part.name}</span>
-                                <span style={{ color: '#64748B', fontSize: '11px' }}>{part.code ? `[${part.code}] ` : ''}재고:{part.stock}개</span>
-                              </li>
+                  return (
+                    <div key={idx} style={{ backgroundColor: '#F8FAFC', padding: '10px', borderRadius: '8px', border: '1px solid #E2E8F0', marginBottom: '8px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                      <div style={{ position: 'relative', display: 'flex', gap: '6px', width: '100%', boxSizing: 'border-box' }}>
+                        <div style={{ flex: 2, position: 'relative' }}>
+                          <input 
+                            placeholder="부품명 또는 품번 검색..." 
+                            value={p.name} 
+                            onChange={(e) => {
+                              const val = e.target.value
+                              const newParts = [...usedParts]
+                              newParts[idx].name = val
+                              newParts[idx].partId = '' // 검색어 수정 시 선택 초기화
+                              newParts[idx].selectedSn = ''
+                              setUsedParts(newParts)
+                              setActivePartIndex(idx)
+                              setPartSearchQuery(val)
+                            }}
+                            onFocus={() => {
+                              setActivePartIndex(idx)
+                              setPartSearchQuery(p.name)
+                            }}
+                            style={inputStyle} 
+                          />
+
+                          {/* 추천 검색어 드롭다운 목록 */}
+                          {activePartIndex === idx && matchedParts.length > 0 && (
+                            <ul style={{ 
+                              position: 'absolute', left: 0, right: 0, top: '100%', zIndex: 60, 
+                              maxHeight: '150px', overflowY: 'auto', backgroundColor: '#fff', 
+                              border: '1px solid #CBD5E1', borderRadius: '8px', listStyle: 'none', padding: 0, margin: '2px 0 0 0',
+                              boxShadow: '0 4px 6px rgba(0,0,0,0.1)'
+                            }}>
+                              {matchedParts.map(part => {
+                                let pSers = []
+                                try {
+                                  pSers = part.serials ? (typeof part.serials === 'string' ? JSON.parse(part.serials) : part.serials) : []
+                                } catch (e) {}
+                                const stockCnt = (part.is_serial_managed || pSers.length > 0) ? pSers.length : (Number(part.stock) || 0)
+
+                                return (
+                                  <li 
+                                    key={part.id}
+                                    onClick={() => {
+                                      const newParts = [...usedParts]
+                                      newParts[idx].partId = part.id
+                                      newParts[idx].name = part.name
+                                      newParts[idx].selectedSn = ''
+                                      setUsedParts(newParts)
+                                      setActivePartIndex(null)
+                                      setPartSearchQuery('')
+                                    }}
+                                    style={{ padding: '8px 10px', cursor: 'pointer', borderBottom: '1px solid #F1F5F9', fontSize: '12px', display: 'flex', justifyContent: 'space-between' }}
+                                  >
+                                    <span style={{ fontWeight: '700', color: '#1E293B' }}>{part.name}</span>
+                                    <span style={{ color: '#64748B', fontSize: '11px' }}>{part.code ? `[${part.code}] ` : ''}재고:{stockCnt}개</span>
+                                  </li>
+                                )
+                              })}
+                            </ul>
+                          )}
+                        </div>
+
+                        {/* S/N 관리품인 경우 S/N 선택 드롭다운, 일반 부품인 경우 수량 입력 */}
+                        {isSerialManaged ? (
+                          <select 
+                            value={p.selectedSn} 
+                            onChange={(e) => {
+                              const n = [...usedParts]
+                              n[idx].selectedSn = e.target.value
+                              setUsedParts(n)
+                            }}
+                            style={{ ...inputStyle, flex: 1.5, borderColor: '#2563EB', fontWeight: 'bold' }}
+                            required
+                          >
+                            <option value="">-- S/N 선택 --</option>
+                            {partSerials.map((s, sIdx) => (
+                              <option key={sIdx} value={s.sn}>S/N: {s.sn} ({s.condition || 'BG'})</option>
                             ))}
-                          </ul>
+                          </select>
+                        ) : (
+                          <input 
+                            type="number" 
+                            min="1" 
+                            value={p.quantity} 
+                            onChange={(e) => { 
+                              const n = [...usedParts]
+                              n[idx].quantity = e.target.value
+                              setUsedParts(n) 
+                            }} 
+                            style={{ ...inputStyle, flex: 1, textAlign: 'center' }} 
+                          />
+                        )}
+
+                        {usedParts.length > 1 && (
+                          <button 
+                            type="button" 
+                            onClick={() => {
+                              const n = usedParts.filter((_, i) => i !== idx)
+                              setUsedParts(n)
+                            }}
+                            style={{ border: 'none', background: '#FfeeEE', color: '#EF4444', borderRadius: '6px', padding: '0 8px', fontWeight: 'bold', cursor: 'pointer' }}
+                          >
+                            ✕
+                          </button>
                         )}
                       </div>
 
-                      <input 
-                        type="number" 
-                        min="1" 
-                        value={p.quantity} 
-                        onChange={(e) => { 
-                          const n = [...usedParts]
-                          n[idx].quantity = e.target.value
-                          setUsedParts(n) 
-                        }} 
-                        style={{ ...inputStyle, flex: 1, textAlign: 'center' }} 
-                      />
-
-                      {usedParts.length > 1 && (
-                        <button 
-                          type="button" 
-                          onClick={() => {
-                            const n = usedParts.filter((_, i) => i !== idx)
-                            setUsedParts(n)
-                          }}
-                          style={{ border: 'none', background: '#FfeeEE', color: '#EF4444', borderRadius: '6px', padding: '0 8px', fontWeight: 'bold', cursor: 'pointer' }}
-                        >
-                          ✕
-                        </button>
+                      {/* S/N 관리품 선택 시 안내 문구 */}
+                      {isSerialManaged && (
+                        <div style={{ fontSize: '11px', color: '#2563EB', fontWeight: '600' }}>
+                          🏷️ S/N 관리 품목 (선택 시 해당 S/N가 재고에서 자동 차감됩니다)
+                        </div>
                       )}
                     </div>
                   )
@@ -643,7 +728,7 @@ export default function MobileCompanyView({ user, companies, allHistories, parts
 
                 <button 
                   type="button" 
-                  onClick={() => setUsedParts([...usedParts, { name: '', quantity: 1 }])} 
+                  onClick={() => setUsedParts([...usedParts, { partId: '', name: '', quantity: 1, selectedSn: '' }])} 
                   style={{ background: '#EFF6FF', color: '#2563EB', border: 'none', padding: '8px', borderRadius: '6px', fontSize: '12px', fontWeight: 'bold', cursor: 'pointer', width: '100%', boxSizing: 'border-box' }}
                 >
                   + 부품 추가

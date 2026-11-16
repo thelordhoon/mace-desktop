@@ -29,21 +29,23 @@ export default function DeliveryHistoryTab({ refreshParts }) {
     setLoading(false)
   }
 
-  // 💡 이력 삭제 시 로트별 / S/N별 정밀 복원 함수
+  // 💡 이력 삭제 시 소모품, S/N 관리품, 일반 수량 관리품까지 완벽하게 재고 원복
   const handleDeleteHistory = async (item) => {
-    if (!window.confirm(`[${item.summary}]\n이 내역을 삭제하시겠습니까?\n(삭제 시 차감되었던 수량이나 S/N가 원래 상태로 정확하게 복원됩니다.)`)) return
+    if (!window.confirm(`[${item.summary}]\n이 내역을 삭제하시겠습니까?\n(삭제 시 차감되었던 수량이나 S/N, 로트가 원래 상태로 정확하게 복원됩니다.)`)) return
 
+    // 1. 요약 문자열에서 수량 추출 (예: "Display cable (2개)" 또는 "Display cable (S/N: ...)")
     const qtyMatch = item.summary?.match(/\((\d+)개\)/)
-    const totalQty = qtyMatch ? Number(qtyMatch[1]) : 0
-    const codeMatch = item.summary?.match(/\[(.*?)\]/)
+    const totalQty = qtyMatch ? Number(qtyMatch[1]) : 1 // 수량 표기가 없으면 기본 1개
     
+    // 2. 부품 코드 추출 (예: "[E55-010271T] 품명..." 형식에서 코드 추출)
+    const codeMatch = item.summary?.match(/\[(.*?)\]/)
     let partCode = null
     if (codeMatch && codeMatch[1]) {
       const rawCode = codeMatch[1]
       partCode = rawCode.split(' ')[0].trim()
     }
 
-    if (partCode && totalQty > 0) {
+    if (partCode) {
       const { data: partsMatched, error: fetchError } = await supabase
         .from('parts')
         .select('*')
@@ -52,9 +54,10 @@ export default function DeliveryHistoryTab({ refreshParts }) {
       if (!fetchError && partsMatched && partsMatched.length > 0) {
         const partData = partsMatched[0]
         const cat = partData.category || ''
-        const isConsumable = cat === '잉크' || cat === '희석제' || cat === '소모품'
+        const isConsumable = cat.includes('잉크') || cat.includes('희석제') || cat.includes('소모품')
 
         if (isConsumable) {
+          // A. 소모품(로트 관리)인 경우
           let currentLots = []
           try {
             currentLots = partData.lots ? (typeof partData.lots === 'string' ? JSON.parse(partData.lots) : partData.lots) : []
@@ -128,22 +131,21 @@ export default function DeliveryHistoryTab({ refreshParts }) {
             stock: newStock
           }).eq('id', partData.id)
 
-        } else {
+        } else if (partData.is_serial_managed) {
+          // B. S/N 관리품인 경우
           let currentSerials = []
           try {
             currentSerials = partData.serials ? (typeof partData.serials === 'string' ? JSON.parse(partData.serials) : partData.serials) : []
           } catch (e) { currentSerials = [] }
 
-          const snMatch = item.equipment_sn?.match(/S\/N:\s*([^\s(]+)/)
+          const snMatch = item.equipment_sn?.match(/S\/N:\s*([^\s(]+)/) || item.summary?.match(/S\/N:\s*([^)]+)/)
           const snValue = snMatch ? snMatch[1].trim() : null
-          const condMatch = item.equipment_sn?.match(/\((BG|EX|OH)\)/)
-          const condValue = condMatch ? condMatch[1] : 'BG'
 
           if (item.type === 'INBOUND' && snValue) {
             currentSerials = currentSerials.filter(s => s.sn !== snValue)
           } else if (item.type === 'OUTBOUND' && snValue) {
             if (!currentSerials.some(s => s.sn === snValue)) {
-              currentSerials.push({ sn: snValue, condition: condValue, received_date: item.date })
+              currentSerials.push({ sn: snValue, condition: 'BG', received_date: item.date })
             }
           }
 
@@ -151,13 +153,28 @@ export default function DeliveryHistoryTab({ refreshParts }) {
             serials: JSON.stringify(currentSerials),
             stock: currentSerials.length
           }).eq('id', partData.id)
+
+        } else {
+          // C. 일반 수량 관리품인 경우 (출고 삭제 시 재고 더하기, 입고 삭제 시 재고 빼기)
+          const currentStock = Number(partData.stock) || 0
+          let newStock = currentStock
+
+          if (item.type === 'OUTBOUND') {
+            newStock += totalQty // 출고 취소 -> 재고 증가
+          } else if (item.type === 'INBOUND') {
+            newStock = Math.max(0, newStock - totalQty) // 입고 취소 -> 재고 감소
+          }
+
+          await supabase.from('parts').update({
+            stock: newStock
+          }).eq('id', partData.id)
         }
       }
     }
 
     const { error: delError } = await supabase.from('delivery_history').delete().eq('id', item.id)
     if (!delError) {
-      alert('이력이 삭제되고 재고가 정확하게 원복되었습니다.')
+      alert('이력이 성공적으로 삭제되고 재고가 정확하게 원복되었습니다.')
       fetchHistory()
       if (typeof refreshParts === 'function') refreshParts()
     } else {
@@ -165,18 +182,20 @@ export default function DeliveryHistoryTab({ refreshParts }) {
     }
   }
 
-  // 💡 저장된 note 속에서 상세 JSON 데이터를 파싱하는 함수
+  // 💡 JSON 내부 괄호 충돌을 방지하기 위한 안전한 파싱 함수
   const parseDeliveryDetails = (noteText) => {
     if (!noteText) return null
-    const match = noteText.match(/\[DELIVERY_DETAILS:(.*?)\]/)
-    if (match) {
-      try {
-        return JSON.parse(match[1])
-      } catch (e) {
-        return null
-      }
+    const tag = '[DELIVERY_DETAILS:'
+    const startIndex = noteText.indexOf(tag)
+    if (startIndex === -1) return null
+
+    const jsonString = noteText.substring(startIndex + tag.length, noteText.length - 1).trim()
+    try {
+      return JSON.parse(jsonString)
+    } catch (e) {
+      console.error('Delivery Details JSON 파싱 에러:', e)
+      return null
     }
-    return null
   }
 
   // 검색 및 탭 필터링 적용
@@ -195,7 +214,7 @@ export default function DeliveryHistoryTab({ refreshParts }) {
 
   return (
     <div onKeyDown={(e) => { if (e.key === 'Enter') e.preventDefault() }}>
-      {/* 인쇄 전용 깔끔한 서류 스타일 CSS (그라데이션 및 회색 음영 제거, 순백색 서류 형태로 출력) */}
+      {/* 인쇄 전용 깔끔한 서류 스타일 CSS */}
       <style>{`
         @media print {
           body * {
@@ -218,7 +237,6 @@ export default function DeliveryHistoryTab({ refreshParts }) {
           .no-print {
             display: none !important;
           }
-          /* 인쇄 시 회색 배경 박스들을 깔끔한 테두리 서류 박스로 강제 변환 */
           div[style*="background-color"] {
             background-color: #ffffff !important;
             -webkit-print-color-adjust: exact;
@@ -365,6 +383,10 @@ export default function DeliveryHistoryTab({ refreshParts }) {
       {/* 💡 [출고증 상세 보기 및 인쇄 모달] */}
       {viewingDeliveryItem && (() => {
         const details = parseDeliveryDetails(viewingDeliveryItem.note)
+        const rawNote = viewingDeliveryItem.note || ''
+        const tagIdx = rawNote.indexOf('[DELIVERY_DETAILS:')
+        const cleanNoteText = tagIdx !== -1 ? rawNote.substring(0, tagIdx).trim() : rawNote.trim()
+
         return (
           <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.6)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1100, padding: '20px' }}>
             <div 
@@ -439,11 +461,11 @@ export default function DeliveryHistoryTab({ refreshParts }) {
                 <div>
                   <span style={{ fontSize: '12px', fontWeight: '800', color: '#475569', display: 'block', marginBottom: '4px' }}>특이사항 및 작업 내용</span>
                   <div style={{ backgroundColor: '#F8FAFC', padding: '12px', borderRadius: '8px', border: '1px solid #CBD5E1', fontSize: '13px', color: '#334155', minHeight: '50px' }}>
-                    {viewingDeliveryItem.note?.replace(/\[DELIVERY_DETAILS:.*?\]/g, '').trim() || '특이사항 없음'}
+                    {cleanNoteText || '특이사항 없음'}
                   </div>
                 </div>
 
-                {/* 하단 버튼 (인쇄 시 숨김 처리됨) */}
+                {/* 하단 버튼 */}
                 <div className="no-print" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid #E2E8F0', paddingTop: '16px' }}>
                   <button 
                     type="button" 
