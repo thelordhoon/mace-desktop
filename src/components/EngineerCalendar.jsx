@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { supabase } from '../supabaseClient'
 
-// 💡 로컬 타임존 기준 YYYY-MM-DD 구하는 유틸 함수
+// 로컬 타임존 기준 YYYY-MM-DD 구하는 유틸 함수
 const getLocalTodayString = () => {
   const d = new Date()
   const year = d.getFullYear()
@@ -16,21 +16,19 @@ export default function EngineerCalendar({ user, isMobileView = false, companies
   const [currentDate, setCurrentDate] = useState(new Date())
   const [selectedEngineerFilter, setSelectedEngineerFilter] = useState('ALL')
   
-  // 💡 모바일 3일 뷰를 위한 기준 날짜 상태 (YYYY-MM-DD)
+  // 💡 모바일 주간 뷰를 위한 기준 날짜 상태 (선택된 날짜 YYYY-MM-DD)
   const [mobileSelectedDateStr, setMobileSelectedDateStr] = useState(getLocalTodayString())
   
-  // 💡 엔지니어 3명 
   const engineerList = ['배진철', '진희찬', '국민석', '관리부']
-  const workTypes = ['출장/AS', 'Overhaul', '장비설치', '내부업무','휴무']
+  const workTypes = ['출장/AS', 'Overhaul', '장비설치', '내부업무', '휴무']
 
   // 게시판 상태 (공지사항, 영업부, 기술부)
   const [notices, setNotices] = useState([])
   const [salesNotes, setSalesNotes] = useState([])
   const [techNotes, setTechNotes] = useState([])
   
-  // 공지/영업/기술 작성 모달 상태
   const [showBoardModal, setShowBoardModal] = useState(false)
-  const [boardCategory, setBoardCategory] = useState('NOTICE') // NOTICE | SALES | TECH
+  const [boardCategory, setBoardCategory] = useState('NOTICE')
   const [boardForm, setBoardForm] = useState({ author: '이현희', content: '' })
 
   // 달력 일정 모달 및 폼 상태
@@ -71,7 +69,6 @@ export default function EngineerCalendar({ user, isMobileView = false, companies
     setForm(prev => ({ ...prev, [name]: value }))
   }
 
-  // 게시판(공지, 영업, 기술) 불러오기
   const fetchBulletins = async () => {
     const { data, error } = await supabase
       .from('bulletin_boards')
@@ -86,7 +83,6 @@ export default function EngineerCalendar({ user, isMobileView = false, companies
     }
   }
 
-  // 게시판 항목 작성 저장
   const handleSaveBoardItem = async (e) => {
     e.preventDefault()
     if (!boardForm.content.trim()) return alert('내용을 입력해주세요!')
@@ -107,7 +103,6 @@ export default function EngineerCalendar({ user, isMobileView = false, companies
     }
   }
 
-  // 게시판 항목 삭제
   const handleDeleteBoardItem = async (id) => {
     if (!window.confirm('이 항목을 삭제하시겠습니까?')) return
     const { error } = await supabase.from('bulletin_boards').delete().eq('id', id)
@@ -153,45 +148,35 @@ export default function EngineerCalendar({ user, isMobileView = false, companies
     setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 1))
   }
 
-  // 💡 모바일 날짜 하루씩 이동 핸들러
-  const handleMoveMobileDate = (days) => {
+  // 💡 모바일 주 단위 이동 (일주일 전후)
+  const handleMoveMobileWeek = (weeks) => {
     const parts = mobileSelectedDateStr.split('-')
     const d = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]))
-    d.setDate(d.getDate() + days)
+    d.setDate(d.getDate() + (weeks * 7))
     const year = d.getFullYear()
     const month = String(d.getMonth() + 1).padStart(2, '0')
     const day = String(d.getDate()).padStart(2, '0')
     setMobileSelectedDateStr(`${year}-${month}-${day}`)
   }
 
-  // 터치 스와이프 좌표 계산용
-  const [touchStartX, setTouchStartX] = useState(0)
-  const handleTouchStart = (e) => setTouchStartX(e.touches[0].clientX)
-  const handleTouchEnd = (e) => {
-    const touchEndX = e.changedTouches[0].clientX
-    if (touchStartX - touchEndX > 50) {
-      handleMoveMobileDate(1) // 왼쪽으로 쓸으면 다음 날
-    } else if (touchEndX - touchStartX > 50) {
-      handleMoveMobileDate(-1) // 오른쪽으로 쓸으면 전날
+  // 선택된 날짜가 속한 주의 월요일부터 일요일까지의 날짜 배열(YYYY-MM-DD)을 생성하는 유틸
+  const getWeekDates = (dateStr) => {
+    const parts = dateStr.split('-')
+    const d = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]))
+    const day = d.getDay()
+    // 월요일 기준으로 시작하려면 (day === 0 ? -6 : 1 - day)
+    const diffToMonday = day === 0 ? -6 : 1 - day
+    d.setDate(d.getDate() + diffToMonday)
+
+    const weekArr = []
+    for (let i = 0; i < 7; i++) {
+      const year = d.getFullYear()
+      const month = String(d.getMonth() + 1).padStart(2, '0')
+      const dayNum = String(d.getDate()).padStart(2, '0')
+      weekArr.push(`${year}-${month}-${dayNum}`)
+      d.setDate(d.getDate() + 1)
     }
-  }
-
-  // 날짜 스트링 포맷터 (예: "11월 15일 (일)")
-  const formatMobileDateLabel = (dateStr) => {
-    const parts = dateStr.split('-')
-    const d = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]))
-    const days = ['일', '월', '화', '수', '목', '금', '토']
-    return `${Number(parts[1])}월 ${Number(parts[2])}일 (${days[d.getDay()]})`
-  }
-
-  const getAdjacentDateStr = (dateStr, days) => {
-    const parts = dateStr.split('-')
-    const d = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]))
-    d.setDate(d.getDate() + days)
-    const year = d.getFullYear()
-    const month = String(d.getMonth() + 1).padStart(2, '0')
-    const day = String(d.getDate()).padStart(2, '0')
-    return `${year}-${month}-${day}`
+    return weekArr
   }
 
   const handleOpenAddModal = (dateStr = null) => {
@@ -302,26 +287,22 @@ export default function EngineerCalendar({ user, isMobileView = false, companies
   const inputStyle = { width: '100%', padding: '10px 12px', fontSize: '14px', borderRadius: '8px', border: '1px solid #CBD5E1', backgroundColor: '#F8FAFC', outline: 'none', boxSizing: 'border-box' }
   const labelStyle = { fontSize: '13px', fontWeight: '600', color: '#64748B', marginBottom: '4px', display: 'block' }
 
-  // 📱 휴대폰(모바일) 전용 뷰 렌더링
+  // 📱 휴대폰(모바일) 전용 미니 주간 바 뷰 렌더링
   if (isMobileView) {
-    const yesterdayStr = getAdjacentDateStr(mobileSelectedDateStr, -1)
-    const tomorrowStr = getAdjacentDateStr(mobileSelectedDateStr, 1)
+    const currentWeekDays = getWeekDates(mobileSelectedDateStr)
     const todaySchedules = filteredSchedules.filter(sch => sch.start_date <= mobileSelectedDateStr && sch.end_date >= mobileSelectedDateStr)
+    const weekDaysName = ['월', '화', '수', '목', '금', '토', '일']
 
     return (
-      <div 
-        onTouchStart={handleTouchStart} 
-        onTouchEnd={handleTouchEnd}
-        style={{ display: 'flex', flexDirection: 'column', gap: '16px', paddingBottom: '40px' }}
-      >
-        {/* 상단 파란색 영역: 3일 캘린더 네비게이션 */}
-        <div style={{ backgroundColor: '#2563EB', borderRadius: '16px', padding: '16px', color: '#fff', boxShadow: '0 4px 6px rgba(0,0,0,0.1)' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', paddingBottom: '40px', width: '100%', boxSizing: 'border-box' }}>
+        
+        {/* 상단 파란색 영역: 미니 주간 바 (Weekly Strip) */}
+        <div style={{ backgroundColor: '#2563EB', borderRadius: '16px', padding: '14px', color: '#fff', boxShadow: '0 4px 6px rgba(0,0,0,0.1)', width: '100%', boxSizing: 'border-box' }}>
           
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <button onClick={() => handleMoveMobileDate(-1)} style={{ background: 'rgba(255,255,255,0.2)', border: 'none', color: '#fff', padding: '6px 12px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer' }}>◀</button>
-              <span style={{ fontSize: '16px', fontWeight: '800' }}>{formatMobileDateLabel(mobileSelectedDateStr)}</span>
-              <button onClick={() => handleMoveMobileDate(1)} style={{ background: 'rgba(255,255,255,0.2)', border: 'none', color: '#fff', padding: '6px 12px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer' }}>▶</button>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <button onClick={() => handleMoveMobileWeek(-1)} style={{ background: 'rgba(255,255,255,0.2)', border: 'none', color: '#fff', padding: '4px 10px', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer', fontSize: '12px' }}>◀ 이전주</button>
+              <button onClick={() => handleMoveMobileWeek(1)} style={{ background: 'rgba(255,255,255,0.2)', border: 'none', color: '#fff', padding: '4px 10px', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer', fontSize: '12px' }}>다음주 ▶</button>
             </div>
             <button 
               onClick={() => setMobileSelectedDateStr(getLocalTodayString())}
@@ -331,29 +312,45 @@ export default function EngineerCalendar({ user, isMobileView = false, companies
             </button>
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.4fr 1fr', gap: '8px', alignItems: 'center' }}>
-            <div 
-              onClick={() => setMobileSelectedDateStr(yesterdayStr)}
-              style={{ background: 'rgba(255,255,255,0.2)', borderRadius: '10px', padding: '12px 6px', textAlign: 'center', cursor: 'pointer', opacity: 0.8, fontSize: '12px' }}
-            >
-              <div style={{ fontWeight: '700' }}>{yesterdayStr.slice(5)}</div>
-            </div>
+          {/* 월~일 가로 콤팩트 주간 바 */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '4px' }}>
+            {currentWeekDays.map((dateStr, idx) => {
+              const isSelected = dateStr === mobileSelectedDateStr
+              const isToday = dateStr === getLocalTodayString()
+              const dayHasSchedule = schedules.some(sch => sch.start_date <= dateStr && sch.end_date >= dateStr)
+              const dayNum = dateStr.split('-')[2]
 
-            <div style={{ background: '#ffffff', color: '#1E293B', borderRadius: '12px', padding: '14px 8px', textAlign: 'center', boxShadow: '0 4px 12px rgba(0,0,0,0.15)', transform: 'scale(1.05)' }}>
-              <div style={{ fontSize: '14px', fontWeight: '900' }}>{mobileSelectedDateStr}</div>
-              <div style={{ fontSize: '11px', color: '#2563EB', fontWeight: '700', marginTop: '2px' }}>일정 {todaySchedules.length}건</div>
-            </div>
-
-            <div 
-              onClick={() => setMobileSelectedDateStr(tomorrowStr)}
-              style={{ background: 'rgba(255,255,255,0.2)', borderRadius: '10px', padding: '12px 6px', textAlign: 'center', cursor: 'pointer', opacity: 0.8, fontSize: '12px' }}
-            >
-              <div style={{ fontWeight: '700' }}>{tomorrowStr.slice(5)}</div>
-            </div>
+              return (
+                <div 
+                  key={dateStr}
+                  onClick={() => setMobileSelectedDateStr(dateStr)}
+                  style={{ 
+                    backgroundColor: isSelected ? '#ffffff' : 'rgba(255,255,255,0.15)',
+                    color: isSelected ? '#1E293B' : '#ffffff',
+                    borderRadius: '8px',
+                    padding: '8px 2px',
+                    textAlign: 'center',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    gap: '2px',
+                    border: isToday && !isSelected ? '1px solid rgba(255,255,255,0.8)' : 'none',
+                    boxShadow: isSelected ? '0 2px 6px rgba(0,0,0,0.15)' : 'none'
+                  }}
+                >
+                  <span style={{ fontSize: '10px', fontWeight: '700', opacity: isSelected ? 0.8 : 0.9 }}>{weekDaysName[idx]}</span>
+                  <span style={{ fontSize: '13px', fontWeight: '900' }}>{Number(dayNum)}</span>
+                  {dayHasSchedule && (
+                    <span style={{ width: '4px', height: '4px', borderRadius: '50%', backgroundColor: isSelected ? '#2563EB' : '#FCD34D', marginTop: '1px' }} />
+                  )}
+                </div>
+              )
+            })}
           </div>
         </div>
 
-        {/* 하단 영역: 선택된 날짜 일정 & 향후 예정된 다음 일정 */}
+        {/* 하단 영역: 선택된 날짜의 일정 & 향후 예정된 다음 일정 */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
           
           {/* 1. 선택된 날짜의 일정 */}
