@@ -44,6 +44,13 @@ export default function Sidebar({ currentMenu, setCurrentMenu, isAdmin, resetVie
       >
         🔧 자재 및 부품 관리
       </button>
+      
+      <button 
+        onClick={() => handleMenuClick('delivery_history')}
+        style={{ width: '100%', padding: '12px 14px', backgroundColor: currentMenu === 'delivery_history' ? '#2563eb' : 'transparent', color: currentMenu === 'delivery_history' ? '#ffffff' : '#cbd5e1', border: 'none', borderRadius: '8px', textAlign: 'left', fontWeight: '600', fontSize: '14px', cursor: 'pointer' }}
+      >
+        📦 출고증 이력 관리
+      </button>
 
       <button
         onClick={() => handleMenuClick('purchase_request')}
