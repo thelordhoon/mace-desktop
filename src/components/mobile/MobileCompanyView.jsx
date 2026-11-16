@@ -7,7 +7,7 @@ export default function MobileCompanyView({ user, companies, allHistories, parts
   const [viewMode, setViewMode] = useState('list') // 'list' | 'detail' | 'report'
   const [selectedCompany, setSelectedCompany] = useState(null)
   
-  // 검색 및 정렬 상태 (중복 선언 해결 완료)
+  // 검색 및 정렬 상태
   const [companySearchTerm, setCompanySearchTerm] = useState(initialSearchTerm)
   const [companySortType, setCompanySortType] = useState('recent_history')
   const [detailSnSearchTerm, setDetailSnSearchTerm] = useState('')
@@ -36,8 +36,12 @@ export default function MobileCompanyView({ user, companies, allHistories, parts
   const [workContent, setWorkContent] = useState('')
   const [selectedManager, setSelectedManager] = useState('')
   const [usedParts, setUsedParts] = useState([{ name: '', quantity: 1 }])
-  const [confirmor, setConfirmor] = useState(user?.full_name || '배진철')
   
+  // 💡 부품 검색 드롭다운 관리를 위한 상태
+  const [activePartIndex, setActivePartIndex] = useState(null)
+  const [partSearchQuery, setPartSearchQuery] = useState('')
+
+  const [confirmor, setConfirmor] = useState(user?.full_name || '배진철')
   const [historyList, setHistoryList] = useState([])
   const [uploading, setUploading] = useState(false)
   const [selectedReportImage, setSelectedReportImage] = useState(null)
@@ -45,7 +49,6 @@ export default function MobileCompanyView({ user, companies, allHistories, parts
   const sigCanvas = useRef({})
   const reportFormRef = useRef(null)
 
-  // 💡 캘린더 등에서 전달받은 검색어가 있을 경우 자동 매칭하여 상세 뷰 진입
   useEffect(() => {
     if (initialSearchTerm) {
       setCompanySearchTerm(initialSearchTerm)
@@ -56,7 +59,6 @@ export default function MobileCompanyView({ user, companies, allHistories, parts
     }
   }, [initialSearchTerm, companies])
 
-  // 담당자 파싱 유틸
   const parseManagers = (managerData, phoneData, defaultEmail) => {
     if (!managerData) return [{ name: '', phone: '', role: '', email: defaultEmail || '' }]
     try {
@@ -66,13 +68,11 @@ export default function MobileCompanyView({ user, companies, allHistories, parts
     return [{ name: managerData || '', phone: phoneData || '', role: '', email: defaultEmail || '' }]
   }
 
-  // 서비스 이력 불러오기
   const fetchServiceHistory = async (companyId) => {
     const { data } = await supabase.from('service_history').select('*').eq('company_id', companyId).order('created_at', { ascending: false })
     setHistoryList(data || [])
   }
 
-  // 업체 선택 시 상세 화면으로 이동
   const handleSelectCompany = (company) => {
     const parsedManagers = parseManagers(company.manager, company.phone, company.email)
     setSelectedCompany({ ...company, managersList: parsedManagers })
@@ -91,7 +91,6 @@ export default function MobileCompanyView({ user, companies, allHistories, parts
     fetchServiceHistory(company.id)
   }
 
-  // 신규 업체 등록
   const handleAddCompany = async (e) => {
     e.preventDefault()
     if (!name) return alert('업체명을 입력해주세요!')
@@ -123,7 +122,6 @@ export default function MobileCompanyView({ user, companies, allHistories, parts
     }
   }
 
-  // 업체 정보 수정 저장
   const handleSaveCompanyEdit = async () => {
     if (!editData.name.trim()) return alert('업체명을 입력해주세요.')
     setUploading(true)
@@ -155,7 +153,6 @@ export default function MobileCompanyView({ user, companies, allHistories, parts
     }
   }
 
-  // 서비스 리포트 저장 및 재고 차감
   const handleSaveReport = async (e) => {
     e.preventDefault()
     if (!selectedCompany) return
@@ -222,7 +219,6 @@ export default function MobileCompanyView({ user, companies, allHistories, parts
     }
   }
 
-  // 필터링 및 정렬
   const cleanCompanyName = (name) => name ? name.replace(/\(주\)|주식회사|\(주|\주/g, '').trim() : ''
   const getLatestHistoryDate = (companyId) => {
     const compHistories = allHistories.filter(h => h.company_id === companyId)
@@ -246,7 +242,7 @@ export default function MobileCompanyView({ user, companies, allHistories, parts
   const labelStyle = { fontSize: '12px', fontWeight: '600', color: '#64748B', marginBottom: '4px', display: 'block' }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', width: '100%', boxSizing: 'border-box' }}>
       
       {/* 뒤로 가기 / 상단 네비게이션 */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -260,7 +256,6 @@ export default function MobileCompanyView({ user, companies, allHistories, parts
       {viewMode === 'list' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
           
-          {/* 검색바 */}
           <div style={{ position: 'relative' }}>
             <input 
               type="text"
@@ -284,7 +279,6 @@ export default function MobileCompanyView({ user, companies, allHistories, parts
             </div>
           </div>
 
-          {/* 신규 업체 등록 폼 */}
           {showAddForm && (
             <form onSubmit={handleAddCompany} style={{ backgroundColor: '#fff', padding: '16px', borderRadius: '12px', border: '1px solid #CBD5E1', display: 'flex', flexDirection: 'column', gap: '10px' }}>
               <h4 style={{ margin: '0 0 6px 0', fontSize: '15px', fontWeight: '800' }}>➕ 신규 업체 등록</h4>
@@ -313,7 +307,6 @@ export default function MobileCompanyView({ user, companies, allHistories, parts
             </form>
           )}
 
-          {/* 업체 리스트 */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
             {filteredCompanies.length === 0 ? (
               <div style={{ textAlign: 'center', padding: '30px', color: '#94A3B8', backgroundColor: '#fff', borderRadius: '12px' }}>등록된 업체가 없습니다.</div>
@@ -369,7 +362,6 @@ export default function MobileCompanyView({ user, companies, allHistories, parts
                 </button>
               </div>
             ) : (
-              /* 수정 모드 폼 */
               <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                 <h4 style={{ margin: '0 0 6px 0', fontSize: '15px', fontWeight: '800' }}>✏️ 업체 정보 수정</h4>
                 
@@ -432,7 +424,6 @@ export default function MobileCompanyView({ user, companies, allHistories, parts
             )}
           </div>
 
-          {/* 최근 서비스 이력 */}
           <div style={{ backgroundColor: '#fff', padding: '16px', borderRadius: '12px', border: '1px solid #E2E8F0' }}>
             <h4 style={{ margin: '0 0 10px 0', fontSize: '15px' }}>📋 최근 서비스 이력</h4>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
@@ -463,25 +454,25 @@ export default function MobileCompanyView({ user, companies, allHistories, parts
               <h3 style={{ margin: 0, fontSize: '16px', fontWeight: '800', color: '#0F172A' }}>서비스 리포트 작성 ({selectedCompany.name})</h3>
 
               <div>
-  <label style={labelStyle}>작업일자</label>
-  <input 
-    type="date" 
-    value={workDate} 
-    onChange={(e) => setWorkDate(e.target.value)} 
-    style={{ 
-      ...inputStyle, 
-      width: '100%',
-      minWidth: 0,
-      maxWidth: '100%',
-      boxSizing: 'border-box',
-      appearance: 'none',
-      WebkitAppearance: 'none',
-      display: 'block'
-    }} 
-  />
-</div>
+                <label style={labelStyle}>작업일자</label>
+                <input 
+                  type="date" 
+                  value={workDate} 
+                  onChange={(e) => setWorkDate(e.target.value)} 
+                  style={{ 
+                    ...inputStyle, 
+                    width: '100%',
+                    minWidth: 0,
+                    maxWidth: '100%',
+                    boxSizing: 'border-box',
+                    appearance: 'none',
+                    WebkitAppearance: 'none',
+                    display: 'block'
+                  }} 
+                />
+              </div>
 
-              {/* 💡 작업 시간 간편 입력 영역 */}
+              {/* 작업 시간 간편 입력 영역 */}
               <div style={{ backgroundColor: '#F8FAFC', padding: '10px', borderRadius: '8px', border: '1px solid #E2E8F0', display: 'flex', flexDirection: 'column', gap: '8px' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <label style={{ ...labelStyle, margin: 0 }}>⏱️ 작업 시간</label>
@@ -563,18 +554,103 @@ export default function MobileCompanyView({ user, companies, allHistories, parts
                 <textarea rows="3" placeholder="수리 및 점검 내용 입력" value={workContent} onChange={(e) => setWorkContent(e.target.value)} style={inputStyle} />
               </div>
 
+              {/* 💡 교체 부품 및 수량 (부품명/품번 검색 자동완성 기능 추가) */}
               <div>
                 <label style={labelStyle}>교체 부품 및 수량</label>
-                {usedParts.map((p, idx) => (
-                  <div key={idx} style={{ display: 'flex', gap: '6px', marginBottom: '6px', width: '100%', boxSizing: 'border-box' }}>
-                    <input placeholder="부품명 또는 품번" value={p.name} onChange={(e) => { const n = [...usedParts]; n[idx].name = e.target.value; setUsedParts(n); }} style={{ ...inputStyle, flex: 2 }} />
-                    <input type="number" min="1" value={p.quantity} onChange={(e) => { const n = [...usedParts]; n[idx].quantity = e.target.value; setUsedParts(n); }} style={{ ...inputStyle, flex: 1 }} />
-                  </div>
-                ))}
-                <button type="button" onClick={() => setUsedParts([...usedParts, { name: '', quantity: 1 }])} style={{ background: '#EFF6FF', color: '#2563EB', border: 'none', padding: '8px', borderRadius: '6px', fontSize: '12px', fontWeight: 'bold', cursor: 'pointer', width: '100%', boxSizing: 'border-box' }}>+ 부품 추가</button>
+                {usedParts.map((p, idx) => {
+                  const query = (idx === activePartIndex ? partSearchQuery : p.name).toLowerCase()
+                  const matchedParts = query.trim() === '' ? [] : partsList.filter(item => 
+                    (item.name && item.name.toLowerCase().includes(query)) || 
+                    (item.code && item.code.toLowerCase().includes(query))
+                  )
+
+                  return (
+                    <div key={idx} style={{ position: 'relative', display: 'flex', gap: '6px', marginBottom: '8px', width: '100%', boxSizing: 'border-box' }}>
+                      <div style={{ flex: 2, position: 'relative' }}>
+                        <input 
+                          placeholder="부품명 또는 품번 검색..." 
+                          value={p.name} 
+                          onChange={(e) => {
+                            const val = e.target.value
+                            const newParts = [...usedParts]
+                            newParts[idx].name = val
+                            setUsedParts(newParts)
+                            setActivePartIndex(idx)
+                            setPartSearchQuery(val)
+                          }}
+                          onFocus={() => {
+                            setActivePartIndex(idx)
+                            setPartSearchQuery(p.name)
+                          }}
+                          style={inputStyle} 
+                        />
+
+                        {/* 추천 검색어 드롭다운 목록 */}
+                        {activePartIndex === idx && matchedParts.length > 0 && (
+                          <ul style={{ 
+                            position: 'absolute', left: 0, right: 0, top: '100%', zIndex: 60, 
+                            maxHeight: '150px', overflowY: 'auto', backgroundColor: '#fff', 
+                            border: '1px solid #CBD5E1', borderRadius: '8px', listStyle: 'none', padding: 0, margin: '2px 0 0 0',
+                            boxShadow: '0 4px 6px rgba(0,0,0,0.1)'
+                          }}>
+                            {matchedParts.map(part => (
+                              <li 
+                                key={part.id}
+                                onClick={() => {
+                                  const newParts = [...usedParts]
+                                  newParts[idx].name = part.name
+                                  setUsedParts(newParts)
+                                  setActivePartIndex(null)
+                                  setPartSearchQuery('')
+                                }}
+                                style={{ padding: '8px 10px', cursor: 'pointer', borderBottom: '1px solid #F1F5F9', fontSize: '12px', display: 'flex', justifyContent: 'space-between' }}
+                              >
+                                <span style={{ fontWeight: '700', color: '#1E293B' }}>{part.name}</span>
+                                <span style={{ color: '#64748B', fontSize: '11px' }}>{part.code ? `[${part.code}] ` : ''}재고:{part.stock}개</span>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </div>
+
+                      <input 
+                        type="number" 
+                        min="1" 
+                        value={p.quantity} 
+                        onChange={(e) => { 
+                          const n = [...usedParts]
+                          n[idx].quantity = e.target.value
+                          setUsedParts(n) 
+                        }} 
+                        style={{ ...inputStyle, flex: 1, textAlign: 'center' }} 
+                      />
+
+                      {usedParts.length > 1 && (
+                        <button 
+                          type="button" 
+                          onClick={() => {
+                            const n = usedParts.filter((_, i) => i !== idx)
+                            setUsedParts(n)
+                          }}
+                          style={{ border: 'none', background: '#FfeeEE', color: '#EF4444', borderRadius: '6px', padding: '0 8px', fontWeight: 'bold', cursor: 'pointer' }}
+                        >
+                          ✕
+                        </button>
+                      )}
+                    </div>
+                  )
+                })}
+
+                <button 
+                  type="button" 
+                  onClick={() => setUsedParts([...usedParts, { name: '', quantity: 1 }])} 
+                  style={{ background: '#EFF6FF', color: '#2563EB', border: 'none', padding: '8px', borderRadius: '6px', fontSize: '12px', fontWeight: 'bold', cursor: 'pointer', width: '100%', boxSizing: 'border-box' }}
+                >
+                  + 부품 추가
+                </button>
               </div>
 
-              {/* 💡 서명 영역 폭 벗어남 방지 (반응형 캔버스 래퍼) */}
+              {/* 고객 서명 영역 */}
               <div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
                   <label style={labelStyle}>고객 서명</label>
