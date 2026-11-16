@@ -270,11 +270,8 @@ export default function GeneralPartsTab({ partsList, refreshParts, showAddForm, 
                 <label style={labelStyle}>구분 / 모델</label>
                 <select value={partCategory} onChange={e => setPartCategory(e.target.value)} style={inputStyle}>
                   <option value="일반부품">일반부품</option>
-                  <option value="IQJET">IQJET</option>
-                  <option value="JET1neo">JET1neo</option>
-                  <option value="JET2neo">JET2neo</option>
                   <option value="Spare parts">Spare parts</option>
-                  <option value="Accessories">Accessories</option>
+                  <option value="Accessories">Tag</option>
                   <option value="Tools">Tools</option>
                 </select>
               </div>
@@ -628,7 +625,7 @@ export default function GeneralPartsTab({ partsList, refreshParts, showAddForm, 
                 <select value={editForm.category} onChange={e => setEditForm({ ...editForm, category: e.target.value })} style={inputStyle}>
                   <option value="일반부품">일반부품</option>
                   <option value="Spare parts">Spare parts</option>
-                  <option value="Accessories">Accessories</option>
+                  <option value="Accessories">Tag</option>
                   <option value="Tools">부자재</option>
                 </select>
               </div>
