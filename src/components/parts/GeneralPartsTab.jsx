@@ -302,7 +302,7 @@ export default function GeneralPartsTab({ partsList, refreshParts, showAddForm, 
     const validEquipSns = equipmentSns.filter(s => s && s.trim() !== '').join(', ')
     const finalSummary = summaryPartsList.join(', ')
 
-    // 💡 이력 조회 시 출고증 보기 모달에 바로 활용될 수 있도록 상세 내역 JSON을 note에 함께 임베딩
+    // 💡 [핵심] 이력 탭의 '출고증 보기' 버튼이 나타나도록 상세 데이터를 JSON으로 묶어 note에 포함시킴
     const deliveryPayloadJson = JSON.stringify({
       equipmentSns: equipmentSns.filter(s => s && s.trim() !== ''),
       items: deliveryItems.map(item => {
@@ -497,7 +497,7 @@ export default function GeneralPartsTab({ partsList, refreshParts, showAddForm, 
                       <td style={{ padding: '12px 16px', fontWeight: '700', color: '#0F172A', wordBreak: 'break-all' }}>{p.name}</td>
                       <td style={{ padding: '12px 16px' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                          <span style={{ fontWeight: '800', fontSize: '14px', color: '#0F172A', backgroundColor: '#F1F5F9', padding: '3px 10px', borderRadius: '6px', border: '1px solid #CBD5E1' }}>
+                          <span style={{ fontWeight: '800', fontSize: '14px', color: '#0F172A', backgroundColor: '#F8FAFC', padding: '3px 10px', borderRadius: '6px', border: '1px solid #CBD5E1' }}>
                             {totalStock} 개
                           </span>
                           
