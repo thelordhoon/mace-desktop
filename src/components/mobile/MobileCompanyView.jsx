@@ -765,7 +765,9 @@ export default function MobileCompanyView({ user, companies, allHistories, parts
                 return (
                   <div key={h.id} style={{ backgroundColor: '#ffffff', padding: '14px', borderRadius: '12px', border: '1px solid #E2E8F0' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-                      <span style={{ fontSize: '12px', fontWeight: '800', color: '#2563EB' }}>{h.work_date || h.created_at?.split('T')[0]} {h.start_time ? `(${h.start_time}~{h.end_time})` : ''}</span>
+                      <span style={{ fontSize: '12px', fontWeight: '800', color: '#2563EB' }}>
+  {h.work_date || h.created_at?.split('T')[0]} {h.start_time ? `(${h.start_time}~${h.end_time})` : ''}
+</span>
                       <span style={{ fontSize: '11px', backgroundColor: '#F1F5F9', padding: '3px 8px', borderRadius: '6px', fontWeight: '700', color: '#334155' }}>
                         {h.model_name || ''} {targetSn ? `/ S/N: ${targetSn}` : ''}
                       </span>
