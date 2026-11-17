@@ -228,7 +228,6 @@ export default function MobileCompanyView({ user, companies, allHistories, parts
             const targetSn = p.selectedSn.trim()
             summaryParts.push(`${matchedPart.name} (S/N: ${targetSn})`)
 
-            // 보유 S/N 목록에 일치하는 S/N가 있는 경우에만 재고에서 차감
             const existsInStock = currentSerials.some(s => s.sn === targetSn)
             if (existsInStock) {
               const updatedSerials = currentSerials.filter(s => s.sn !== targetSn)
@@ -244,7 +243,6 @@ export default function MobileCompanyView({ user, companies, allHistories, parts
             await supabase.from('parts').update({ stock: newStock }).eq('id', matchedPart.id)
           }
         } else {
-          // DB에 없는 수기 입력 품목 처리
           if (p.selectedSn && p.selectedSn.trim()) {
             summaryParts.push(`${p.name.trim()} (S/N: ${p.selectedSn.trim()})`)
           } else {
@@ -262,16 +260,15 @@ export default function MobileCompanyView({ user, companies, allHistories, parts
         end_time: `${endHour}:${endMin}`,
         model_name: modelName,
         equipment_sn: sn,
-        manager_name: selectedManager,
+        manager_name: selectedManager, // 고객사 담당자 이름
         work_content: workContent,
         used_parts: JSON.stringify(validParts),
-        confirmor: confirmor,
+        confirmor: confirmor, // 로그인한 작성자 (엔지니어) 이름
         report_image_url: reportImageUrl
       }])
 
       if (error) throw error
 
-      // 출고 이력(delivery_history)에도 자동 기록
       if (summaryParts.length > 0) {
         await supabase.from('delivery_history').insert([{
           date: workDate,
@@ -412,7 +409,7 @@ export default function MobileCompanyView({ user, companies, allHistories, parts
               <textarea rows="3" placeholder="수리 및 점검 내용 입력" value={workContent} onChange={e => setWorkContent(e.target.value)} style={{ ...inputStyle, resize: 'vertical' }} required />
             </div>
 
-            {/* 💡 교체 부품 및 수량 / S/N (2줄 레이아웃 + S/N 직접 입력 지원) */}
+            {/* 교체 부품 및 수량 / S/N */}
             <div>
               <label style={labelStyle}>교체 부품 및 수량 / S/N</label>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
@@ -426,7 +423,6 @@ export default function MobileCompanyView({ user, companies, allHistories, parts
                   }
                   const isSerialItem = matchedPart ? (matchedPart.is_serial_managed || availableSerials.length > 0) : false
 
-                  // 검색어 매칭 부품 필터
                   const filteredDropdownParts = (partsList || []).filter(item => {
                     const q = (activePartIndex === idx ? partSearchQuery : part.name).toLowerCase().trim()
                     if (!q) return true
@@ -436,7 +432,6 @@ export default function MobileCompanyView({ user, companies, allHistories, parts
                   return (
                     <div key={idx} style={{ backgroundColor: '#F8FAFC', padding: '12px', borderRadius: '12px', border: '1px solid #CBD5E1', display: 'flex', flexDirection: 'column', gap: '8px', position: 'relative' }}>
                       
-                      {/* 1줄: 부품명 전체 너비 검색창 + 삭제 버튼 */}
                       <div style={{ display: 'flex', gap: '6px', alignItems: 'center', position: 'relative' }}>
                         <input
                           type="text"
@@ -474,7 +469,6 @@ export default function MobileCompanyView({ user, companies, allHistories, parts
                           </button>
                         )}
 
-                        {/* 부품 검색 드롭다운 */}
                         {activePartIndex === idx && (
                           <div style={{
                             position: 'absolute', top: '42px', left: 0, right: 0, backgroundColor: '#ffffff',
@@ -528,7 +522,6 @@ export default function MobileCompanyView({ user, companies, allHistories, parts
                         )}
                       </div>
 
-                      {/* 2줄: S/N 선택(또는 직접 입력) vs 일반 수량 입력 */}
                       {isSerialItem ? (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                           {!part.isCustomSn ? (
@@ -762,7 +755,8 @@ export default function MobileCompanyView({ user, companies, allHistories, parts
                     )}
 
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '11px', color: '#64748B' }}>
-                      <span>담당: {h.manager_name} / 작성: {h.confirmor}</span>
+                      {/* 💡 수정된 부분: 담당(고객사 담당자: h.manager_name) / 작성(로그인한 작성자: h.confirmor 또는 user.full_name) */}
+                      <span>담당: {h.manager_name || '-'} / 작성: {h.confirmor || user?.full_name || '배진철'}</span>
                       {h.report_image_url && (
                         <button type="button" onClick={() => setSelectedReportImage(h.report_image_url)} style={{ border: 'none', background: '#EFF6FF', color: '#2563EB', padding: '4px 8px', borderRadius: '6px', fontWeight: '700' }}>
                           리포트 보기
