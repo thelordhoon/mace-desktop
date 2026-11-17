@@ -1,0 +1,12 @@
+-- 1. 입고 로트(Lot)별 단가 및 재고 관리 테이블
+create table part_stock_lots (
+  id uuid default gen_random_uuid() primary key,
+  part_id uuid references parts(id) on delete cascade,
+  po_number text not null,          -- P.O. 번호 (예: MACE-250207)
+  import_date date,                 -- 수입 통관일 / 입고일
+  expiry_date date,                 -- 유효기간
+  unit_price numeric not null,      -- 해당 배치의 수입원가 (단가)
+  initial_qty integer not null,     -- 최초 입고 수량
+  current_qty integer not null,     -- 현재 잔여고
+  created_at timestamp with time zone default timezone('utc'::text, now()) not null
+);

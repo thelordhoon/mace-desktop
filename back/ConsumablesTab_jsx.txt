@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react'
 import { supabase } from '../../supabaseClient'
 
-export default function ConsumablesTab({ partsList, refreshParts, showAddForm, setShowAddForm }) {
+export default function ConsumablesTab({ partsList, refreshParts, showAddForm, setShowAddForm, user }) {
+  const currentLoggedInName = user?.full_name || user?.email?.split('@')[0] || '배진철'
   const [searchTerm, setSearchTerm] = useState('')
   const [companies, setCompanies] = useState([])
 
@@ -192,12 +193,15 @@ export default function ConsumablesTab({ partsList, refreshParts, showAddForm, s
     const partCodeStr = quickLotPart.code ? `[${quickLotPart.code}] ` : ''
     const summaryText = `${partCodeStr}${quickLotPart.name} (${quickQty}개)`
 
+    // 💡 [수정] author 필드에 하드코딩된 '배진철' 대신 현재 로그인한 사용자 이름 적용
+    const currentLoggedInName = user?.full_name || user?.email?.split('@')[0] || '배진철'
+
     await supabase.from('delivery_history').insert([{
       date: inboundDateVal,
       company_name: '본사 창고 (입고)',
       equipment_sn: quickLotNo.trim() ? `LOT: ${quickLotNo.trim()}` : '로트 입고',
       summary: summaryText,
-      author: '배진철',
+      author: currentLoggedInName, // 👈 이 부분 수정
       note: quickExpiry ? `유통기한: ${quickExpiry}` : '유통기한 미지정',
       type: 'INBOUND',
       part_id: quickLotPart.id

@@ -1,197 +1,327 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
+import { supabase } from '../../supabaseClient'
 
 export default function StockClosingTab() {
+  const [lots, setLots] = useState([])
+  const [loading, setLoading] = useState(true)
   const [searchTerm, setSearchTerm] = useState('')
   const [selectedCategory, setSelectedCategory] = useState('ALL')
+  
+  // 💡 잔여고 0인 품목 숨기기 토글 상태 (기본값: false -> 전체 보기, 클릭하면 잔여고 0 제외)
+  const [hideZeroStock, setHideZeroStock] = useState(false)
 
-  // 2025년 결산 재고 샘플 데이터
-  const stockData = [
-    { no: 1, item: 'RFID TAG', identNo: '77001-00030', category: 'TAG', prevStock: 139, currIn: 3000, currOut: 2878, total: 261, amount: 3753966 },
-    { no: 2, item: 'Solvent', identNo: '77001-00030', category: 'Solvent', prevStock: 0, currIn: 311, currOut: 249, total: 62, amount: 1239442 },
-    { no: 3, item: 'WT Solvent', identNo: '-', category: 'Solvent', prevStock: 0, currIn: 54, currOut: 0, total: 54, amount: 746928 },
-    { no: 4, item: 'RFID TAG', identNo: '77001-00080', category: 'TAG', prevStock: 0, currIn: 1500, currOut: 284, total: 1216, amount: 18260912 },
-    { no: 5, item: 'Solvent Normal', identNo: '77001-00080', category: 'Solvent', prevStock: 0, currIn: 456, currOut: 402, total: 54, amount: 1007046 },
-    { no: 6, item: 'WT Solvent', identNo: '-', category: 'Solvent', prevStock: 0, currIn: 71, currOut: 11, total: 60, amount: 760740 },
-    { no: 7, item: 'Reset SSN', identNo: '-', category: 'Etc', prevStock: 1, currIn: 0, currOut: 0, total: 1, amount: 8851 },
-    { no: 8, item: '77001-00080EGG', identNo: '-', category: 'Etc', prevStock: 0, currIn: 445, currOut: 397, total: 48, amount: 934368 },
-    { no: 9, item: 'Acetone solvent', identNo: '77001-00080BA', category: 'Solvent', prevStock: 0, currIn: 1257, currOut: 1200, total: 57, amount: 1128657 },
-    { no: 10, item: 'WT Solvent', identNo: '-', category: 'Solvent', prevStock: 0, currIn: 1013, currOut: 984, total: 29, amount: 714844 },
-    { no: 11, item: 'SMD Ink tag', identNo: '76000-00117', category: 'TAG', prevStock: 0, currIn: 280, currOut: 180, total: 100, amount: 5382100 },
-    { no: 12, item: 'UV INK', identNo: 'CIJ INV-200', category: 'Ink', prevStock: 1, currIn: 18, currOut: 10, total: 9, amount: 1049576 },
-    { no: 13, item: 'Solvent for 79-106', identNo: '77001-00107', category: 'Solvent', prevStock: 8, currIn: 5, currOut: 0, total: 13, amount: 712054 },
-    { no: 14, item: 'Solvent for 70-115', identNo: '77001-00114', category: 'Solvent', prevStock: 0, currIn: 890, currOut: 851, total: 39, amount: 1795209 },
-    { no: 15, item: 'WT Solvent', identNo: '-', category: 'Solvent', prevStock: 0, currIn: 319, currOut: 236, total: 83, amount: 1092363 },
-    { no: 16, item: 'Solvent for 70-121', identNo: '77001-00117', category: 'Solvent', prevStock: 27, currIn: 0, currOut: 0, total: 27, amount: 975645 },
-    { no: 17, item: 'Solvent for 75-104', identNo: '77001-00122', category: 'Solvent', prevStock: 0, currIn: 20, currOut: 9, total: 11, amount: 705870 },
-    { no: 18, item: 'Solvent for 79-114', identNo: '77001-00157', category: 'Solvent', prevStock: 49, currIn: 0, currOut: 0, total: 49, amount: 2520658 },
-    { no: 19, item: 'Solvent for 75-101', identNo: '77001-00160', category: 'Solvent', prevStock: 0, currIn: 10, currOut: 0, total: 10, amount: 705490 },
-    { no: 20, item: 'INK - Black', identNo: '70000-00030', category: 'Ink', prevStock: 0, currIn: 47, currOut: 6, total: 41, amount: 5777654 },
-    { no: 21, item: 'INK - Black', identNo: '70000-00031', category: 'Ink', prevStock: 0, currIn: 28, currOut: 17, total: 11, amount: 2665046 },
-    { no: 22, item: 'INK - Black', identNo: '70000-00101', category: 'Ink', prevStock: 1, currIn: 0, currOut: 0, total: 1, amount: 187328 },
-    { no: 23, item: 'INK - Black Temp resist', identNo: '70000-00107', category: 'Ink', prevStock: 1, currIn: 0, currOut: 0, total: 1, amount: 187726 },
-    { no: 24, item: 'Ink-black (Aceton)', identNo: '70000-00115', category: 'Ink', prevStock: 0, currIn: 43, currOut: 27, total: 16, amount: 2802790 },
-    { no: 25, item: 'Ink - Black (Ethanol)', identNo: '70000-00121', category: 'Ink', prevStock: 16, currIn: 1, currOut: 0, total: 17, amount: 1935678 },
-    { no: 26, item: 'INK - Black', identNo: '70000-00134', category: 'Ink', prevStock: 0, currIn: 3, currOut: 1, total: 2, amount: 600096 },
-    { no: 27, item: 'Black Halogen free', identNo: '70000-00154', category: 'Ink', prevStock: 1, currIn: 0, currOut: 0, total: 1, amount: 137198 },
-    { no: 28, item: 'Black ink 1000℃ resistant', identNo: '70000-00155', category: 'Ink', prevStock: 0, currIn: 2, currOut: 0, total: 2, amount: 1167464 },
-    { no: 29, item: 'Black non pi PE adhesive', identNo: '70000-00156', category: 'Ink', prevStock: 2, currIn: 0, currOut: 0, total: 2, amount: 359492 },
-    { no: 30, item: 'Black Acetone Halogen free', identNo: '70000-00164', category: 'Ink', prevStock: 2, currIn: 0, currOut: 0, total: 2, amount: 305338 },
-    { no: 31, item: 'Ink black for PVC soft pi', identNo: '70000-00165', category: 'Ink', prevStock: 4, currIn: 0, currOut: 0, total: 4, amount: 524860 },
-    { no: 32, item: 'INK - Yellow', identNo: '74000-00105', category: 'Ink', prevStock: 0, currIn: 5, currOut: 5, total: 0, amount: 0 },
-    { no: 33, item: 'Yellow Pi', identNo: '74000-00111', category: 'Ink', prevStock: 1, currIn: 0, currOut: 0, total: 1, amount: 151594 },
-    { no: 34, item: 'Green ink for egg', identNo: '75000-00101', category: 'Ink', prevStock: 0, currIn: 2, currOut: 0, total: 2, amount: 420874 },
-    { no: 35, item: 'Green pi', identNo: '75000-00104', category: 'Ink', prevStock: 0, currIn: 6, currOut: 5, total: 1, amount: 320663 },
-    { no: 36, item: 'INK - WHITE', identNo: '79000-00104', category: 'Ink', prevStock: 2, currIn: 0, currOut: 0, total: 2, amount: 389724 },
-    { no: 37, item: 'INK - WHITE', identNo: '79000-00106', category: 'Ink', prevStock: 1, currIn: 3, currOut: 1, total: 3, amount: 1014927 },
-    { no: 38, item: 'INK - WHITE', identNo: '79000-00108', category: 'Ink', prevStock: 3, currIn: 0, currOut: 0, total: 3, amount: 497396 },
-    { no: 39, item: 'INK - WHITE Halogen', identNo: '79000-00114', category: 'Ink', prevStock: 9, currIn: 0, currOut: 0, total: 9, amount: 1427435 },
-    { no: 40, item: 'White PVC', identNo: '79000-00122', category: 'Ink', prevStock: 0, currIn: 30, currOut: 26, total: 4, amount: 989696 },
-  ]
+  // 인라인 수정 상태 관리
+  const [editingId, setEditingId] = useState(null)
+  const [editForm, setEditForm] = useState({ po_number: '', import_date: '', expiry_date: '', unit_price: 0, current_qty: 0 })
 
-  // 필터링 로직
-  const filteredData = stockData.filter(item => {
-    const matchesSearch = item.item.toLowerCase().includes(searchTerm.toLowerCase()) || 
-                          item.identNo.toLowerCase().includes(searchTerm.toLowerCase())
-    const matchesCategory = selectedCategory === 'ALL' || item.category === selectedCategory
-    return matchesSearch && matchesCategory
+  useEffect(() => {
+    fetchStockLots()
+  }, [])
+
+  const fetchStockLots = async () => {
+    setLoading(true)
+    const { data, error } = await supabase
+      .from('part_stock_lots')
+      .select('*, parts(name, code, category)')
+      .order('import_date', { ascending: false })
+
+    if (error) {
+      console.error('로트 재고 조회 실패:', error)
+    } else {
+      setLots(data || [])
+    }
+    setLoading(false)
+  }
+
+  // 인라인 수정 저장 핸들러
+  const handleSaveEdit = async (id) => {
+    const { error } = await supabase.from('part_stock_lots').update({
+      po_number: editForm.po_number.trim() || '기존재고',
+      import_date: editForm.import_date || null,
+      expiry_date: editForm.expiry_date || null,
+      unit_price: Number(editForm.unit_price || 0),
+      current_qty: Number(editForm.current_qty || 0)
+    }).eq('id', id)
+
+    if (error) {
+      alert('수정 실패: ' + error.message)
+    } else {
+      alert('수정되었습니다.')
+      setEditingId(null)
+      fetchStockLots()
+    }
+  }
+
+  // 검색, 카테고리, 그리고 잔여고 0 숨기기 필터링 적용
+  const filteredLots = lots.filter(lot => {
+    const itemName = lot.parts?.name || ''
+    const itemCode = lot.parts?.code || ''
+    const poNumber = lot.po_number || ''
+    const category = lot.parts?.category || '일반부품'
+    const currentQty = Number(lot.current_qty || 0)
+
+    const matchesSearch = itemName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                          itemCode.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                          poNumber.toLowerCase().includes(searchTerm.toLowerCase())
+    
+    const matchesCategory = selectedCategory === 'ALL' || category === selectedCategory
+    const matchesZeroStock = hideZeroStock ? currentQty > 0 : true
+
+    return matchesSearch && matchesCategory && matchesZeroStock
   })
 
-  // 총 금액 및 통계 계산
-  const grandTotalAmount = stockData.reduce((sum, item) => sum + item.amount, 0)
-  const totalItemsCount = stockData.length
-  const zeroStockCount = stockData.filter(item => item.total === 0).length
+  // 총 재고 자산 평가액은 잔여고가 있는 항목들 위주로 정확하게 계산됨
+  const totalAssetAmount = lots.reduce((sum, lot) => sum + (Number(lot.current_qty || 0) * Number(lot.unit_price || 0)), 0)
+  const totalLotsCount = lots.length
+  const zeroStockCount = lots.filter(lot => Number(lot.current_qty || 0) === 0).length
 
   return (
     <div style={styles.container}>
-      {/* 상단 헤더 및 KPI 카드 섹션 */}
+      {/* 상단 타이틀 및 KPI 카드 */}
       <div style={styles.headerArea}>
         <div>
-          <h2 style={styles.title}>📊 법인 결산 재고 자산 대시보드</h2>
-          <p style={styles.subtitle}>2025년 기말 잉크 및 솔벤트 재고 자산 현황 요약 및 관리</p>
+          <h2 style={styles.title}>📊 법인 결산 및 P.O. 로트별 재고 대시보드</h2>
+          <p style={styles.subtitle}>입고 날짜별 단가 차이와 선입선출(FIFO)이 반영된 실시간 자산 평가 현황</p>
         </div>
-        <button style={styles.excelBtn} onClick={() => alert('엑셀 다운로드 기능 연동 예정')}>
-          📥 결산 재고 리스트 다운로드 (.XLSX)
-        </button>
+        <div style={styles.totalCard}>
+          <span style={styles.totalLabel}>총 재고 자산 평가액</span>
+          <span style={styles.totalValue}>{Math.round(totalAssetAmount).toLocaleString()} 원</span>
+        </div>
       </div>
 
       <div style={styles.kpiContainer}>
         <div style={styles.kpiCard}>
-          <span style={styles.kpiLabel}>총 재고 자산 평가액</span>
-          <span style={styles.kpiValue}>{grandTotalAmount.toLocaleString()} 원</span>
+          <span style={styles.kpiLabel}>총 관리 로트(Lot) 수</span>
+          <span style={styles.kpiValueSecondary}>{totalLotsCount} 건</span>
         </div>
         <div style={styles.kpiCard}>
-          <span style={styles.kpiLabel}>등록된 총 품목 수</span>
-          <span style={styles.kpiValueSecondary}>{totalItemsCount} 개</span>
-        </div>
-        <div style={styles.kpiCard}>
-          <span style={styles.kpiLabel}>품절(재고 0) 품목 수</span>
-          <span style={{ ...styles.kpiValueSecondary, color: zeroStockCount > 0 ? '#dc2626' : '#059669' }}>
-            {zeroStockCount} 개
+          <span style={styles.kpiLabel}>품절(잔여고 0) 로트 수</span>
+          <span style={{ ...styles.kpiValueSecondary, color: zeroStockCount > 0 ? '#DC2626' : '#059669' }}>
+            {zeroStockCount} 건
           </span>
         </div>
       </div>
 
-      {/* 검색 및 필터 탭 */}
-      <div style={styles.filterArea}>
+      {/* 필터 탭, 검색 바 및 잔여고 0 토글 버튼 */}
+      <div style={styles.filterBar}>
         <div style={styles.tabGroup}>
-          {['ALL', 'Ink', 'Solvent', 'TAG', 'Etc'].map((cat) => (
+          {['ALL', '일반부품', '잉크', '희석제', '소모품'].map((cat) => (
             <button
               key={cat}
               onClick={() => setSelectedCategory(cat)}
               style={{
                 ...styles.tabBtn,
-                backgroundColor: selectedCategory === cat ? '#2563eb' : '#f1f5f9',
-                color: selectedCategory === cat ? '#ffffff' : '#475569',
+                backgroundColor: selectedCategory === cat ? '#2563EB' : '#F1F5F9',
+                color: selectedCategory === cat ? '#FFFFFF' : '#475569',
               }}
             >
-              {cat === 'ALL' ? '전체 품목' : cat}
+              {cat === 'ALL' ? '전체 품목군' : cat}
             </button>
           ))}
         </div>
-        <input
-          type="text"
-          placeholder="품목명 또는 Ident No. 검색..."
-          value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
-          style={styles.searchBox}
-        />
+
+        <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
+          <button
+            type="button"
+            onClick={() => setHideZeroStock(!hideZeroStock)}
+            style={{
+              padding: '9px 14px',
+              borderRadius: '8px',
+              border: hideZeroStock ? '1px solid #2563EB' : '1px solid #CBD5E1',
+              backgroundColor: hideZeroStock ? '#EFF6FF' : '#F8FAFC',
+              color: hideZeroStock ? '#1D4ED8' : '#475569',
+              fontWeight: '700',
+              fontSize: '13px',
+              cursor: 'pointer'
+            }}
+          >
+            {hideZeroStock ? '☑️ 잔여고 0 품목 숨김 중' : '☐ 잔여고 0 품목 포함 보기'}
+          </button>
+
+          <input
+            type="text"
+            placeholder="품명, 품번(코드), P.O. 번호 검색..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            style={styles.searchBox}
+          />
+        </div>
       </div>
 
-      {/* 모던 데이터 테이블 */}
-      <div style={styles.tableWrapper}>
-        <table style={styles.table}>
-          <thead>
-            <tr style={styles.thRow}>
-              <th style={styles.th}>NO.</th>
-              <th style={styles.th}>ITEM</th>
-              <th style={styles.th}>IDENT NO.</th>
-              <th style={styles.thCenter}>전년 이월재고</th>
-              <th style={styles.thCenter}>2025 입고</th>
-              <th style={styles.thCenter}>2025 출고</th>
-              <th style={styles.thCenter}>현재고 (Total)</th>
-              <th style={styles.thRight}>재고금액 (원)</th>
-            </tr>
-          </thead>
-          <tbody>
-            {filteredData.length > 0 ? (
-              filteredData.map((row) => (
-                <tr key={row.no} style={styles.tdRow}>
-                  <td style={styles.tdCenter}>{row.no}</td>
-                  <td style={styles.tdBold}>{row.item}</td>
-                  <td style={styles.td}>{row.identNo}</td>
-                  <td style={styles.tdCenter}>{row.prevStock}</td>
-                  <td style={styles.tdCenter}>{row.currIn}</td>
-                  <td style={styles.tdCenter}>{row.currOut}</td>
-                  <td style={styles.tdCenter}>
-                    <span style={{
-                      ...styles.stockBadge,
-                      backgroundColor: row.total === 0 ? '#fee2e2' : '#f0fdf4',
-                      color: row.total === 0 ? '#991b1b' : '#166534'
-                    }}>
-                      {row.total}
-                    </span>
-                  </td>
-                  <td style={styles.tdRight}>{row.amount.toLocaleString()} 원</td>
-                </tr>
-              ))
-            ) : (
-              <tr>
-                <td colSpan="8" style={styles.noData}>검색된 품목이 없습니다.</td>
+      {/* 데이터 테이블 */}
+      {loading ? (
+        <p style={{ textAlign: 'center', padding: '40px', color: '#64748b' }}>재고 로트 데이터를 불러오는 중...</p>
+      ) : (
+        <div style={styles.tableWrapper}>
+          <table style={styles.table}>
+            <thead>
+              <tr style={styles.thRow}>
+                <th style={styles.th}>P.O. 번호</th>
+                <th style={styles.th}>품목 구분</th>
+                <th style={styles.th}>품번 / 코드</th>
+                <th style={styles.th}>품명 (ITEM)</th>
+                <th style={styles.thCenter}>수입 통관일</th>
+                <th style={styles.thCenter}>유효기간</th>
+                <th style={styles.thRight}>입고 단가 (원)</th>
+                <th style={styles.thCenter}>최초 수량</th>
+                <th style={styles.thCenter}>현재 잔여고</th>
+                <th style={styles.thRight}>평가 금액 (원)</th>
+                <th style={styles.thCenter}>관리</th>
               </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
+            </thead>
+            <tbody>
+              {filteredLots.length > 0 ? (
+                filteredLots.map((lot) => {
+                  const isEditing = editingId === lot.id
+                  const evaluationAmount = Number(lot.current_qty || 0) * Number(lot.unit_price || 0)
+
+                  return (
+                    <tr key={lot.id} style={styles.tdRow}>
+                      <td style={styles.tdCenterBold}>
+                        {isEditing ? (
+                          <input
+                            type="text"
+                            value={editForm.po_number}
+                            onChange={(e) => setEditForm({ ...editForm, po_number: e.target.value })}
+                            style={styles.inlineInput}
+                          />
+                        ) : (
+                          lot.po_number || '-'
+                        )}
+                      </td>
+                      <td style={styles.td}>
+                        <span style={styles.badgeCategory}>
+                          {lot.parts?.category || '일반부품'}
+                        </span>
+                      </td>
+                      <td style={styles.tdCode}>{lot.parts?.code || '-'}</td>
+                      <td style={styles.tdBold}>{lot.parts?.name || '미지정 품목'}</td>
+                      <td style={styles.tdCenter}>
+                        {isEditing ? (
+                          <input
+                            type="date"
+                            value={editForm.import_date}
+                            onChange={(e) => setEditForm({ ...editForm, import_date: e.target.value })}
+                            style={styles.inlineInput}
+                          />
+                        ) : (
+                          lot.import_date || '-'
+                        )}
+                      </td>
+                      <td style={styles.tdCenter}>
+                        {isEditing ? (
+                          <input
+                            type="date"
+                            value={editForm.expiry_date}
+                            onChange={(e) => setEditForm({ ...editForm, expiry_date: e.target.value })}
+                            style={styles.inlineInput}
+                          />
+                        ) : (
+                          lot.expiry_date || '-'
+                        )}
+                      </td>
+                      <td style={styles.tdRight}>
+                        {isEditing ? (
+                          <input
+                            type="number"
+                            value={editForm.unit_price}
+                            onChange={(e) => setEditForm({ ...editForm, unit_price: e.target.value })}
+                            style={{ ...styles.inlineInput, textAlign: 'right' }}
+                          />
+                        ) : (
+                          `${Number(lot.unit_price || 0).toLocaleString()} 원`
+                        )}
+                      </td>
+                      <td style={styles.tdCenter}>{lot.initial_qty ?? 0}</td>
+                      <td style={styles.tdCenter}>
+                        {isEditing ? (
+                          <input
+                            type="number"
+                            value={editForm.current_qty}
+                            onChange={(e) => setEditForm({ ...editForm, current_qty: e.target.value })}
+                            style={{ ...styles.inlineInput, textAlign: 'center', width: '70px' }}
+                          />
+                        ) : (
+                          <span style={{
+                            ...styles.badgeQty,
+                            backgroundColor: Number(lot.current_qty) === 0 ? '#FEE2E2' : '#F0FDF4',
+                            color: Number(lot.current_qty) === 0 ? '#991B1B' : '#166534'
+                          }}>
+                            {lot.current_qty ?? 0} 개
+                          </span>
+                        )}
+                      </td>
+                      <td style={styles.tdRightAmount}>{Math.round(evaluationAmount).toLocaleString()} 원</td>
+                      <td style={styles.tdCenter}>
+                        {isEditing ? (
+                          <div style={{ display: 'flex', gap: '4px', justifyContent: 'center' }}>
+                            <button onClick={() => handleSaveEdit(lot.id)} style={styles.saveBtn}>저장</button>
+                            <button onClick={() => setEditingId(null)} style={styles.cancelBtn}>취소</button>
+                          </div>
+                        ) : (
+                          <button onClick={() => {
+                            setEditingId(lot.id)
+                            setEditForm({
+                              po_number: lot.po_number || '',
+                              import_date: lot.import_date || '',
+                              expiry_date: lot.expiry_date || '',
+                              unit_price: lot.unit_price || 0,
+                              current_qty: lot.current_qty || 0
+                            })
+                          }} style={styles.editBtn}>수정</button>
+                        )}
+                      </td>
+                    </tr>
+                  )
+                })
+              ) : (
+                <tr>
+                  <td colSpan="11" style={styles.noData}>조건에 일치하는 입고 로트 데이터가 없습니다.</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   )
 }
 
 const styles = {
-  container: { backgroundColor: '#ffffff', padding: '24px', borderRadius: '12px', border: '1px solid #e2e8f0', display: 'flex', flexDirection: 'column', gap: '20px' },
+  container: { backgroundColor: '#FFFFFF', padding: '24px', borderRadius: '16px', border: '1px solid #E2E8F0', display: 'flex', flexDirection: 'column', gap: '20px', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.02)' },
   headerArea: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px' },
-  title: { fontSize: '20px', fontWeight: '700', color: '#0f172a', margin: '0 0 4px 0' },
-  subtitle: { fontSize: '13px', color: '#64748b', margin: 0 },
-  excelBtn: { backgroundColor: '#059669', color: '#fff', border: 'none', padding: '10px 16px', borderRadius: '8px', fontWeight: '600', fontSize: '13px', cursor: 'pointer' },
-  kpiContainer: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '16px' },
-  kpiCard: { backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', padding: '16px 20px', borderRadius: '10px', display: 'flex', flexDirection: 'column', gap: '6px' },
-  kpiLabel: { fontSize: '12px', fontWeight: '600', color: '#64748b' },
-  kpiValue: { fontSize: '20px', fontWeight: '800', color: '#1d4ed8' },
-  kpiValueSecondary: { fontSize: '20px', fontWeight: '800', color: '#0f172a' },
-  filterArea: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' },
+  title: { fontSize: '20px', fontWeight: '800', color: '#0F172A', margin: '0 0 4px 0' },
+  subtitle: { fontSize: '13px', color: '#64748B', margin: 0 },
+  totalCard: { backgroundColor: '#EFF6FF', border: '1px solid #BFDBFE', padding: '14px 22px', borderRadius: '12px', display: 'flex', flexDirection: 'column', alignItems: 'flex-end' },
+  totalLabel: { fontSize: '12px', fontWeight: '700', color: '#1E40AF' },
+  totalValue: { fontSize: '22px', fontWeight: '900', color: '#1D4ED8', marginTop: '2px' },
+  kpiContainer: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '16px' },
+  kpiCard: { backgroundColor: '#F8FAFC', border: '1px solid #E2E8F0', padding: '14px 18px', borderRadius: '10px', display: 'flex', flexDirection: 'column', gap: '4px' },
+  kpiLabel: { fontSize: '12px', fontWeight: '600', color: '#64748B' },
+  kpiValueSecondary: { fontSize: '18px', fontWeight: '800', color: '#0F172A' },
+  filterBar: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' },
   tabGroup: { display: 'flex', gap: '6px' },
-  tabBtn: { padding: '8px 14px', borderRadius: '6px', border: 'none', fontWeight: '600', fontSize: '13px', cursor: 'pointer' },
-  searchBox: { padding: '8px 14px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '13px', width: '260px', outline: 'none' },
-  tableWrapper: { overflowX: 'auto', maxHeight: '550px', border: '1px solid #e2e8f0', borderRadius: '8px' },
+  tabBtn: { padding: '8px 14px', borderRadius: '8px', border: 'none', fontWeight: '700', fontSize: '13px', cursor: 'pointer' },
+  searchBox: { padding: '9px 14px', borderRadius: '8px', border: '1px solid #CBD5E1', fontSize: '13px', width: '240px', outline: 'none', backgroundColor: '#F8FAFC' },
+  tableWrapper: { overflowX: 'auto', maxHeight: '600px', border: '1px solid #E2E8F0', borderRadius: '10px' },
   table: { width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '13px' },
-  thRow: { backgroundColor: '#f8fafc', borderBottom: '1px solid #e2e8f0', position: 'sticky', top: 0, zIndex: 1 },
-  th: { padding: '12px 16px', color: '#475569', fontWeight: '700', borderBottom: '1px solid #e2e8f0' },
-  thCenter: { padding: '12px 16px', color: '#475569', fontWeight: '700', textAlign: 'center', borderBottom: '1px solid #e2e8f0' },
-  thRight: { padding: '12px 16px', color: '#475569', fontWeight: '700', textAlign: 'right', borderBottom: '1px solid #e2e8f0' },
-  tdRow: { borderBottom: '1px solid #f1f5f9' },
+  thRow: { backgroundColor: '#F8FAFC', borderBottom: '1px solid #E2E8F0', position: 'sticky', top: 0, zIndex: 1 },
+  th: { padding: '12px 16px', color: '#475569', fontWeight: '700', borderBottom: '1px solid #E2E8F0' },
+  thCenter: { padding: '12px 16px', color: '#475569', fontWeight: '700', textAlign: 'center', borderBottom: '1px solid #E2E8F0' },
+  thRight: { padding: '12px 16px', color: '#475569', fontWeight: '700', textAlign: 'right', borderBottom: '1px solid #E2E8F0' },
+  tdRow: { borderBottom: '1px solid #F1F5F9' },
   td: { padding: '12px 16px', color: '#334155' },
-  tdBold: { padding: '12px 16px', color: '#0f172a', fontWeight: '600' },
+  tdCode: { padding: '12px 16px', color: '#475569', fontWeight: '600' },
+  tdBold: { padding: '12px 16px', color: '#0F172A', fontWeight: '700' },
   tdCenter: { padding: '12px 16px', color: '#334155', textAlign: 'center' },
-  tdRight: { padding: '12px 16px', color: '#0f172a', fontWeight: '700', textAlign: 'right' },
-  stockBadge: { padding: '4px 10px', borderRadius: '12px', fontWeight: '700', fontSize: '12px' },
-  noData: { padding: '30px', textAlign: 'center', color: '#64748b', fontStyle: 'italic' }
+  tdCenterBold: { padding: '12px 16px', color: '#2563EB', fontWeight: '700', textAlign: 'center' },
+  tdRight: { padding: '12px 16px', color: '#334155', textAlign: 'right' },
+  tdRightAmount: { padding: '12px 16px', color: '#0F172A', fontWeight: '800', textAlign: 'right', backgroundColor: '#F8FAFC' },
+  badgeCategory: { padding: '4px 8px', backgroundColor: '#EFF6FF', color: '#2563EB', borderRadius: '6px', fontSize: '11px', fontWeight: '700' },
+  badgeQty: { padding: '4px 10px', borderRadius: '12px', fontWeight: '700', fontSize: '12px' },
+  noData: { padding: '40px', textAlign: 'center', color: '#94A3B8', fontStyle: 'italic' },
+  inlineInput: { width: '100%', padding: '6px 8px', borderRadius: '6px', border: '1px solid #2563EB', fontSize: '12px', outline: 'none', boxSizing: 'border-box' },
+  editBtn: { background: '#EFF6FF', color: '#2563EB', border: 'none', padding: '5px 10px', borderRadius: '6px', fontSize: '11px', fontWeight: '700', cursor: 'pointer' },
+  saveBtn: { background: '#059669', color: '#fff', border: 'none', padding: '5px 8px', borderRadius: '6px', fontSize: '11px', fontWeight: '700', cursor: 'pointer' },
+  cancelBtn: { background: '#CBD5E1', color: '#334155', border: 'none', padding: '5px 8px', borderRadius: '6px', fontSize: '11px', fontWeight: '700', cursor: 'pointer' }
 }
