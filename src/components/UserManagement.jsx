@@ -5,7 +5,6 @@ export default function UserManagement() {
   const [users, setUsers] = useState([])
   const [loading, setLoading] = useState(true)
 
-  // 직원 목록 불러오기
   const fetchUsers = async () => {
     setLoading(true)
     const { data, error } = await supabase
@@ -25,7 +24,6 @@ export default function UserManagement() {
     fetchUsers()
   }, [])
 
-  // 1. 관리자 승인 처리
   const handleApprove = async (user) => {
     try {
       const { error: updateError } = await supabase
@@ -46,7 +44,6 @@ export default function UserManagement() {
     }
   }
 
-  // 2. 승인 취소
   const handleRevoke = async (username) => {
     const { error } = await supabase
       .from('profiles')
@@ -61,9 +58,26 @@ export default function UserManagement() {
     }
   }
 
-  // 3. 🗑️ 신규 추가: 직원 정보/신청 기록 삭제
+  const handleRoleChange = async (username, newRole) => {
+    if (username === 'bae' && newRole !== 'admin') {
+      alert('⚠️ 최고 관리자(bae)의 역할은 변경할 수 없습니다.')
+      return
+    }
+
+    const { error } = await supabase
+      .from('profiles')
+      .update({ role: newRole })
+      .eq('username', username)
+
+    if (error) {
+      alert('역할 변경 실패: ' + error.message)
+    } else {
+      alert(`✅ 역할이 '${newRole}'(으)로 변경되었습니다.`)
+      fetchUsers()
+    }
+  }
+
   const handleDelete = async (user) => {
-    // 관리자 본인 계정(bae) 삭제 방지
     if (user.username === 'bae') {
       alert('⚠️ 최고 관리자 계정은 삭제할 수 없습니다.')
       return
@@ -87,8 +101,8 @@ export default function UserManagement() {
 
   return (
     <div style={styles.container}>
-      <h3 style={styles.title}>👥 직원 가입 승인 및 신청 관리</h3>
-      <p style={styles.subtitle}>신규 가입 신청한 직원의 접속 권한을 승인하거나 내역을 관리/삭제할 수 있습니다.</p>
+      <h3 style={styles.title}>👥 직원 가입 승인 및 권한 관리</h3>
+      <p style={styles.subtitle}>신규 가입 직원의 승인 여부를 관리하고, 시스템 역할(user, manager, admin)을 지정할 수 있습니다.</p>
 
       {loading ? (
         <p style={{ textAlign: 'center', color: '#64748b' }}>직원 목록을 불러오는 중...</p>
@@ -100,6 +114,7 @@ export default function UserManagement() {
               <th style={styles.th}>아이디 / 이메일</th>
               <th style={styles.th}>신청일시</th>
               <th style={styles.th}>상태</th>
+              <th style={styles.th}>시스템 역할 (Role)</th>
               <th style={{ ...styles.th, textAlign: 'center' }}>관리</th>
             </tr>
           </thead>
@@ -116,6 +131,18 @@ export default function UserManagement() {
                     <span style={{ ...styles.badge, backgroundColor: '#fef3c7', color: '#92400e' }}>승인 대기</span>
                   )}
                 </td>
+                <td style={styles.td}>
+                  <select 
+                    value={u.role || 'user'} 
+                    onChange={(e) => handleRoleChange(u.username, e.target.value)}
+                    style={styles.selectBox}
+                    disabled={u.username === 'bae'}
+                  >
+                    <option value="user">user (일반)</option>
+                    <option value="manager">manager (매니저)</option>
+                    <option value="admin">admin (최고관리자)</option>
+                  </select>
+                </td>
                 <td style={{ ...styles.td, textAlign: 'center' }}>
                   <div style={{ display: 'flex', justifyContent: 'center', gap: '6px' }}>
                     {u.is_approved ? (
@@ -124,7 +151,6 @@ export default function UserManagement() {
                       <button onClick={() => handleApprove(u)} style={styles.btnApprove}>승인하기</button>
                     )}
                     
-                    {/* 관리자 본인(bae)이 아닌 경우에만 삭제 버튼 활성화 */}
                     {u.username !== 'bae' && (
                       <button onClick={() => handleDelete(u)} style={styles.btnDelete}>삭제</button>
                     )}
@@ -149,6 +175,7 @@ const styles = {
   tdRow: { borderBottom: '1px solid #f1f5f9' },
   td: { padding: '14px 16px', color: '#334155' },
   badge: { padding: '4px 8px', borderRadius: '6px', fontSize: '12px', fontWeight: '600' },
+  selectBox: { padding: '6px 10px', borderRadius: '6px', border: '1px solid #cbd5e1', backgroundColor: '#f8fafc', fontWeight: '600', color: '#1e293b', cursor: 'pointer' },
   btnApprove: { backgroundColor: '#2563eb', color: '#fff', border: 'none', padding: '6px 12px', borderRadius: '6px', fontWeight: '600', cursor: 'pointer', fontSize: '13px' },
   btnRevoke: { backgroundColor: '#f1f5f9', color: '#64748b', border: '1px solid #cbd5e1', padding: '6px 12px', borderRadius: '6px', fontWeight: '600', cursor: 'pointer', fontSize: '13px' },
   btnDelete: { backgroundColor: '#fee2e2', color: '#991b1b', border: '1px solid #fca5a5', padding: '6px 10px', borderRadius: '6px', fontWeight: '600', cursor: 'pointer', fontSize: '13px' },

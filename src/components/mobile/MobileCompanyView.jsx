@@ -634,7 +634,7 @@ export default function MobileCompanyView({ user, companies, allHistories, parts
 
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '12px', color: '#475569', paddingTop: '6px', borderTop: '1px solid #F1F5F9' }}>
               <span>작성 엔지니어:</span>
-              <input type="text" value={currentLoggedInName} readOnly style={{ border: '1px solid #CBD5E1', borderRadius: '6px', padding: '4px 8px', width: '120px', textAlign: 'right', fontWeight: '700', backgroundColor: '#F1F5F9', color: '#0F172A' }} />
+              <input type="text" value={currentLoggedInName} readOnly style={{borderRadius: '6px', padding: '4px 8px', width: '120px', textAlign: 'right', fontWeight: '700', backgroundColor: '#F1F5F9', color: '#0F172A' }} />
             </div>
           </div>
 
@@ -746,7 +746,7 @@ export default function MobileCompanyView({ user, companies, allHistories, parts
                   parsedUsedParts = h.parts ? (typeof h.parts === 'string' ? JSON.parse(h.parts) : h.parts) : []
                 } catch (err) {}
 
-                // confirmor 컬럼에 들어있는 값(예: 박용석 또는 박남준 (담당자: 박문정))을 파싱하거나 그대로 표시
+                // confirmor 
                 const confirmorText = h.confirmor || ''
                 let managerDisplay = '-'
                 if (confirmorText.includes('담당자:')) {
