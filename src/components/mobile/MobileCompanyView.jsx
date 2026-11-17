@@ -44,7 +44,6 @@ export default function MobileCompanyView({ user, companies, allHistories, parts
   const [partSearchQuery, setPartSearchQuery] = useState('')
 
   const currentLoggedInName = user?.full_name || user?.email?.split('@')[0] || '배진철'
-  const [confirmor, setConfirmor] = useState(currentLoggedInName)
 
   const [historyList, setHistoryList] = useState([])
   const [uploading, setUploading] = useState(false)
@@ -157,6 +156,7 @@ export default function MobileCompanyView({ user, companies, allHistories, parts
     }
   }
 
+  // 💡 종료 시간 기준 현재 시간 10분 단위 내림 채우기
   const handleFillCurrentTime = () => {
     const now = new Date()
     const hh = String(now.getHours()).padStart(2, '0')
@@ -253,19 +253,18 @@ export default function MobileCompanyView({ user, companies, allHistories, parts
 
       const validParts = usedParts.filter(p => p.name && p.name.trim())
 
+      // 💡 스크린샷 실제 컬럼명 구조 완벽 반영 (sn, work_content, parts, confirmor 등)
       const { error } = await supabase.from('service_history').insert([{
         company_id: selectedCompany.id,
         work_date: workDate,
         start_time: `${startHour}:${startMin}`,
         end_time: `${endHour}:${endMin}`,
         model_name: modelName,
-        equipment_sn: sn,
-        manager_name: selectedManager, // 고객사 담당자
+        sn: sn,
         work_content: workContent,
-        used_parts: JSON.stringify(validParts),
-        confirmor: currentLoggedInName,
-        writer: currentLoggedInName,
-        report_image_url: reportImageUrl
+        parts: JSON.stringify(validParts),
+        confirmor: `${currentLoggedInName} (담당자: ${selectedManager})`,
+        report_url: reportImageUrl
       }])
 
       if (error) throw error
@@ -654,7 +653,9 @@ export default function MobileCompanyView({ user, companies, allHistories, parts
     const filteredHistory = historyList.filter(h => {
       if (!detailSnSearchTerm.trim()) return true
       const q = detailSnSearchTerm.toLowerCase()
-      return h.equipment_sn?.toLowerCase().includes(q) || h.work_content?.toLowerCase().includes(q)
+      const targetSn = h.sn || ''
+      const targetContent = h.work_content || ''
+      return targetSn.toLowerCase().includes(q) || targetContent.toLowerCase().includes(q)
     })
 
     return (
@@ -678,7 +679,6 @@ export default function MobileCompanyView({ user, companies, allHistories, parts
                 </button>
               </div>
               
-              {/* 💡 주소 클릭 시 클립보드 복사 기능 추가 */}
               <div 
                 onClick={() => {
                   const addr = selectedCompany.address
@@ -743,33 +743,45 @@ export default function MobileCompanyView({ user, companies, allHistories, parts
               filteredHistory.map(h => {
                 let parsedUsedParts = []
                 try {
-                  parsedUsedParts = h.used_parts ? (typeof h.used_parts === 'string' ? JSON.parse(h.used_parts) : h.used_parts) : []
+                  parsedUsedParts = h.parts ? (typeof h.parts === 'string' ? JSON.parse(h.parts) : h.parts) : []
                 } catch (err) {}
 
-                // 💡 작성자 항목 완전히 제거하고 오직 담당자만 표시
-                const managerDisplay = h.manager_name || (selectedCompany.managersList && selectedCompany.managersList[0]?.name) || '-'
+                // confirmor 컬럼에 들어있는 값(예: 박용석 또는 박남준 (담당자: 박문정))을 파싱하거나 그대로 표시
+                const confirmorText = h.confirmor || ''
+                let managerDisplay = '-'
+                if (confirmorText.includes('담당자:')) {
+                  const match = confirmorText.match(/담당자:\s*([^)]+)/)
+                  if (match) managerDisplay = match[1].trim()
+                } else if (confirmorText) {
+                  managerDisplay = confirmorText
+                } else {
+                  managerDisplay = (selectedCompany.managersList && selectedCompany.managersList[0]?.name) || '-'
+                }
+
+                const targetSn = h.sn || ''
+                const targetContent = h.work_content || ''
+                const reportImage = h.report_url || ''
 
                 return (
                   <div key={h.id} style={{ backgroundColor: '#ffffff', padding: '14px', borderRadius: '12px', border: '1px solid #E2E8F0' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-                      <span style={{ fontSize: '12px', fontWeight: '800', color: '#2563EB' }}>{h.work_date} ({h.start_time}~{h.end_time})</span>
+                      <span style={{ fontSize: '12px', fontWeight: '800', color: '#2563EB' }}>{h.work_date || h.created_at?.split('T')[0]} {h.start_time ? `(${h.start_time}~{h.end_time})` : ''}</span>
                       <span style={{ fontSize: '11px', backgroundColor: '#F1F5F9', padding: '3px 8px', borderRadius: '6px', fontWeight: '700', color: '#334155' }}>
-                        {h.model_name} {h.equipment_sn ? `/ S/N: ${h.equipment_sn}` : ''}
+                        {h.model_name || ''} {targetSn ? `/ S/N: ${targetSn}` : ''}
                       </span>
                     </div>
-                    <div style={{ fontSize: '13px', color: '#0F172A', whiteSpace: 'pre-line', marginBottom: '8px', lineHeight: '1.4' }}>{h.work_content}</div>
+                    <div style={{ fontSize: '13px', color: '#0F172A', whiteSpace: 'pre-line', marginBottom: '8px', lineHeight: '1.4' }}>{targetContent}</div>
                     
                     {parsedUsedParts.length > 0 && (
                       <div style={{ backgroundColor: '#F8FAFC', padding: '8px 10px', borderRadius: '8px', fontSize: '12px', color: '#475569', marginBottom: '8px' }}>
-                        <strong>교체 부품:</strong> {parsedUsedParts.map(up => up.selectedSn ? `${up.name} [S/N: ${up.selectedSn}]` : `${up.name} (${up.quantity}개)`).join(', ')}
+                        <strong>교체 부품:</strong> {parsedUsedParts.map(up => typeof up === 'string' ? up : (up.selectedSn ? `${up.name} [S/N: ${up.selectedSn}]` : `${up.name} (${up.quantity}개)`)).join(', ')}
                       </div>
                     )}
 
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '11px', color: '#64748B' }}>
-                      {/* 💡 작성자 삭제 후 담당자만 깔끔하게 출력 */}
                       <span>담당: {managerDisplay}</span>
-                      {h.report_image_url && (
-                        <button type="button" onClick={() => setSelectedReportImage(h.report_image_url)} style={{ border: 'none', background: '#EFF6FF', color: '#2563EB', padding: '4px 8px', borderRadius: '6px', fontWeight: '700' }}>
+                      {reportImage && (
+                        <button type="button" onClick={() => setSelectedReportImage(reportImage)} style={{ border: 'none', background: '#EFF6FF', color: '#2563EB', padding: '4px 8px', borderRadius: '6px', fontWeight: '700' }}>
                           리포트 보기
                         </button>
                       )}
