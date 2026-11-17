@@ -43,7 +43,9 @@ export default function MobileCompanyView({ user, companies, allHistories, parts
   const [activePartIndex, setActivePartIndex] = useState(null)
   const [partSearchQuery, setPartSearchQuery] = useState('')
 
-  const [confirmor, setConfirmor] = useState(user?.full_name || '배진철')
+  const currentLoggedInName = user?.full_name || user?.email?.split('@')[0] || '배진철'
+  const [confirmor, setConfirmor] = useState(currentLoggedInName)
+
   const [historyList, setHistoryList] = useState([])
   const [uploading, setUploading] = useState(false)
   const [selectedReportImage, setSelectedReportImage] = useState(null)
@@ -168,7 +170,6 @@ export default function MobileCompanyView({ user, companies, allHistories, parts
     if (!selectedCompany) return
     if (!selectedManager) return alert('담당자를 선택해주세요.')
 
-    // S/N 관리품 필수값 체크
     for (let i = 0; i < usedParts.length; i++) {
       const p = usedParts[i]
       if (!p.name || !p.name.trim()) continue
@@ -203,7 +204,6 @@ export default function MobileCompanyView({ user, companies, allHistories, parts
 
       let summaryParts = []
 
-      // 부품 재고 및 S/N 자동 차감 처리
       for (const p of usedParts) {
         if (!p.name || !p.name.trim()) continue
         
@@ -260,10 +260,11 @@ export default function MobileCompanyView({ user, companies, allHistories, parts
         end_time: `${endHour}:${endMin}`,
         model_name: modelName,
         equipment_sn: sn,
-        manager_name: selectedManager, // 고객사 담당자 이름
+        manager_name: selectedManager, // 고객사 담당자
         work_content: workContent,
         used_parts: JSON.stringify(validParts),
-        confirmor: confirmor, // 로그인한 작성자 (엔지니어) 이름
+        confirmor: currentLoggedInName,
+        writer: currentLoggedInName,
         report_image_url: reportImageUrl
       }])
 
@@ -275,7 +276,7 @@ export default function MobileCompanyView({ user, companies, allHistories, parts
           company_name: selectedCompany.name,
           equipment_sn: sn || '-',
           summary: summaryParts.join(', '),
-          author: confirmor,
+          author: currentLoggedInName,
           note: `서비스 리포트 연동 출고 (${modelName})`,
           type: 'OUTBOUND'
         }])
@@ -298,7 +299,6 @@ export default function MobileCompanyView({ user, companies, allHistories, parts
     }
   }
 
-  // 정렬 및 검색된 업체 목록
   const filteredCompanies = (companies || []).filter(c => {
     if (!companySearchTerm.trim()) return true
     const q = companySearchTerm.toLowerCase()
@@ -340,7 +340,6 @@ export default function MobileCompanyView({ user, companies, allHistories, parts
               <input type="date" value={workDate} onChange={e => setWorkDate(e.target.value)} style={{ border: '1px solid #CBD5E1', borderRadius: '6px', padding: '4px 8px', fontSize: '12px', fontWeight: '700' }} />
             </div>
 
-            {/* 작업 시간 */}
             <div style={{ backgroundColor: '#F8FAFC', padding: '12px', borderRadius: '10px', border: '1px solid #E2E8F0' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
                 <span style={{ fontSize: '12px', fontWeight: '700', color: '#475569' }}>⏱️ 작업 시간</span>
@@ -374,7 +373,6 @@ export default function MobileCompanyView({ user, companies, allHistories, parts
               </div>
             </div>
 
-            {/* 모델명 & 장비 S/N */}
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
               <div>
                 <label style={labelStyle}>모델명</label>
@@ -393,7 +391,6 @@ export default function MobileCompanyView({ user, companies, allHistories, parts
               </div>
             </div>
 
-            {/* 작업 담당자 */}
             <div>
               <label style={labelStyle}>작업 담당자 선택</label>
               <select value={selectedManager} onChange={e => setSelectedManager(e.target.value)} style={inputStyle}>
@@ -403,13 +400,11 @@ export default function MobileCompanyView({ user, companies, allHistories, parts
               </select>
             </div>
 
-            {/* 작업 내용 */}
             <div>
               <label style={labelStyle}>작업 내용</label>
               <textarea rows="3" placeholder="수리 및 점검 내용 입력" value={workContent} onChange={e => setWorkContent(e.target.value)} style={{ ...inputStyle, resize: 'vertical' }} required />
             </div>
 
-            {/* 교체 부품 및 수량 / S/N */}
             <div>
               <label style={labelStyle}>교체 부품 및 수량 / S/N</label>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
@@ -626,7 +621,6 @@ export default function MobileCompanyView({ user, companies, allHistories, parts
               </button>
             </div>
 
-            {/* 고객 서명 */}
             <div>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
                 <label style={{ ...labelStyle, marginBottom: 0 }}>고객 서명</label>
@@ -641,7 +635,7 @@ export default function MobileCompanyView({ user, companies, allHistories, parts
 
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '12px', color: '#475569', paddingTop: '6px', borderTop: '1px solid #F1F5F9' }}>
               <span>작성 엔지니어:</span>
-              <input type="text" value={confirmor} onChange={e => setConfirmor(e.target.value)} style={{ border: '1px solid #CBD5E1', borderRadius: '6px', padding: '4px 8px', width: '100px', textAlign: 'right', fontWeight: '700' }} />
+              <input type="text" value={currentLoggedInName} readOnly style={{ border: '1px solid #CBD5E1', borderRadius: '6px', padding: '4px 8px', width: '120px', textAlign: 'right', fontWeight: '700', backgroundColor: '#F1F5F9', color: '#0F172A' }} />
             </div>
           </div>
 
@@ -674,7 +668,6 @@ export default function MobileCompanyView({ user, companies, allHistories, parts
           </button>
         </div>
 
-        {/* 업체 기본 정보 카드 */}
         <div style={{ backgroundColor: '#ffffff', borderRadius: '14px', padding: '16px', border: '1px solid #E2E8F0', marginBottom: '16px' }}>
           {!isEditing ? (
             <>
@@ -684,7 +677,23 @@ export default function MobileCompanyView({ user, companies, allHistories, parts
                   정보 수정
                 </button>
               </div>
-              <div style={{ fontSize: '13px', color: '#475569', marginBottom: '8px' }}>📍 {selectedCompany.address || '주소 미등록'}</div>
+              
+              {/* 💡 주소 클릭 시 클립보드 복사 기능 추가 */}
+              <div 
+                onClick={() => {
+                  const addr = selectedCompany.address
+                  if (!addr) return
+                  navigator.clipboard.writeText(addr).then(() => {
+                    alert(`주소가 복사되었습니다!\n"${addr}"`)
+                  }).catch(() => {
+                    alert('주소 복사에 실패했습니다.')
+                  })
+                }}
+                title="클릭하여 주소 복사"
+                style={{ fontSize: '13px', color: '#2563EB', marginBottom: '8px', cursor: 'pointer', display: 'inline-block', fontWeight: '600' }}
+              >
+                📍 {selectedCompany.address || '주소 미등록'} <span style={{ fontSize: '11px', color: '#64748B', fontWeight: 'normal' }}>(클릭 복사)</span>
+              </div>
               
               <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
                 <span style={{ backgroundColor: '#EFF6FF', color: '#2563EB', padding: '4px 8px', borderRadius: '6px', fontSize: '11px', fontWeight: '700' }}>잉크: {selectedCompany.ink || '-'}</span>
@@ -721,7 +730,6 @@ export default function MobileCompanyView({ user, companies, allHistories, parts
           )}
         </div>
 
-        {/* A/S 작업 이력 리스트 */}
         <div>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
             <h3 style={{ margin: 0, fontSize: '15px', fontWeight: '800', color: '#0F172A' }}>📋 A/S 작업 이력 ({filteredHistory.length})</h3>
@@ -737,6 +745,9 @@ export default function MobileCompanyView({ user, companies, allHistories, parts
                 try {
                   parsedUsedParts = h.used_parts ? (typeof h.used_parts === 'string' ? JSON.parse(h.used_parts) : h.used_parts) : []
                 } catch (err) {}
+
+                // 💡 작성자 항목 완전히 제거하고 오직 담당자만 표시
+                const managerDisplay = h.manager_name || (selectedCompany.managersList && selectedCompany.managersList[0]?.name) || '-'
 
                 return (
                   <div key={h.id} style={{ backgroundColor: '#ffffff', padding: '14px', borderRadius: '12px', border: '1px solid #E2E8F0' }}>
@@ -755,8 +766,8 @@ export default function MobileCompanyView({ user, companies, allHistories, parts
                     )}
 
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '11px', color: '#64748B' }}>
-                      {/* 💡 수정된 부분: 담당(고객사 담당자: h.manager_name) / 작성(로그인한 작성자: h.confirmor 또는 user.full_name) */}
-                      <span>담당: {h.manager_name || '-'} / 작성: {h.confirmor || user?.full_name || '배진철'}</span>
+                      {/* 💡 작성자 삭제 후 담당자만 깔끔하게 출력 */}
+                      <span>담당: {managerDisplay}</span>
                       {h.report_image_url && (
                         <button type="button" onClick={() => setSelectedReportImage(h.report_image_url)} style={{ border: 'none', background: '#EFF6FF', color: '#2563EB', padding: '4px 8px', borderRadius: '6px', fontWeight: '700' }}>
                           리포트 보기
@@ -770,7 +781,6 @@ export default function MobileCompanyView({ user, companies, allHistories, parts
           </div>
         </div>
 
-        {/* 리포트 이미지 미리보기 모달 */}
         {selectedReportImage && (
           <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.8)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1200, padding: '16px' }} onClick={() => setSelectedReportImage(null)}>
             <div style={{ position: 'relative', maxWidth: '100%', maxHeight: '90vh' }} onClick={e => e.stopPropagation()}>
@@ -818,7 +828,6 @@ export default function MobileCompanyView({ user, companies, allHistories, parts
         </form>
       )}
 
-      {/* 검색 및 정렬 */}
       <div style={{ display: 'flex', gap: '8px', marginBottom: '14px' }}>
         <input type="text" placeholder="🔍 거래처명, 담당자, 주소 검색..." value={companySearchTerm} onChange={e => setCompanySearchTerm(e.target.value)} style={{ ...inputStyle, backgroundColor: '#ffffff', flex: 1 }} />
         <select value={companySortType} onChange={e => setCompanySortType(e.target.value)} style={{ ...inputStyle, backgroundColor: '#ffffff', width: '115px', fontSize: '12px', fontWeight: '700' }}>
@@ -827,7 +836,6 @@ export default function MobileCompanyView({ user, companies, allHistories, parts
         </select>
       </div>
 
-      {/* 거래처 리스트 */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
         {filteredCompanies.map(c => (
           <div key={c.id} onClick={() => handleSelectCompany(c)} style={{ backgroundColor: '#ffffff', padding: '14px 16px', borderRadius: '14px', border: '1px solid #E2E8F0', boxShadow: '0 1px 2px rgba(0,0,0,0.02)', cursor: 'pointer' }}>
