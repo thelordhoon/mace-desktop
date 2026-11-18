@@ -18,21 +18,52 @@ export default function StockClosingTab() {
     fetchStockLots()
   }, [])
 
-  const fetchStockLots = async () => {
+ const fetchStockLots = async () => {
     setLoading(true)
-    const { data, error } = await supabase
-      .from('part_stock_lots')
-      .select('*, parts(name, code, category)')
-      .order('import_date', { ascending: false })
+    
+    // 1. 로트별 테이블(part_stock_lots)과 품목 마스터(parts)를 각각 안전하게 조회
+    const [{ data: lotsData, error: lotsError }, { data: partsData, error: partsError }] = await Promise.all([
+      supabase.from('part_stock_lots').select('*').order('import_date', { ascending: false }),
+      supabase.from('parts').select('id, name, code, category')
+    ])
 
-    if (error) {
-      console.error('로트 재고 조회 실패:', error)
-    } else {
-      setLots(data || [])
+    if (lotsError || partsError) {
+      console.error('조회 실패:', lotsError || partsError)
+      setLoading(false)
+      return
     }
+
+    // 2. 품번/품명 변경 없이 고유 id 기준으로 매핑만 수행
+    const partsMap = new Map()
+    if (partsData) {
+      partsData.forEach(p => partsMap.set(p.id, p))
+    }
+
+   const combinedLots = (lotsData || []).map(lot => {
+      const matchedPart = partsMap.get(lot.part_id) || {}
+      return {
+        ...lot,
+        parts: {
+          name: matchedPart.name || '미지정 품목',
+          code: matchedPart.code || '-',
+          category: matchedPart.category || '일반부품'
+        }
+      }
+    })
+
+    // 💡 추가된 정렬 로직: 같은 품번(code)끼리 나란히 묶고, 같은 품번 안에서는 최신 입고일순으로 정렬
+    combinedLots.sort((a, b) => {
+      const codeA = a.parts.code || ''
+      const codeB = b.parts.code || ''
+      if (codeA !== codeB) {
+        return codeA.localeCompare(codeB) // 품번 기준 오름차순
+      }
+      return new Date(b.import_date || 0) - new Date(a.import_date || 0) // 입고일 기준 최신순
+    })
+
+    setLots(combinedLots)
     setLoading(false)
   }
-
   // 인라인 수정 저장 핸들러
   const handleSaveEdit = async (id) => {
     const { error } = await supabase.from('part_stock_lots').update({
@@ -324,4 +355,4 @@ const styles = {
   editBtn: { background: '#EFF6FF', color: '#2563EB', border: 'none', padding: '5px 10px', borderRadius: '6px', fontSize: '11px', fontWeight: '700', cursor: 'pointer' },
   saveBtn: { background: '#059669', color: '#fff', border: 'none', padding: '5px 8px', borderRadius: '6px', fontSize: '11px', fontWeight: '700', cursor: 'pointer' },
   cancelBtn: { background: '#CBD5E1', color: '#334155', border: 'none', padding: '5px 8px', borderRadius: '6px', fontSize: '11px', fontWeight: '700', cursor: 'pointer' }
-}
+} 

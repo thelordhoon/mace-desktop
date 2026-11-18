@@ -4,17 +4,15 @@ import { supabase } from '../../supabaseClient'
 export default function DeliveryHistoryTab({ refreshParts }) {
   const [historyList, setHistoryList] = useState([])
   const [searchTerm, setSearchTerm] = useState('')
-  const [filterType, setFilterType] = useState('ALL') // ALL, OUTBOUND, INBOUND
+  const [filterType, setFilterType] = useState('ALL')
   const [loading, setLoading] = useState(true)
 
-  // 💡 출고증 상세 보기 모달 상태
   const [viewingDeliveryItem, setViewingDeliveryItem] = useState(null)
 
   useEffect(() => {
     fetchHistory()
   }, [])
 
-  // 💡 입·출고증 발행 이력 목록 불러오기
   const fetchHistory = async () => {
     setLoading(true)
     const { data, error } = await supabase
@@ -29,15 +27,12 @@ export default function DeliveryHistoryTab({ refreshParts }) {
     setLoading(false)
   }
 
-  // 💡 이력 삭제 시 소모품, S/N 관리품, 일반 수량 관리품까지 완벽하게 재고 원복
   const handleDeleteHistory = async (item) => {
     if (!window.confirm(`[${item.summary}]\n이 내역을 삭제하시겠습니까?\n(삭제 시 차감되었던 수량이나 S/N, 로트가 원래 상태로 정확하게 복원됩니다.)`)) return
 
-    // 1. 요약 문자열에서 수량 추출 (예: "Display cable (2개)" 또는 "Display cable (S/N: ...)")
     const qtyMatch = item.summary?.match(/\((\d+)개\)/)
-    const totalQty = qtyMatch ? Number(qtyMatch[1]) : 1 // 수량 표기가 없으면 기본 1개
+    const totalQty = qtyMatch ? Number(qtyMatch[1]) : 1
     
-    // 2. 부품 코드 추출 (예: "[E55-010271T] 품명..." 형식에서 코드 추출)
     const codeMatch = item.summary?.match(/\[(.*?)\]/)
     let partCode = null
     if (codeMatch && codeMatch[1]) {
@@ -57,7 +52,6 @@ export default function DeliveryHistoryTab({ refreshParts }) {
         const isConsumable = cat.includes('잉크') || cat.includes('희석제') || cat.includes('소모품')
 
         if (isConsumable) {
-          // A. 소모품(로트 관리)인 경우
           let currentLots = []
           try {
             currentLots = partData.lots ? (typeof partData.lots === 'string' ? JSON.parse(partData.lots) : partData.lots) : []
@@ -132,7 +126,6 @@ export default function DeliveryHistoryTab({ refreshParts }) {
           }).eq('id', partData.id)
 
         } else if (partData.is_serial_managed) {
-          // B. S/N 관리품인 경우
           let currentSerials = []
           try {
             currentSerials = partData.serials ? (typeof partData.serials === 'string' ? JSON.parse(partData.serials) : partData.serials) : []
@@ -155,14 +148,13 @@ export default function DeliveryHistoryTab({ refreshParts }) {
           }).eq('id', partData.id)
 
         } else {
-          // C. 일반 수량 관리품인 경우 (출고 삭제 시 재고 더하기, 입고 삭제 시 재고 빼기)
           const currentStock = Number(partData.stock) || 0
           let newStock = currentStock
 
           if (item.type === 'OUTBOUND') {
-            newStock += totalQty // 출고 취소 -> 재고 증가
+            newStock += totalQty
           } else if (item.type === 'INBOUND') {
-            newStock = Math.max(0, newStock - totalQty) // 입고 취소 -> 재고 감소
+            newStock = Math.max(0, newStock - totalQty)
           }
 
           await supabase.from('parts').update({
@@ -182,7 +174,6 @@ export default function DeliveryHistoryTab({ refreshParts }) {
     }
   }
 
-  // 💡 JSON 내부 괄호 충돌을 방지하기 위한 안전한 파싱 함수
   const parseDeliveryDetails = (noteText) => {
     if (!noteText) return null
     const tag = '[DELIVERY_DETAILS:'
@@ -198,7 +189,14 @@ export default function DeliveryHistoryTab({ refreshParts }) {
     }
   }
 
-  // 검색 및 탭 필터링 적용
+  const getCleanNote = (noteText) => {
+    if (!noteText) return '-'
+    return noteText
+      .replace(/\[LOT_RESTORE:[\s\S]*?\](?=\s*\[|$)/g, '')
+      .replace(/\[DELIVERY_DETAILS:[\s\S]*$/, '')
+      .trim() || '-'
+  }
+
   const filteredHistory = historyList.filter(item => {
     if (filterType !== 'ALL' && item.type !== filterType) return false
     if (!searchTerm.trim()) return true
@@ -214,7 +212,6 @@ export default function DeliveryHistoryTab({ refreshParts }) {
 
   return (
     <div onKeyDown={(e) => { if (e.key === 'Enter') e.preventDefault() }}>
-      {/* 인쇄 전용 깔끔한 서류 스타일 CSS */}
       <style>{`
         @media print {
           body * {
@@ -245,7 +242,6 @@ export default function DeliveryHistoryTab({ refreshParts }) {
         }
       `}</style>
 
-      {/* 상단 필터 및 검색 바 */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '10px' }}>
         <div style={{ display: 'flex', gap: '8px' }}>
           {[
@@ -291,24 +287,24 @@ export default function DeliveryHistoryTab({ refreshParts }) {
         />
       </div>
 
-      {/* 테이블 레이아웃 */}
       <div style={{ backgroundColor: '#ffffff', borderRadius: '12px', border: '1px solid #E2E8F0', overflow: 'hidden', boxShadow: '0 1px 3px rgba(0,0,0,0.02)' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '13px', tableLayout: 'fixed' }}>
           <thead>
             <tr style={{ backgroundColor: '#F8FAFC', borderBottom: '1px solid #E2E8F0', color: '#475569' }}>
-              <th style={{ padding: '14px 16px', width: '90px', textAlign: 'center' }}>구분</th>
-              <th style={{ padding: '14px 16px', width: '130px' }}>발행일</th>
-              <th style={{ padding: '14px 16px', width: '220px' }}>거래처 / 입고처</th>
-              <th style={{ padding: '14px 16px' }}>품목 명세 요약</th>
-              <th style={{ padding: '14px 16px', width: '110px', textAlign: 'center' }}>작성자</th>
-              <th style={{ padding: '14px 16px', width: '160px', textAlign: 'center' }}>관리 / 보기</th>
+              <th style={{ padding: '14px 16px', width: '75px', textAlign: 'center' }}>구분</th>
+              <th style={{ padding: '14px 16px', width: '105px' }}>발행일</th>
+              <th style={{ padding: '14px 16px', width: '160px' }}>거래처 / 입고처</th>
+              <th style={{ padding: '14px 16px', width: '280px' }}>품목 명세 요약</th>
+              <th style={{ padding: '14px 16px', width: '260px' }}>비고</th>
+              <th style={{ padding: '14px 16px', width: '95px', textAlign: 'center' }}>작성자</th>
+              <th style={{ padding: '14px 16px', width: '150px', textAlign: 'center' }}>관리 / 보기</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan="6" style={{ padding: '40px', textAlign: 'center', color: '#94A3B8' }}>이력을 불러오는 중입니다...</td></tr>
+              <tr><td colSpan="7" style={{ padding: '40px', textAlign: 'center', color: '#94A3B8' }}>이력을 불러오는 중입니다...</td></tr>
             ) : filteredHistory.length === 0 ? (
-              <tr><td colSpan="6" style={{ padding: '40px', textAlign: 'center', color: '#94A3B8' }}>조회된 입·출고 이력이 없습니다.</td></tr>
+              <tr><td colSpan="7" style={{ padding: '40px', textAlign: 'center', color: '#94A3B8' }}>조회된 입·출고 이력이 없습니다.</td></tr>
             ) : (
               filteredHistory.map(item => {
                 const hasDetails = parseDeliveryDetails(item.note)
@@ -319,7 +315,7 @@ export default function DeliveryHistoryTab({ refreshParts }) {
                         display: 'inline-flex',
                         alignItems: 'center',
                         justifyContent: 'center',
-                        width: '60px',
+                        width: '52px',
                         padding: '4px 0',
                         borderRadius: '6px',
                         fontSize: '11px',
@@ -333,6 +329,7 @@ export default function DeliveryHistoryTab({ refreshParts }) {
                     <td style={{ padding: '12px 16px', color: '#475569', fontWeight: '600' }}>{item.date}</td>
                     <td style={{ padding: '12px 16px', fontWeight: '700', color: '#0F172A', wordBreak: 'break-all' }}>{item.company_name}</td>
                     <td style={{ padding: '12px 16px', fontWeight: '700', color: '#1E293B', wordBreak: 'break-all' }}>{item.summary}</td>
+                    <td style={{ padding: '12px 16px', color: '#64748B', wordBreak: 'break-all', fontSize: '12px' }}>{getCleanNote(item.note)}</td>
                     <td style={{ padding: '12px 16px', textAlign: 'center', color: '#475569', fontWeight: '600' }}>{item.author || '-'}</td>
                     <td style={{ padding: '12px 16px', textAlign: 'center' }}>
                       <div style={{ display: 'flex', justifyContent: 'center', gap: '6px' }}>
@@ -380,12 +377,10 @@ export default function DeliveryHistoryTab({ refreshParts }) {
         </table>
       </div>
 
-      {/* 💡 [출고증 상세 보기 및 인쇄 모달] */}
       {viewingDeliveryItem && (() => {
         const details = parseDeliveryDetails(viewingDeliveryItem.note)
         const rawNote = viewingDeliveryItem.note || ''
-        const tagIdx = rawNote.indexOf('[DELIVERY_DETAILS:')
-        const cleanNoteText = tagIdx !== -1 ? rawNote.substring(0, tagIdx).trim() : rawNote.trim()
+        const cleanNoteText = getCleanNote(rawNote)
 
         return (
           <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.6)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1100, padding: '20px' }}>
@@ -393,14 +388,12 @@ export default function DeliveryHistoryTab({ refreshParts }) {
               id="printable-delivery-note"
               style={{ backgroundColor: '#ffffff', borderRadius: '16px', padding: '28px', width: '900px', maxWidth: '95vw', maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)' }}
             >
-              
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', borderBottom: '2px solid #0F172A', paddingBottom: '12px' }}>
                 <h2 style={{ margin: 0, fontSize: '20px', color: '#0F172A', fontWeight: '900' }}>출 고 증 (DELIVERY NOTE)</h2>
                 <button type="button" onClick={() => setViewingDeliveryItem(null)} className="no-print" style={{ border: 'none', background: 'none', fontSize: '20px', color: '#64748B', cursor: 'pointer', fontWeight: 'bold' }}>✕</button>
               </div>
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-                {/* 상단 메타 정보 */}
                 <div style={{ display: 'grid', gridTemplateColumns: '1.5fr 1fr 1fr', gap: '12px', backgroundColor: '#F8FAFC', padding: '14px', borderRadius: '12px', border: '1px solid #CBD5E1' }}>
                   <div>
                     <span style={{ fontSize: '11px', fontWeight: '800', color: '#64748B', display: 'block', marginBottom: '4px' }}>공급받는 자</span>
@@ -416,7 +409,6 @@ export default function DeliveryHistoryTab({ refreshParts }) {
                   </div>
                 </div>
 
-                {/* 장비 S/N 목록 */}
                 {details?.equipmentSns && details.equipmentSns.length > 0 && (
                   <div style={{ backgroundColor: '#F8FAFC', padding: '14px', borderRadius: '12px', border: '1px solid #CBD5E1' }}>
                     <span style={{ fontSize: '12px', fontWeight: '800', color: '#1E293B', display: 'block', marginBottom: '8px' }}>장비 S/N 목록</span>
@@ -430,7 +422,6 @@ export default function DeliveryHistoryTab({ refreshParts }) {
                   </div>
                 )}
 
-                {/* 출고 부품 품목 명세 테이블 */}
                 <div>
                   <h3 style={{ margin: '0 0 10px 0', fontSize: '14px', fontWeight: '800', color: '#1E293B' }}>출고 부품 품목 명세</h3>
                   <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '13px', border: '1px solid #CBD5E1' }}>
@@ -448,7 +439,7 @@ export default function DeliveryHistoryTab({ refreshParts }) {
                         <tr key={idx} style={{ borderBottom: '1px solid #E2E8F0' }}>
                           <td style={{ padding: '10px', textAlign: 'center', fontWeight: 'bold', color: '#64748B' }}>{idx + 1}</td>
                           <td style={{ padding: '10px', fontWeight: '600', color: '#475569' }}>{it.code || '-'}</td>
-                          <td style={{ padding: '10px', fontWeight: '700', color: '#2563EB' }}>{it.selectedSn ? `S/N: ${it.selectedSn}` : '해당없음'}</td>
+                          <td style={{ padding: '10px', fontWeight: '700', color: '#2563EB' }}>{it.selectedSn ? `${it.selectedSn}` : '해당없음'}</td>
                           <td style={{ padding: '10px', fontWeight: '800', color: '#0F172A' }}>{it.name}</td>
                           <td style={{ padding: '10px', textAlign: 'center', fontWeight: '800' }}>{it.quantity} 개</td>
                         </tr>
@@ -457,33 +448,21 @@ export default function DeliveryHistoryTab({ refreshParts }) {
                   </table>
                 </div>
 
-                {/* 특이사항 */}
                 <div>
                   <span style={{ fontSize: '12px', fontWeight: '800', color: '#475569', display: 'block', marginBottom: '4px' }}>특이사항 및 작업 내용</span>
-                  <div style={{ backgroundColor: '#F8FAFC', padding: '12px', borderRadius: '8px', border: '1px solid #CBD5E1', fontSize: '13px', color: '#334155', minHeight: '50px' }}>
+                  <div style={{ backgroundColor: '#F8FAFC', padding: '12px', borderRadius: '8px', border: '1px solid #CBD5E1', fontSize: '13px', color: '#334155', minHeight: '50px', whiteSpace: 'pre-wrap' }}>
                     {cleanNoteText || '특이사항 없음'}
                   </div>
                 </div>
 
-                {/* 하단 버튼 */}
                 <div className="no-print" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid #E2E8F0', paddingTop: '16px' }}>
-                  <button 
-                    type="button" 
-                    onClick={() => window.print()} 
-                    style={{ padding: '10px 18px', background: '#2563EB', color: 'white', border: 'none', borderRadius: '8px', fontWeight: '700', cursor: 'pointer', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '6px' }}
-                  >
+                  <button type="button" onClick={() => window.print()} style={{ padding: '10px 18px', background: '#2563EB', color: 'white', border: 'none', borderRadius: '8px', fontWeight: '700', cursor: 'pointer', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '6px' }}>
                     🖨️ 출고증 인쇄 / PDF 저장
                   </button>
-
-                  <button 
-                    type="button" 
-                    onClick={() => setViewingDeliveryItem(null)} 
-                    style={{ padding: '10px 20px', border: '1px solid #CBD5E1', background: 'white', color: '#64748B', borderRadius: '8px', fontWeight: '600', cursor: 'pointer' }}
-                  >
+                  <button type="button" onClick={() => setViewingDeliveryItem(null)} style={{ padding: '10px 20px', border: '1px solid #CBD5E1', background: 'white', color: '#64748B', borderRadius: '8px', fontWeight: '600', cursor: 'pointer' }}>
                     닫기
                   </button>
                 </div>
-
               </div>
             </div>
           </div>

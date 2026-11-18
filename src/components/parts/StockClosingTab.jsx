@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { supabase } from '../../supabaseClient'
+import * as XLSX from 'xlsx' // 💡 엑셀 라이브러리 임포트
 
 export default function StockClosingTab() {
   const [lots, setLots] = useState([])
@@ -7,10 +8,8 @@ export default function StockClosingTab() {
   const [searchTerm, setSearchTerm] = useState('')
   const [selectedCategory, setSelectedCategory] = useState('ALL')
   
-  // 💡 잔여고 0인 품목 숨기기 토글 상태 (기본값: false -> 전체 보기, 클릭하면 잔여고 0 제외)
   const [hideZeroStock, setHideZeroStock] = useState(false)
 
-  // 인라인 수정 상태 관리
   const [editingId, setEditingId] = useState(null)
   const [editForm, setEditForm] = useState({ po_number: '', import_date: '', expiry_date: '', unit_price: 0, current_qty: 0 })
 
@@ -18,10 +17,9 @@ export default function StockClosingTab() {
     fetchStockLots()
   }, [])
 
- const fetchStockLots = async () => {
+  const fetchStockLots = async () => {
     setLoading(true)
     
-    // 1. 로트별 테이블(part_stock_lots)과 품목 마스터(parts)를 각각 안전하게 조회
     const [{ data: lotsData, error: lotsError }, { data: partsData, error: partsError }] = await Promise.all([
       supabase.from('part_stock_lots').select('*').order('import_date', { ascending: false }),
       supabase.from('parts').select('id, name, code, category')
@@ -33,7 +31,6 @@ export default function StockClosingTab() {
       return
     }
 
-    // 2. 품번/품명 변경 없이 고유 id 기준으로 매핑만 수행
     const partsMap = new Map()
     if (partsData) {
       partsData.forEach(p => partsMap.set(p.id, p))
@@ -51,10 +48,19 @@ export default function StockClosingTab() {
       }
     })
 
+    combinedLots.sort((a, b) => {
+      const codeA = a.parts.code || ''
+      const codeB = b.parts.code || ''
+      if (codeA !== codeB) {
+        return codeA.localeCompare(codeB)
+      }
+      return new Date(b.import_date || 0) - new Date(a.import_date || 0)
+    })
+
     setLots(combinedLots)
     setLoading(false)
   }
-  // 인라인 수정 저장 핸들러
+
   const handleSaveEdit = async (id) => {
     const { error } = await supabase.from('part_stock_lots').update({
       po_number: editForm.po_number.trim() || '기존재고',
@@ -73,7 +79,6 @@ export default function StockClosingTab() {
     }
   }
 
-  // 검색, 카테고리, 그리고 잔여고 0 숨기기 필터링 적용
   const filteredLots = lots.filter(lot => {
     const itemName = lot.parts?.name || ''
     const itemCode = lot.parts?.code || ''
@@ -91,7 +96,59 @@ export default function StockClosingTab() {
     return matchesSearch && matchesCategory && matchesZeroStock
   })
 
-  // 총 재고 자산 평가액은 잔여고가 있는 항목들 위주로 정확하게 계산됨
+  // 💡 법인 결산 엑셀 다운로드 핸들러
+  const handleExcelDownload = () => {
+    if (filteredLots.length === 0) {
+      alert('다운로드할 데이터가 없습니다.')
+      return
+    }
+
+    // 엑셀에 들어갈 데이터 포맷팅 (보고용으로 깔끔하게 정제)
+    const excelData = filteredLots.map((lot, index) => {
+      const qty = Number(lot.current_qty || 0)
+      const price = Number(lot.unit_price || 0)
+      return {
+        'NO': index + 1,
+        'P.O. 번호': lot.po_number || '-',
+        '품목 구분': lot.parts?.category || '일반부품',
+        '품번 / 코드': lot.parts?.code || '-',
+        '품명 (ITEM)': lot.parts?.name || '미지정 품목',
+        '수입 통관일': lot.import_date || '-',
+        '유효기간': lot.expiry_date || '-',
+        '입고 단가 (원)': price,
+        '최초 수량': lot.initial_qty ?? 0,
+        '현재 잔여고': qty,
+        '평가 금액 (원)': qty * price
+      }
+    })
+
+    // 워크시트 및 워크북 생성
+    const worksheet = XLSX.utils.json_to_sheet(excelData)
+    
+    // 열 너비 자동 조절 (보기 편하게 설정)
+    const colWidths = [
+      { wch: 6 },  // NO
+      { wch: 18 }, // P.O. 번호
+      { wch: 12 }, // 품목 구분
+      { wch: 18 }, // 품번
+      { wch: 30 }, // 품명
+      { wch: 14 }, // 통관일
+      { wch: 14 }, // 유효기간
+      { wch: 15 }, // 단가
+      { wch: 10 }, // 최초수량
+      { wch: 12 }, // 잔여고
+      { wch: 18 }  // 평가금액
+    ]
+    worksheet['!cols'] = colWidths
+
+    const workbook = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(workbook, worksheet, '결산재고명세서')
+
+    // 오늘 날짜를 파일명에 포함하여 다운로드
+    const todayStr = new Date().toISOString().split('T')[0]
+    XLSX.writeFile(workbook, `법인결산_재고자산명세서_${todayStr}.xlsx`)
+  }
+
   const totalAssetAmount = lots.reduce((sum, lot) => sum + (Number(lot.current_qty || 0) * Number(lot.unit_price || 0)), 0)
   const totalLotsCount = lots.length
   const zeroStockCount = lots.filter(lot => Number(lot.current_qty || 0) === 0).length
@@ -104,9 +161,21 @@ export default function StockClosingTab() {
           <h2 style={styles.title}>📊 법인 결산 및 P.O. 로트별 재고 대시보드</h2>
           <p style={styles.subtitle}>입고 날짜별 단가 차이와 선입선출(FIFO)이 반영된 실시간 자산 평가 현황</p>
         </div>
-        <div style={styles.totalCard}>
-          <span style={styles.totalLabel}>총 재고 자산 평가액</span>
-          <span style={styles.totalValue}>{Math.round(totalAssetAmount).toLocaleString()} 원</span>
+        
+        {/* 💡 엑셀 다운로드 버튼 배치 */}
+        <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
+          <button
+            type="button"
+            onClick={handleExcelDownload}
+            style={styles.excelBtn}
+          >
+            📥 결산 서류 엑셀 다운로드 (.xlsx)
+          </button>
+          
+          <div style={styles.totalCard}>
+            <span style={styles.totalLabel}>총 재고 자산 평가액</span>
+            <span style={styles.totalValue}>{Math.round(totalAssetAmount).toLocaleString()} 원</span>
+          </div>
         </div>
       </div>
 
@@ -313,6 +382,7 @@ const styles = {
   headerArea: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px' },
   title: { fontSize: '20px', fontWeight: '800', color: '#0F172A', margin: '0 0 4px 0' },
   subtitle: { fontSize: '13px', color: '#64748B', margin: 0 },
+  excelBtn: { backgroundColor: '#059669', color: '#FFFFFF', border: 'none', padding: '12px 20px', borderRadius: '10px', fontWeight: '800', fontSize: '14px', cursor: 'pointer', boxShadow: '0 2px 4px rgba(5, 150, 105, 0.2)' },
   totalCard: { backgroundColor: '#EFF6FF', border: '1px solid #BFDBFE', padding: '14px 22px', borderRadius: '12px', display: 'flex', flexDirection: 'column', alignItems: 'flex-end' },
   totalLabel: { fontSize: '12px', fontWeight: '700', color: '#1E40AF' },
   totalValue: { fontSize: '22px', fontWeight: '900', color: '#1D4ED8', marginTop: '2px' },
@@ -345,4 +415,4 @@ const styles = {
   editBtn: { background: '#EFF6FF', color: '#2563EB', border: 'none', padding: '5px 10px', borderRadius: '6px', fontSize: '11px', fontWeight: '700', cursor: 'pointer' },
   saveBtn: { background: '#059669', color: '#fff', border: 'none', padding: '5px 8px', borderRadius: '6px', fontSize: '11px', fontWeight: '700', cursor: 'pointer' },
   cancelBtn: { background: '#CBD5E1', color: '#334155', border: 'none', padding: '5px 8px', borderRadius: '6px', fontSize: '11px', fontWeight: '700', cursor: 'pointer' }
-} 
+}
