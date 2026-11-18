@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { supabase } from '../../supabaseClient'
-import * as XLSX from 'xlsx' // 💡 엑셀 라이브러리 임포트
+import * as XLSX from 'xlsx' // 엑셀 라이브러리 임포트
 
 export default function StockClosingTab() {
   const [lots, setLots] = useState([])
@@ -79,6 +79,20 @@ export default function StockClosingTab() {
     }
   }
 
+  // 💡 로트 항목 삭제 핸들러 추가
+  const handleDeleteLot = async (id, poNumber) => {
+    if (!window.confirm(`P.O. [${poNumber || '미지정'}] 로트 항목을 정말 삭제하시겠습니까?`)) return
+
+    const { error } = await supabase.from('part_stock_lots').delete().eq('id', id)
+
+    if (error) {
+      alert('삭제 실패: ' + error.message)
+    } else {
+      alert('로트 항목이 삭제되었습니다.')
+      fetchStockLots()
+    }
+  }
+
   const filteredLots = lots.filter(lot => {
     const itemName = lot.parts?.name || ''
     const itemCode = lot.parts?.code || ''
@@ -96,14 +110,13 @@ export default function StockClosingTab() {
     return matchesSearch && matchesCategory && matchesZeroStock
   })
 
-  // 💡 법인 결산 엑셀 다운로드 핸들러
+  // 법인 결산 엑셀 다운로드 핸들러
   const handleExcelDownload = () => {
     if (filteredLots.length === 0) {
       alert('다운로드할 데이터가 없습니다.')
       return
     }
 
-    // 엑셀에 들어갈 데이터 포맷팅 (보고용으로 깔끔하게 정제)
     const excelData = filteredLots.map((lot, index) => {
       const qty = Number(lot.current_qty || 0)
       const price = Number(lot.unit_price || 0)
@@ -122,10 +135,8 @@ export default function StockClosingTab() {
       }
     })
 
-    // 워크시트 및 워크북 생성
     const worksheet = XLSX.utils.json_to_sheet(excelData)
     
-    // 열 너비 자동 조절 (보기 편하게 설정)
     const colWidths = [
       { wch: 6 },  // NO
       { wch: 18 }, // P.O. 번호
@@ -144,7 +155,6 @@ export default function StockClosingTab() {
     const workbook = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(workbook, worksheet, '결산재고명세서')
 
-    // 오늘 날짜를 파일명에 포함하여 다운로드
     const todayStr = new Date().toISOString().split('T')[0]
     XLSX.writeFile(workbook, `법인결산_재고자산명세서_${todayStr}.xlsx`)
   }
@@ -162,7 +172,6 @@ export default function StockClosingTab() {
           <p style={styles.subtitle}>입고 날짜별 단가 차이와 선입선출(FIFO)이 반영된 실시간 자산 평가 현황</p>
         </div>
         
-        {/* 💡 엑셀 다운로드 버튼 배치 */}
         <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
           <button
             type="button"
@@ -349,16 +358,21 @@ export default function StockClosingTab() {
                             <button onClick={() => setEditingId(null)} style={styles.cancelBtn}>취소</button>
                           </div>
                         ) : (
-                          <button onClick={() => {
-                            setEditingId(lot.id)
-                            setEditForm({
-                              po_number: lot.po_number || '',
-                              import_date: lot.import_date || '',
-                              expiry_date: lot.expiry_date || '',
-                              unit_price: lot.unit_price || 0,
-                              current_qty: lot.current_qty || 0
-                            })
-                          }} style={styles.editBtn}>수정</button>
+                          <div style={{ display: 'flex', gap: '4px', justifyContent: 'center' }}>
+                            <button onClick={() => {
+                              setEditingId(lot.id)
+                              setEditForm({
+                                po_number: lot.po_number || '',
+                                import_date: lot.import_date || '',
+                                expiry_date: lot.expiry_date || '',
+                                unit_price: lot.unit_price || 0,
+                                current_qty: lot.current_qty || 0
+                              })
+                            }} style={styles.editBtn}>수정</button>
+                            
+                            {/* 💡 수정 버튼 옆 삭제 버튼 추가 */}
+                            <button onClick={() => handleDeleteLot(lot.id, lot.po_number)} style={styles.deleteBtn}>삭제</button>
+                          </div>
                         )}
                       </td>
                     </tr>
@@ -413,6 +427,7 @@ const styles = {
   noData: { padding: '40px', textAlign: 'center', color: '#94A3B8', fontStyle: 'italic' },
   inlineInput: { width: '100%', padding: '6px 8px', borderRadius: '6px', border: '1px solid #2563EB', fontSize: '12px', outline: 'none', boxSizing: 'border-box' },
   editBtn: { background: '#EFF6FF', color: '#2563EB', border: 'none', padding: '5px 10px', borderRadius: '6px', fontSize: '11px', fontWeight: '700', cursor: 'pointer' },
+  deleteBtn: { background: '#FEE2E2', color: '#EF4444', border: 'none', padding: '5px 10px', borderRadius: '6px', fontSize: '11px', fontWeight: '700', cursor: 'pointer' }, // 💡 삭제 버튼 스타일 추가
   saveBtn: { background: '#059669', color: '#fff', border: 'none', padding: '5px 8px', borderRadius: '6px', fontSize: '11px', fontWeight: '700', cursor: 'pointer' },
   cancelBtn: { background: '#CBD5E1', color: '#334155', border: 'none', padding: '5px 8px', borderRadius: '6px', fontSize: '11px', fontWeight: '700', cursor: 'pointer' }
 }

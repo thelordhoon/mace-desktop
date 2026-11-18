@@ -3,7 +3,7 @@ import { supabase } from '../../supabaseClient'
 import ConsumablesTab from './ConsumablesTab'
 import GeneralPartsTab from './GeneralPartsTab'
 import PrintersTab from './PrintersTab'
-import DeliveryHistoryTab from './DeliveryHistoryTab'
+import PartDeliveryHistoryTab from "./DeliveryHistoryTab";
 // 💡 [수불부 탭 추가용] 나중에 삭제하려면 이 임포트 문을 지우세요.
 import InventoryLedgerTab from './InventoryLedgerTab'
 
@@ -76,7 +76,7 @@ export default function PartManagement() {
       {activeTab === '소모품' && <ConsumablesTab partsList={partsList} refreshParts={fetchParts} showAddForm={showAddPartForm} setShowAddForm={setShowAddPartForm} />}
       {activeTab === '일반부품' && <GeneralPartsTab partsList={partsList} refreshParts={fetchParts} showAddForm={showAddPartForm} setShowAddForm={setShowAddPartForm} />}
       {activeTab === '프린터' && <PrintersTab partsList={partsList} refreshParts={fetchParts} showAddForm={showAddPartForm} setShowAddForm={setShowAddPartForm} />}
-      {activeTab === '이력관리' && <DeliveryHistoryTab refreshParts={fetchParts} />}
+      {activeTab === '이력관리' && <PartDeliveryHistoryTab refreshParts={fetchParts} />}
       
       {/* 💡 [수불부 탭 추가용] 나중에 삭제하려면 이 아래 줄 전체를 지우세요. */}
       {activeTab === '재고수불부' && <InventoryLedgerTab partsList={partsList} refreshParts={fetchParts} />}
