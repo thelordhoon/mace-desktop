@@ -36,14 +36,27 @@ export default function MobileCompanyView({ user, companies, allHistories, parts
   const [workContent, setWorkContent] = useState('')
   const [selectedManager, setSelectedManager] = useState('')
   
-  // 교체 부품 상태 (2줄 레이아웃 및 S/N 직접 입력 모드 포함)
+  // 교체 부품 상태
   const [usedParts, setUsedParts] = useState([{ partId: '', name: '', quantity: 1, selectedSn: '', isCustomSn: false }])
   
   // 부품 검색 드롭다운 관리 상태
   const [activePartIndex, setActivePartIndex] = useState(null)
   const [partSearchQuery, setPartSearchQuery] = useState('')
 
-  const currentLoggedInName = user?.full_name || user?.email?.split('@')[0] || '배진철'
+  // 💡 헤더와 100% 동일한 방식으로 현재 로그인한 사용자 이름 추출
+  const getLoggedInUserName = () => {
+    if (user?.full_name) return user.full_name
+    if (user?.name) return user.name
+    try {
+      const saved = JSON.parse(localStorage.getItem('mace_desk_user') || 'null')
+      if (saved?.full_name) return saved.full_name
+      if (saved?.name) return saved.name
+      if (saved?.username) return saved.username
+    } catch (e) {}
+    return user?.username || user?.email?.split('@')[0] || '배진철'
+  }
+
+  const currentLoggedInName = getLoggedInUserName()
 
   const [historyList, setHistoryList] = useState([])
   const [uploading, setUploading] = useState(false)
@@ -156,7 +169,6 @@ export default function MobileCompanyView({ user, companies, allHistories, parts
     }
   }
 
-  // 💡 종료 시간 기준 현재 시간 10분 단위 내림 채우기
   const handleFillCurrentTime = () => {
     const now = new Date()
     const hh = String(now.getHours()).padStart(2, '0')
@@ -253,7 +265,7 @@ export default function MobileCompanyView({ user, companies, allHistories, parts
 
       const validParts = usedParts.filter(p => p.name && p.name.trim())
 
-      // 💡 스크린샷 실제 컬럼명 구조 완벽 반영 (sn, work_content, parts, confirmor 등)
+      // 💡 confirmor에 담당자와 로그인한 엔지니어 이름을 모두 포함하여 저장
       const { error } = await supabase.from('service_history').insert([{
         company_id: selectedCompany.id,
         work_date: workDate,
@@ -263,7 +275,7 @@ export default function MobileCompanyView({ user, companies, allHistories, parts
         sn: sn,
         work_content: workContent,
         parts: JSON.stringify(validParts),
-        confirmor: `${currentLoggedInName} (담당자: ${selectedManager})`,
+        confirmor: `담당: ${selectedManager} / 엔지니어: ${currentLoggedInName}`,
         report_url: reportImageUrl
       }])
 
@@ -634,7 +646,7 @@ export default function MobileCompanyView({ user, companies, allHistories, parts
 
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '12px', color: '#475569', paddingTop: '6px', borderTop: '1px solid #F1F5F9' }}>
               <span>작성 엔지니어:</span>
-              <input type="text" value={currentLoggedInName} readOnly style={{borderRadius: '6px', padding: '4px 8px', width: '120px', textAlign: 'right', fontWeight: '700', backgroundColor: '#F1F5F9', color: '#0F172A' }} />
+              <input type="text" value={currentLoggedInName} readOnly style={{ borderRadius: '6px', padding: '4px 8px', width: '120px', textAlign: 'right', fontWeight: '700', backgroundColor: '#F1F5F9', color: '#0F172A' }} />
             </div>
           </div>
 
@@ -714,15 +726,88 @@ export default function MobileCompanyView({ user, companies, allHistories, parts
               </div>
             </>
           ) : (
+            // 💡 정보 수정 모드 (담당자 동적 추가/삭제 기능 완벽 구현)
             <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
               <h4 style={{ margin: 0, fontSize: '15px', fontWeight: '800' }}>업체 정보 수정</h4>
               <input value={editData.name} onChange={e => setEditData({ ...editData, name: e.target.value })} placeholder="업체명" style={inputStyle} />
               <input value={editData.address} onChange={e => setEditData({ ...editData, address: e.target.value })} placeholder="주소" style={inputStyle} />
+              
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
                 <input value={editData.ink} onChange={e => setEditData({ ...editData, ink: e.target.value })} placeholder="사용 잉크" style={inputStyle} />
                 <input value={editData.solvent} onChange={e => setEditData({ ...editData, solvent: e.target.value })} placeholder="사용 희석제" style={inputStyle} />
               </div>
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '6px' }}>
+
+              {/* 💡 담당자 목록 수정 및 추가 섹션 */}
+              <div style={{ borderTop: '1px solid #E2E8F0', paddingTop: '10px', marginTop: '4px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                  <span style={{ fontSize: '13px', fontWeight: '700', color: '#334155' }}>현장 담당자 관리</span>
+                  <button
+                    type="button"
+                    onClick={() => setEditData({
+                      ...editData,
+                      managers: [...editData.managers, { name: '', phone: '', role: '', email: '' }]
+                    })}
+                    style={{ border: 'none', background: '#EFF6FF', color: '#2563EB', padding: '4px 8px', borderRadius: '6px', fontSize: '11px', fontWeight: '700' }}
+                  >
+                    + 담당자 추가
+                  </button>
+                </div>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  {(editData.managers || []).map((mgr, mIdx) => (
+                    <div key={mIdx} style={{ display: 'flex', gap: '6px', alignItems: 'center', backgroundColor: '#F8FAFC', padding: '8px', borderRadius: '8px', border: '1px solid #CBD5E1' }}>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', flex: 1 }}>
+                        <div style={{ display: 'flex', gap: '4px' }}>
+                          <input
+                            placeholder="이름"
+                            value={mgr.name}
+                            onChange={e => {
+                              const updated = [...editData.managers]
+                              updated[mIdx].name = e.target.value
+                              setEditData({ ...editData, managers: updated })
+                            }}
+                            style={{ ...inputStyle, padding: '6px 8px', fontSize: '12px', flex: 1 }}
+                          />
+                          <input
+                            placeholder="직급 (예: 차장)"
+                            value={mgr.role}
+                            onChange={e => {
+                              const updated = [...editData.managers]
+                              updated[mIdx].role = e.target.value
+                              setEditData({ ...editData, managers: updated })
+                            }}
+                            style={{ ...inputStyle, padding: '6px 8px', fontSize: '12px', flex: 1 }}
+                          />
+                        </div>
+                        <input
+                          placeholder="연락처 (010-0000-0000)"
+                          value={mgr.phone}
+                          onChange={e => {
+                            const updated = [...editData.managers]
+                            updated[mIdx].phone = e.target.value
+                            setEditData({ ...editData, managers: updated })
+                          }}
+                          style={{ ...inputStyle, padding: '6px 8px', fontSize: '12px' }}
+                        />
+                      </div>
+                      {editData.managers.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const updated = editData.managers.filter((_, i) => i !== mIdx)
+                            setEditData({ ...editData, managers: updated })
+                          }}
+                          style={{ border: 'none', background: '#FEE2E2', color: '#EF4444', width: '28px', height: '28px', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer' }}
+                        >
+                          ✕
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '10px' }}>
                 <button type="button" onClick={() => setIsEditing(false)} style={{ padding: '8px 14px', borderRadius: '8px', border: '1px solid #CBD5E1', background: '#fff', fontSize: '12px' }}>취소</button>
                 <button type="button" onClick={handleSaveCompanyEdit} style={{ padding: '8px 16px', borderRadius: '8px', border: 'none', background: '#2563EB', color: '#fff', fontWeight: '700', fontSize: '12px' }}>저장</button>
               </div>
@@ -746,16 +831,22 @@ export default function MobileCompanyView({ user, companies, allHistories, parts
                   parsedUsedParts = h.parts ? (typeof h.parts === 'string' ? JSON.parse(h.parts) : h.parts) : []
                 } catch (err) {}
 
-                // confirmor 
+                // 💡 DB에 저장된 confirmor 문자열에서 담당자와 엔지니어 정보 추출 및 분리 표시
                 const confirmorText = h.confirmor || ''
                 let managerDisplay = '-'
-                if (confirmorText.includes('담당자:')) {
-                  const match = confirmorText.match(/담당자:\s*([^)]+)/)
+                let engineerDisplay = '-'
+
+                if (confirmorText.includes('담당:') && confirmorText.includes('엔지니어:')) {
+                  const parts = confirmorText.split('/')
+                  const mgrPart = parts.find(p => p.includes('담당:'))
+                  const engPart = parts.find(p => p.includes('엔지니어:'))
+                  if (mgrPart) managerDisplay = mgrPart.replace('담당:', '').trim()
+                  if (engPart) engineerDisplay = engPart.replace('엔지니어:', '').trim()
+                } else if (confirmorText.includes('담당자:')) {
+                  const match = confirmorText.match(/담당자:\s*([^/]+)/)
                   if (match) managerDisplay = match[1].trim()
-                } else if (confirmorText) {
-                  managerDisplay = confirmorText
                 } else {
-                  managerDisplay = (selectedCompany.managersList && selectedCompany.managersList[0]?.name) || '-'
+                  managerDisplay = confirmorText || (selectedCompany.managersList && selectedCompany.managersList[0]?.name) || '-'
                 }
 
                 const targetSn = h.sn || ''
@@ -766,8 +857,8 @@ export default function MobileCompanyView({ user, companies, allHistories, parts
                   <div key={h.id} style={{ backgroundColor: '#ffffff', padding: '14px', borderRadius: '12px', border: '1px solid #E2E8F0' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
                       <span style={{ fontSize: '12px', fontWeight: '800', color: '#2563EB' }}>
-  {h.work_date || h.created_at?.split('T')[0]} {h.start_time ? `(${h.start_time}~${h.end_time})` : ''}
-</span>
+                        {h.work_date || h.created_at?.split('T')[0]} {h.start_time ? `(${h.start_time}~${h.end_time})` : ''}
+                      </span>
                       <span style={{ fontSize: '11px', backgroundColor: '#F1F5F9', padding: '3px 8px', borderRadius: '6px', fontWeight: '700', color: '#334155' }}>
                         {h.model_name || ''} {targetSn ? `/ S/N: ${targetSn}` : ''}
                       </span>
@@ -780,8 +871,12 @@ export default function MobileCompanyView({ user, companies, allHistories, parts
                       </div>
                     )}
 
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '11px', color: '#64748B' }}>
-                      <span>담당: {managerDisplay}</span>
+                    {/* 💡 요청하신 두 줄 표시 형식 반영 (담당 / 엔지니어) */}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', fontSize: '11px', color: '#64748B', borderTop: '1px solid #F1F5F9', paddingTop: '8px', marginTop: '4px' }}>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', fontWeight: '700' }}>
+                        <span>담당: {managerDisplay}</span>
+                        <span style={{ color: '#2563EB' }}>엔지니어: {engineerDisplay}</span>
+                      </div>
                       {reportImage && (
                         <button type="button" onClick={() => setSelectedReportImage(reportImage)} style={{ border: 'none', background: '#EFF6FF', color: '#2563EB', padding: '4px 8px', borderRadius: '6px', fontWeight: '700' }}>
                           리포트 보기

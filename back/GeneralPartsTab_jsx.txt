@@ -2,8 +2,20 @@ import React, { useState, useEffect } from 'react'
 import { supabase } from '../../supabaseClient'
 
 export default function GeneralPartsTab({ partsList, refreshParts, showAddForm, setShowAddForm, user }) {
-  // 💡 로그인 사용자 이름을 Supabase 세션에서 직접 안전하게 가져오도록 개선
-  const [currentLoggedInName, setCurrentLoggedInName] = useState(user?.full_name || user?.email?.split('@')[0] || '배진철')
+  // 💡 Header와 동일한 방식으로 현재 로그인한 사용자 이름 추출 (props user -> localStorage 순)
+  const getLoggedInUserName = () => {
+    if (user?.full_name) return user.full_name
+    if (user?.name) return user.name
+    try {
+      const saved = JSON.parse(localStorage.getItem('mace_desk_user') || 'null')
+      if (saved?.full_name) return saved.full_name
+      if (saved?.name) return saved.name
+      if (saved?.username) return saved.username
+    } catch (e) {}
+    return user?.username || user?.email?.split('@')[0] || '배진철'
+  }
+
+  const currentLoggedInName = getLoggedInUserName()
 
   const [searchTerm, setSearchTerm] = useState('')
   const [companies, setCompanies] = useState([])
@@ -19,6 +31,7 @@ export default function GeneralPartsTab({ partsList, refreshParts, showAddForm, 
   const [serials, setSerials] = useState([])
   const [imageFile, setImageFile] = useState(null)
 
+  // 모달 상태들
   const [selectedSerialPart, setSelectedSerialPart] = useState(null)
   const [editableSerials, setEditableSerials] = useState([])
 
@@ -42,7 +55,7 @@ export default function GeneralPartsTab({ partsList, refreshParts, showAddForm, 
   const [isInternalIssueModalOpen, setIsInternalIssueModalOpen] = useState(false)
   const [deliveryCompanyName, setDeliveryCompanyName] = useState('엔지니어실 (내근용)')
   const [deliveryDate, setDeliveryDate] = useState(new Date().toISOString().split('T')[0])
-  const [deliveryAuthor, setDeliveryAuthor] = useState('')
+  const [deliveryAuthor, setDeliveryAuthor] = useState(currentLoggedInName)
   const [equipmentSns, setEquipmentSns] = useState([''])
   const [deliveryItems, setDeliveryItems] = useState([
     { partId: '', searchKeyword: '', selectedSn: '', quantity: 1, note: '', showDropdown: false }
@@ -51,28 +64,11 @@ export default function GeneralPartsTab({ partsList, refreshParts, showAddForm, 
 
   useEffect(() => {
     fetchCompanies()
-    fetchSessionUser()
-  }, [user])
+  }, [])
 
-  // 💡 Supabase 세션 사용자 정보를 직접 조회하여 작성자 세팅
-  const fetchSessionUser = async () => {
-    if (user?.full_name) {
-      setCurrentLoggedInName(user.full_name)
-      setDeliveryAuthor(user.full_name)
-      return
-    }
-    
-    const { data: { session } } = await supabase.auth.getSession()
-    if (session?.user) {
-      const metaName = session.user.user_metadata?.full_name || session.user.user_metadata?.name
-      const emailId = session.user.email ? session.user.email.split('@')[0] : '배진철'
-      const resolvedName = metaName || emailId
-      setCurrentLoggedInName(resolvedName)
-      setDeliveryAuthor(resolvedName)
-    } else {
-      setDeliveryAuthor('배진철')
-    }
-  }
+  useEffect(() => {
+    setDeliveryAuthor(getLoggedInUserName())
+  }, [user])
 
   const fetchCompanies = async () => {
     const { data } = await supabase.from('companies').select('*').order('name', { ascending: true })
@@ -383,7 +379,7 @@ export default function GeneralPartsTab({ partsList, refreshParts, showAddForm, 
                 <select value={partCategory} onChange={e => setPartCategory(e.target.value)} style={inputStyle}>
                   <option value="일반부품">일반부품</option>
                   <option value="Spare parts">Spare parts</option>
-                  <option value="Accessories">Tag</option>
+                  <option value="Accessories">Accessories</option>
                   <option value="Tools">Tools</option>
                 </select>
               </div>
@@ -403,7 +399,7 @@ export default function GeneralPartsTab({ partsList, refreshParts, showAddForm, 
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <input type="checkbox" id="serialCheck" checked={isSerialManaged} onChange={e => setIsSerialManaged(e.target.checked)} style={{ width: '16px', height: '16px', cursor: 'pointer' }} />
                 <label htmlFor="serialCheck" style={{ fontSize: '13px', fontWeight: '700', color: '#1E293B', cursor: 'pointer' }}>
-                  이 부품은 개별 S/N(시리얼 번호) 관리 대상입니다. (체크 해제 시 순수 수량으로만 관리)
+                  이 부품은 개별 S/N(시리얼 번호) 관리 대상입니다.
                 </label>
               </div>
               {isSerialManaged && (
@@ -450,8 +446,7 @@ export default function GeneralPartsTab({ partsList, refreshParts, showAddForm, 
         <input type="text" placeholder="🔍 부품 품명 또는 Ident No.(코드) 검색..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} style={{ ...inputStyle, padding: '12px', maxWidth: '360px', flex: 1 }} />
         
         <button type="button" onClick={() => {
-          // 모달 열릴 때 현재 로그인한 사용자 이름으로 즉시 갱신
-          fetchSessionUser()
+          setDeliveryAuthor(currentLoggedInName)
           setIsInternalIssueModalOpen(true)
         }} style={{ background: '#059669', color: '#fff', border: 'none', padding: '11px 16px', borderRadius: '8px', fontSize: '13px', fontWeight: '800', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', boxShadow: '0 2px 4px rgba(0,0,0,0.1)' }}>
           📄 출고증 발행
@@ -551,6 +546,152 @@ export default function GeneralPartsTab({ partsList, refreshParts, showAddForm, 
           </tbody>
         </table>
       </div>
+
+      {/* 1. S/N 일괄 편집 모달 */}
+      {selectedSerialPart && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.6)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1100, padding: '20px' }}>
+          <div style={{ backgroundColor: '#ffffff', borderRadius: '16px', padding: '24px', width: '500px', maxHeight: '85vh', overflowY: 'auto', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', borderBottom: '1px solid #E2E8F0', paddingBottom: '10px' }}>
+              <h3 style={{ margin: 0, fontSize: '16px', fontWeight: '800', color: '#0F172A' }}>✏️ 개별 S/N 일괄 편집</h3>
+              <button type="button" onClick={() => setSelectedSerialPart(null)} style={{ border: 'none', background: 'none', fontSize: '16px', color: '#64748B', cursor: 'pointer', fontWeight: 'bold' }}>✕</button>
+            </div>
+            <div style={{ fontSize: '13px', color: '#2563EB', fontWeight: '700', marginBottom: '12px' }}>{selectedSerialPart.code} - {selectedSerialPart.name}</div>
+            
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '250px', overflowY: 'auto', marginBottom: '16px', paddingRight: '4px' }}>
+              {(editableSerials || []).map((s, idx) => (
+                <div key={idx} style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                  <input type="text" value={s.sn} onChange={e => {
+                    const updated = [...editableSerials]; updated[idx].sn = e.target.value; setEditableSerials(updated);
+                  }} style={{ ...inputStyle, flex: 2 }} />
+                  <select value={s.condition} onChange={e => {
+                    const updated = [...editableSerials]; updated[idx].condition = e.target.value; setEditableSerials(updated);
+                  }} style={{ ...inputStyle, flex: 1 }}>
+                    <option value="BG">BG (신품)</option>
+                    <option value="EX">EX (수리)</option>
+                    <option value="OH">OH (중고)</option>
+                  </select>
+                  <button type="button" onClick={() => setEditableSerials(editableSerials.filter((_, i) => i !== idx))} style={{ border: 'none', background: '#FEE2E2', color: '#EF4444', width: '28px', height: '28px', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer' }}>✕</button>
+                </div>
+              ))}
+              <button type="button" onClick={() => setEditableSerials([...editableSerials, { sn: '', condition: 'BG', received_date: new Date().toISOString().split('T')[0] }])} style={{ background: '#EFF6FF', color: '#2563EB', border: '1px dashed #BFDBFE', padding: '8px', borderRadius: '8px', fontWeight: '700', fontSize: '12px', cursor: 'pointer', marginTop: '4px' }}>+ S/N 추가하기</button>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
+              <button type="button" onClick={() => setSelectedSerialPart(null)} style={{ padding: '8px 16px', background: '#F1F5F9', border: '1px solid #CBD5E1', borderRadius: '8px', fontWeight: '600', cursor: 'pointer' }}>취소</button>
+              <button type="button" onClick={async () => {
+                const validSerials = editableSerials.filter(s => s && s.sn && s.sn.trim() !== '')
+                const { error } = await supabase.from('parts').update({
+                  serials: JSON.stringify(validSerials),
+                  stock: validSerials.length
+                }).eq('id', selectedSerialPart.id)
+
+                if (!error) {
+                  alert('S/N 목록이 성공적으로 업데이트되었습니다.')
+                  setSelectedSerialPart(null)
+                  refreshParts()
+                } else {
+                  alert('업데이트 실패: ' + error.message)
+                }
+              }} style={{ padding: '8px 20px', background: '#2563EB', color: 'white', border: 'none', borderRadius: '8px', fontWeight: '700', cursor: 'pointer' }}>저장하기</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 2. S/N 입고 모달 */}
+      {quickSerialPart && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.6)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1100, padding: '20px' }}>
+          <div style={{ backgroundColor: '#ffffff', borderRadius: '16px', padding: '24px', width: '400px', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', borderBottom: '1px solid #E2E8F0', paddingBottom: '10px' }}>
+              <h3 style={{ margin: 0, fontSize: '16px', fontWeight: '800', color: '#0F172A' }}>📥 S/N 개별 부품 입고</h3>
+              <button type="button" onClick={() => setQuickSerialPart(null)} style={{ border: 'none', background: 'none', fontSize: '16px', color: '#64748B', cursor: 'pointer', fontWeight: 'bold' }}>✕</button>
+            </div>
+            <div style={{ fontSize: '13px', color: '#059669', fontWeight: '700', marginBottom: '14px' }}>{quickSerialPart.code} - {quickSerialPart.name} (작성자: {currentLoggedInName})</div>
+
+            <form onSubmit={handleQuickAddSerial} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <div><label style={labelStyle}>시리얼 번호 (S/N)*</label><input type="text" placeholder="예: SN-998822" value={inputSn} onChange={e => setInputSn(e.target.value)} style={inputStyle} required /></div>
+              <div>
+                <label style={labelStyle}>상태</label>
+                <select value={inputCondition} onChange={e => setInputCondition(e.target.value)} style={inputStyle}>
+                  <option value="BG">BG (신품)</option>
+                  <option value="EX">EX (수리)</option>
+                  <option value="OH">OH (중고)</option>
+                </select>
+              </div>
+              <div><label style={labelStyle}>입고일</label><input type="date" value={inputReceivedDate} onChange={e => setInputReceivedDate(e.target.value)} style={inputStyle} required /></div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '10px' }}>
+                <button type="button" onClick={() => setQuickSerialPart(null)} style={{ padding: '8px 16px', background: '#F1F5F9', border: '1px solid #CBD5E1', borderRadius: '8px', fontWeight: '600', cursor: 'pointer' }}>취소</button>
+                <button type="submit" style={{ padding: '8px 20px', background: '#059669', color: 'white', border: 'none', borderRadius: '8px', fontWeight: '700', cursor: 'pointer' }}>입고 완료</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* 3. 수량 입·출고 모달 */}
+      {quantityStockPart && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.6)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1100, padding: '20px' }}>
+          <div style={{ backgroundColor: '#ffffff', borderRadius: '16px', padding: '24px', width: '400px', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', borderBottom: '1px solid #E2E8F0', paddingBottom: '10px' }}>
+              <h3 style={{ margin: 0, fontSize: '16px', fontWeight: '800', color: '#0F172A' }}>📦 수량 입·출고 처리</h3>
+              <button type="button" onClick={() => setQuantityStockPart(null)} style={{ border: 'none', background: 'none', fontSize: '16px', color: '#64748B', cursor: 'pointer', fontWeight: 'bold' }}>✕</button>
+            </div>
+            <div style={{ fontSize: '13px', color: '#2563EB', fontWeight: '700', marginBottom: '14px' }}>{quantityStockPart.code} - {quantityStockPart.name} (현재고: {quantityStockPart.stock}개)</div>
+
+            <form onSubmit={handleQuantityStockChange} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <div>
+                <label style={labelStyle}>처리 구분</label>
+                <select value={qtyChangeType} onChange={e => setQtyChangeType(e.target.value)} style={inputStyle}>
+                  <option value="IN">입고 (+)</option>
+                  <option value="OUTBOUND">출고 (-)</option>
+                </select>
+              </div>
+              <div><label style={labelStyle}>수량*</label><input type="number" min="1" value={qtyChangeAmount} onChange={e => setQtyChangeAmount(e.target.value)} style={inputStyle} required /></div>
+              <div><label style={labelStyle}>비고 및 메모</label><input type="text" placeholder="사유 입력..." value={qtyNote} onChange={e => setQtyNote(e.target.value)} style={inputStyle} /></div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '10px' }}>
+                <button type="button" onClick={() => setQuantityStockPart(null)} style={{ padding: '8px 16px', background: '#F1F5F9', border: '1px solid #CBD5E1', borderRadius: '8px', fontWeight: '600', cursor: 'pointer' }}>취소</button>
+                <button type="submit" style={{ padding: '8px 20px', background: '#2563EB', color: 'white', border: 'none', borderRadius: '8px', fontWeight: '700', cursor: 'pointer' }}>확인</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* 4. 부품 정보 수정 모달 */}
+      {editingPart && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.6)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1100, padding: '20px' }}>
+          <div style={{ backgroundColor: '#ffffff', borderRadius: '16px', padding: '24px', width: '480px', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', borderBottom: '1px solid #E2E8F0', paddingBottom: '10px' }}>
+              <h3 style={{ margin: 0, fontSize: '16px', fontWeight: '800', color: '#0F172A' }}>✏️ 부품 정보 수정</h3>
+              <button type="button" onClick={() => setEditingPart(null)} style={{ border: 'none', background: 'none', fontSize: '16px', color: '#64748B', cursor: 'pointer', fontWeight: 'bold' }}>✕</button>
+            </div>
+
+            <form onSubmit={handleSaveEdit} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <div><label style={labelStyle}>Ident No. (코드)*</label><input type="text" value={editForm.code} onChange={e => setEditForm({ ...editForm, code: e.target.value })} style={inputStyle} required /></div>
+              <div><label style={labelStyle}>품명*</label><input type="text" value={editForm.name} onChange={e => setEditForm({ ...editForm, name: e.target.value })} style={inputStyle} required /></div>
+              
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                <div><label style={labelStyle}>소비자가 (원)</label><input type="number" value={editForm.customer_price} onChange={e => setEditForm({ ...editForm, customer_price: e.target.value })} style={inputStyle} /></div>
+                <div><label style={labelStyle}>딜러가 (원)</label><input type="number" value={editForm.dealer_price} onChange={e => setEditForm({ ...editForm, dealer_price: e.target.value })} style={inputStyle} /></div>
+              </div>
+
+              {!editForm.is_serial_managed && (
+                <div><label style={labelStyle}>재고 수량</label><input type="number" min="0" value={editForm.stock} onChange={e => setEditForm({ ...editForm, stock: e.target.value })} style={inputStyle} /></div>
+              )}
+
+              <div><label style={labelStyle}>부품 사진 변경</label><input type="file" accept="image/*" onChange={e => setEditImageFile(e.target.files[0])} style={{ ...inputStyle, padding: '5px', fontSize: '11px' }} /></div>
+              <div><label style={labelStyle}>비고</label><input type="text" value={editForm.note} onChange={e => setEditForm({ ...editForm, note: e.target.value })} style={inputStyle} /></div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '10px' }}>
+                <button type="button" onClick={() => setEditingPart(null)} style={{ padding: '8px 16px', background: '#F1F5F9', border: '1px solid #CBD5E1', borderRadius: '8px', fontWeight: '600', cursor: 'pointer' }}>취소</button>
+                <button type="submit" style={{ padding: '8px 20px', background: '#2563EB', color: 'white', border: 'none', borderRadius: '8px', fontWeight: '700', cursor: 'pointer' }}>저장하기</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* 출고증 발행 모달 */}
       {isInternalIssueModalOpen && (
@@ -726,6 +867,13 @@ export default function GeneralPartsTab({ partsList, refreshParts, showAddForm, 
               </div>
             </form>
           </div>
+        </div>
+      )}
+
+      {/* 이미지 미리보기 팝업 */}
+      {previewImage && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.7)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1200 }} onClick={() => setPreviewImage(null)}>
+          <img src={previewImage} alt="미리보기" style={{ maxWidth: '80vw', maxHeight: '80vh', borderRadius: '12px', objectFit: 'contain', border: '2px solid #fff' }} />
         </div>
       )}
     </div>

@@ -43,7 +43,7 @@ export default function StockClosingTab() {
         parts: {
           name: matchedPart.name || '미지정 품목',
           code: matchedPart.code || '-',
-          category: matchedPart.category || '일반부품'
+          category: matchedPart.category || 'Spare parts'
         }
       }
     })
@@ -83,7 +83,7 @@ export default function StockClosingTab() {
     const itemName = lot.parts?.name || ''
     const itemCode = lot.parts?.code || ''
     const poNumber = lot.po_number || ''
-    const category = lot.parts?.category || '일반부품'
+    const category = lot.parts?.category || 'Spare parts'
     const currentQty = Number(lot.current_qty || 0)
 
     const matchesSearch = itemName.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -110,10 +110,10 @@ export default function StockClosingTab() {
       return {
         'NO': index + 1,
         'P.O. 번호': lot.po_number || '-',
-        '품목 구분': lot.parts?.category || '일반부품',
+        '품목 구분': lot.parts?.category || 'Spare parts',
         '품번 / 코드': lot.parts?.code || '-',
         '품명 (ITEM)': lot.parts?.name || '미지정 품목',
-        '수입 통관일': lot.import_date || '-',
+        '입고일자': lot.import_date || '-',
         '유효기간': lot.expiry_date || '-',
         '입고 단가 (원)': price,
         '최초 수량': lot.initial_qty ?? 0,
@@ -195,7 +195,7 @@ export default function StockClosingTab() {
       {/* 필터 탭, 검색 바 및 잔여고 0 토글 버튼 */}
       <div style={styles.filterBar}>
         <div style={styles.tabGroup}>
-          {['ALL', '일반부품', '잉크', '희석제', '소모품'].map((cat) => (
+          {['ALL', 'Spare parts', '잉크', '희석제', '부자재'].map((cat) => (
             <button
               key={cat}
               onClick={() => setSelectedCategory(cat)}
@@ -250,7 +250,7 @@ export default function StockClosingTab() {
                 <th style={styles.th}>품목 구분</th>
                 <th style={styles.th}>품번 / 코드</th>
                 <th style={styles.th}>품명 (ITEM)</th>
-                <th style={styles.thCenter}>수입 통관일</th>
+                <th style={styles.thCenter}>입고일자</th>
                 <th style={styles.thCenter}>유효기간</th>
                 <th style={styles.thRight}>입고 단가 (원)</th>
                 <th style={styles.thCenter}>최초 수량</th>
@@ -281,7 +281,7 @@ export default function StockClosingTab() {
                       </td>
                       <td style={styles.td}>
                         <span style={styles.badgeCategory}>
-                          {lot.parts?.category || '일반부품'}
+                          {lot.parts?.category || 'Spare parts'}
                         </span>
                       </td>
                       <td style={styles.tdCode}>{lot.parts?.code || '-'}</td>
