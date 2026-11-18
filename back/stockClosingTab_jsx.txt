@@ -6,6 +6,13 @@ export default function StockClosingTab() {
   const [loading, setLoading] = useState(true)
   const [searchTerm, setSearchTerm] = useState('')
   const [selectedCategory, setSelectedCategory] = useState('ALL')
+  
+  // 💡 잔여고 0인 품목 숨기기 토글 상태 (기본값: false -> 전체 보기, 클릭하면 잔여고 0 제외)
+  const [hideZeroStock, setHideZeroStock] = useState(false)
+
+  // 인라인 수정 상태 관리
+  const [editingId, setEditingId] = useState(null)
+  const [editForm, setEditForm] = useState({ po_number: '', import_date: '', expiry_date: '', unit_price: 0, current_qty: 0 })
 
   useEffect(() => {
     fetchStockLots()
@@ -13,7 +20,6 @@ export default function StockClosingTab() {
 
   const fetchStockLots = async () => {
     setLoading(true)
-    // parts 테이블과 조인하여 품목명, 코드, 카테고리를 함께 가져옴
     const { data, error } = await supabase
       .from('part_stock_lots')
       .select('*, parts(name, code, category)')
@@ -27,23 +33,44 @@ export default function StockClosingTab() {
     setLoading(false)
   }
 
-  // 검색 및 카테고리 필터링
+  // 인라인 수정 저장 핸들러
+  const handleSaveEdit = async (id) => {
+    const { error } = await supabase.from('part_stock_lots').update({
+      po_number: editForm.po_number.trim() || '기존재고',
+      import_date: editForm.import_date || null,
+      expiry_date: editForm.expiry_date || null,
+      unit_price: Number(editForm.unit_price || 0),
+      current_qty: Number(editForm.current_qty || 0)
+    }).eq('id', id)
+
+    if (error) {
+      alert('수정 실패: ' + error.message)
+    } else {
+      alert('수정되었습니다.')
+      setEditingId(null)
+      fetchStockLots()
+    }
+  }
+
+  // 검색, 카테고리, 그리고 잔여고 0 숨기기 필터링 적용
   const filteredLots = lots.filter(lot => {
     const itemName = lot.parts?.name || ''
     const itemCode = lot.parts?.code || ''
     const poNumber = lot.po_number || ''
-    const category = lot.parts?.category || '소모품'
+    const category = lot.parts?.category || '일반부품'
+    const currentQty = Number(lot.current_qty || 0)
 
     const matchesSearch = itemName.toLowerCase().includes(searchTerm.toLowerCase()) ||
                           itemCode.toLowerCase().includes(searchTerm.toLowerCase()) ||
                           poNumber.toLowerCase().includes(searchTerm.toLowerCase())
     
     const matchesCategory = selectedCategory === 'ALL' || category === selectedCategory
+    const matchesZeroStock = hideZeroStock ? currentQty > 0 : true
 
-    return matchesSearch && matchesCategory
+    return matchesSearch && matchesCategory && matchesZeroStock
   })
 
-  // 총 재고 자산 평가액 및 통계 계산
+  // 총 재고 자산 평가액은 잔여고가 있는 항목들 위주로 정확하게 계산됨
   const totalAssetAmount = lots.reduce((sum, lot) => sum + (Number(lot.current_qty || 0) * Number(lot.unit_price || 0)), 0)
   const totalLotsCount = lots.length
   const zeroStockCount = lots.filter(lot => Number(lot.current_qty || 0) === 0).length
@@ -75,10 +102,10 @@ export default function StockClosingTab() {
         </div>
       </div>
 
-      {/* 필터 탭 및 검색 바 */}
+      {/* 필터 탭, 검색 바 및 잔여고 0 토글 버튼 */}
       <div style={styles.filterBar}>
         <div style={styles.tabGroup}>
-          {['ALL', '잉크', '희석제', '소모품'].map((cat) => (
+          {['ALL', '일반부품', '잉크', '희석제', '소모품'].map((cat) => (
             <button
               key={cat}
               onClick={() => setSelectedCategory(cat)}
@@ -92,13 +119,33 @@ export default function StockClosingTab() {
             </button>
           ))}
         </div>
-        <input
-          type="text"
-          placeholder="품명, 품번(코드), P.O. 번호 검색..."
-          value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
-          style={styles.searchBox}
-        />
+
+        <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
+          <button
+            type="button"
+            onClick={() => setHideZeroStock(!hideZeroStock)}
+            style={{
+              padding: '9px 14px',
+              borderRadius: '8px',
+              border: hideZeroStock ? '1px solid #2563EB' : '1px solid #CBD5E1',
+              backgroundColor: hideZeroStock ? '#EFF6FF' : '#F8FAFC',
+              color: hideZeroStock ? '#1D4ED8' : '#475569',
+              fontWeight: '700',
+              fontSize: '13px',
+              cursor: 'pointer'
+            }}
+          >
+            {hideZeroStock ? '☑️ 잔여고 0 품목 숨김 중' : '☐ 잔여고 0 품목 포함 보기'}
+          </button>
+
+          <input
+            type="text"
+            placeholder="품명, 품번(코드), P.O. 번호 검색..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            style={styles.searchBox}
+          />
+        </div>
       </div>
 
       {/* 데이터 테이블 */}
@@ -119,42 +166,117 @@ export default function StockClosingTab() {
                 <th style={styles.thCenter}>최초 수량</th>
                 <th style={styles.thCenter}>현재 잔여고</th>
                 <th style={styles.thRight}>평가 금액 (원)</th>
+                <th style={styles.thCenter}>관리</th>
               </tr>
             </thead>
             <tbody>
               {filteredLots.length > 0 ? (
                 filteredLots.map((lot) => {
+                  const isEditing = editingId === lot.id
                   const evaluationAmount = Number(lot.current_qty || 0) * Number(lot.unit_price || 0)
+
                   return (
                     <tr key={lot.id} style={styles.tdRow}>
-                      <td style={styles.tdCenterBold}>{lot.po_number || '-'}</td>
+                      <td style={styles.tdCenterBold}>
+                        {isEditing ? (
+                          <input
+                            type="text"
+                            value={editForm.po_number}
+                            onChange={(e) => setEditForm({ ...editForm, po_number: e.target.value })}
+                            style={styles.inlineInput}
+                          />
+                        ) : (
+                          lot.po_number || '-'
+                        )}
+                      </td>
                       <td style={styles.td}>
                         <span style={styles.badgeCategory}>
-                          {lot.parts?.category || '소모품'}
+                          {lot.parts?.category || '일반부품'}
                         </span>
                       </td>
                       <td style={styles.tdCode}>{lot.parts?.code || '-'}</td>
                       <td style={styles.tdBold}>{lot.parts?.name || '미지정 품목'}</td>
-                      <td style={styles.tdCenter}>{lot.import_date || '-'}</td>
-                      <td style={styles.tdCenter}>{lot.expiry_date || '-'}</td>
-                      <td style={styles.tdRight}>{Number(lot.unit_price || 0).toLocaleString()} 원</td>
+                      <td style={styles.tdCenter}>
+                        {isEditing ? (
+                          <input
+                            type="date"
+                            value={editForm.import_date}
+                            onChange={(e) => setEditForm({ ...editForm, import_date: e.target.value })}
+                            style={styles.inlineInput}
+                          />
+                        ) : (
+                          lot.import_date || '-'
+                        )}
+                      </td>
+                      <td style={styles.tdCenter}>
+                        {isEditing ? (
+                          <input
+                            type="date"
+                            value={editForm.expiry_date}
+                            onChange={(e) => setEditForm({ ...editForm, expiry_date: e.target.value })}
+                            style={styles.inlineInput}
+                          />
+                        ) : (
+                          lot.expiry_date || '-'
+                        )}
+                      </td>
+                      <td style={styles.tdRight}>
+                        {isEditing ? (
+                          <input
+                            type="number"
+                            value={editForm.unit_price}
+                            onChange={(e) => setEditForm({ ...editForm, unit_price: e.target.value })}
+                            style={{ ...styles.inlineInput, textAlign: 'right' }}
+                          />
+                        ) : (
+                          `${Number(lot.unit_price || 0).toLocaleString()} 원`
+                        )}
+                      </td>
                       <td style={styles.tdCenter}>{lot.initial_qty ?? 0}</td>
                       <td style={styles.tdCenter}>
-                        <span style={{
-                          ...styles.badgeQty,
-                          backgroundColor: Number(lot.current_qty) === 0 ? '#FEE2E2' : '#F0FDF4',
-                          color: Number(lot.current_qty) === 0 ? '#991B1B' : '#166534'
-                        }}>
-                          {lot.current_qty ?? 0} 개
-                        </span>
+                        {isEditing ? (
+                          <input
+                            type="number"
+                            value={editForm.current_qty}
+                            onChange={(e) => setEditForm({ ...editForm, current_qty: e.target.value })}
+                            style={{ ...styles.inlineInput, textAlign: 'center', width: '70px' }}
+                          />
+                        ) : (
+                          <span style={{
+                            ...styles.badgeQty,
+                            backgroundColor: Number(lot.current_qty) === 0 ? '#FEE2E2' : '#F0FDF4',
+                            color: Number(lot.current_qty) === 0 ? '#991B1B' : '#166534'
+                          }}>
+                            {lot.current_qty ?? 0} 개
+                          </span>
+                        )}
                       </td>
                       <td style={styles.tdRightAmount}>{Math.round(evaluationAmount).toLocaleString()} 원</td>
+                      <td style={styles.tdCenter}>
+                        {isEditing ? (
+                          <div style={{ display: 'flex', gap: '4px', justifyContent: 'center' }}>
+                            <button onClick={() => handleSaveEdit(lot.id)} style={styles.saveBtn}>저장</button>
+                            <button onClick={() => setEditingId(null)} style={styles.cancelBtn}>취소</button>
+                          </div>
+                        ) : (
+                          <button onClick={() => {
+                            setEditingId(lot.id)
+                            setEditForm({
+                              po_number: lot.po_number || '',
+                              import_date: lot.import_date || '',
+                              expiry_date: lot.expiry_date || '',
+                              unit_price: lot.unit_price || 0,
+                              current_qty: lot.current_qty || 0
+                            })
+                          }} style={styles.editBtn}>수정</button>
+                        )}
+                      </td>
                     </tr>
                   )
                 })
               ) : (
                 <tr>
-                  <td colSpan="10" style={styles.noData}>조건에 일치하는 입고 로트 데이터가 없습니다.</td>
+                  <td colSpan="11" style={styles.noData}>조건에 일치하는 입고 로트 데이터가 없습니다.</td>
                 </tr>
               )}
             </tbody>
@@ -180,7 +302,7 @@ const styles = {
   filterBar: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' },
   tabGroup: { display: 'flex', gap: '6px' },
   tabBtn: { padding: '8px 14px', borderRadius: '8px', border: 'none', fontWeight: '700', fontSize: '13px', cursor: 'pointer' },
-  searchBox: { padding: '9px 14px', borderRadius: '8px', border: '1px solid #CBD5E1', fontSize: '13px', width: '300px', outline: 'none', backgroundColor: '#F8FAFC' },
+  searchBox: { padding: '9px 14px', borderRadius: '8px', border: '1px solid #CBD5E1', fontSize: '13px', width: '240px', outline: 'none', backgroundColor: '#F8FAFC' },
   tableWrapper: { overflowX: 'auto', maxHeight: '600px', border: '1px solid #E2E8F0', borderRadius: '10px' },
   table: { width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '13px' },
   thRow: { backgroundColor: '#F8FAFC', borderBottom: '1px solid #E2E8F0', position: 'sticky', top: 0, zIndex: 1 },
@@ -197,5 +319,9 @@ const styles = {
   tdRightAmount: { padding: '12px 16px', color: '#0F172A', fontWeight: '800', textAlign: 'right', backgroundColor: '#F8FAFC' },
   badgeCategory: { padding: '4px 8px', backgroundColor: '#EFF6FF', color: '#2563EB', borderRadius: '6px', fontSize: '11px', fontWeight: '700' },
   badgeQty: { padding: '4px 10px', borderRadius: '12px', fontWeight: '700', fontSize: '12px' },
-  noData: { padding: '40px', textAlign: 'center', color: '#94A3B8', fontStyle: 'italic' }
+  noData: { padding: '40px', textAlign: 'center', color: '#94A3B8', fontStyle: 'italic' },
+  inlineInput: { width: '100%', padding: '6px 8px', borderRadius: '6px', border: '1px solid #2563EB', fontSize: '12px', outline: 'none', boxSizing: 'border-box' },
+  editBtn: { background: '#EFF6FF', color: '#2563EB', border: 'none', padding: '5px 10px', borderRadius: '6px', fontSize: '11px', fontWeight: '700', cursor: 'pointer' },
+  saveBtn: { background: '#059669', color: '#fff', border: 'none', padding: '5px 8px', borderRadius: '6px', fontSize: '11px', fontWeight: '700', cursor: 'pointer' },
+  cancelBtn: { background: '#CBD5E1', color: '#334155', border: 'none', padding: '5px 8px', borderRadius: '6px', fontSize: '11px', fontWeight: '700', cursor: 'pointer' }
 }
