@@ -5,7 +5,6 @@ export default function InboundModal({ partsList, author, onClose, refreshParts 
   const [form, setForm] = useState({
     date: new Date().toISOString().split('T')[0],
     author: author || '배진철',
-    // 💡 입력 항목에 po_number(P.O. 번호)와 unit_price(입고 단가) 추가
     items: [{ code: '', name: '', category: '일반부품', qty: 1, po_number: '', lot_number: '', expiry: '', unit_price: '' }],
     note: ''
   })
@@ -21,46 +20,39 @@ export default function InboundModal({ partsList, author, onClose, refreshParts 
       if (!item.code && !item.name) continue
       const cleanCode = item.code?.trim().toLowerCase()
       const matched = partsList.find(p => p.code && p.code.trim().toLowerCase() === cleanCode)
-      const isConsumable = item.category === '잉크' || item.category === '희석제' || item.category === '소모품'
       const qtyNum = Number(item.qty || 1)
       const priceNum = Number(item.unit_price || 0)
       const poNum = item.po_number?.trim() || `PO-${Date.now().toString().slice(-6)}`
 
       if (matched) {
-        if (isConsumable) {
-          // 1. part_stock_lots 테이블에 새로운 P.O. 로트(단가 및 재고) 데이터 INSERT
-          const { error: lotError } = await supabase.from('part_stock_lots').insert([{
-            part_id: matched.id,
-            po_number: poNum,
-            import_date: form.date,
-            expiry_date: item.expiry || null,
-            unit_price: priceNum,
-            initial_qty: qtyNum,
-            current_qty: qtyNum
-          }])
-          if (lotError) {
-            console.error('로트 입고 등록 실패:', lotError.message)
-          }
-
-          // 2. 기존 호환성을 위해 parts 테이블의 lots JSON 필드도 함께 업데이트
-          let currentLots = []
-          try { currentLots = matched.lots ? JSON.parse(matched.lots) : [] } catch (e) {}
-          currentLots.push({ 
-            po_number: poNum, 
-            lot_number: item.lot_number || '', 
-            received_date: form.date, 
-            expiry: item.expiry || '', 
-            qty: qtyNum, 
-            unit_price: priceNum 
-          })
-
-          const newStock = currentLots.reduce((s, l) => s + Number(l.qty || 0), 0)
-          await supabase.from('parts').update({ stock: newStock, lots: JSON.stringify(currentLots) }).eq('id', matched.id)
-        } else {
-          // 일반 부품의 경우 단순 수량 합산
-          const newStock = qtyNum + Number(matched.stock || 0)
-          await supabase.from('parts').update({ stock: newStock }).eq('id', matched.id)
+        // 1. 카테고리 불문하고 모든 입고 품목을 part_stock_lots 테이블에 P.O. 로트 단위로 INSERT
+        const { error: lotError } = await supabase.from('part_stock_lots').insert([{
+          part_id: matched.id,
+          po_number: poNum,
+          import_date: form.date,
+          expiry_date: item.expiry || null,
+          unit_price: priceNum,
+          initial_qty: qtyNum,
+          current_qty: qtyNum
+        }])
+        if (lotError) {
+          console.error('로트 입고 등록 실패:', lotError.message)
         }
+
+        // 2. 기존 호환성 및 기존 로트 관리 구조(JSON) 유지를 위한 parts 테이블 업데이트
+        let currentLots = []
+        try { currentLots = matched.lots ? JSON.parse(matched.lots) : [] } catch (e) {}
+        currentLots.push({ 
+          po_number: poNum, 
+          lot_number: item.lot_number || '', 
+          received_date: form.date, 
+          expiry: item.expiry || '', 
+          qty: qtyNum, 
+          unit_price: priceNum 
+        })
+
+        const newStock = currentLots.reduce((s, l) => s + Number(l.qty || 0), 0)
+        await supabase.from('parts').update({ stock: newStock, lots: JSON.stringify(currentLots) }).eq('id', matched.id)
       }
       summaryParts.push(`${item.name || item.code} (${qtyNum}개 / P.O: ${poNum} / 단가: ${priceNum.toLocaleString()}원)`)
     }
@@ -163,3 +155,4 @@ export default function InboundModal({ partsList, author, onClose, refreshParts 
     </div>
   )
 }
+ 

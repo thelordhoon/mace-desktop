@@ -32,6 +32,7 @@ export default function GeneralPartsTab({ partsList, refreshParts, showAddForm, 
 
   const [selectedSerialPart, setSelectedSerialPart] = useState(null)
   const [editableSerials, setEditableSerials] = useState([])
+  const [initialSerialsSnapshot, setInitialSerialsSnapshot] = useState([])
 
   const [quantityStockPart, setQuantityStockPart] = useState(null)
   const [qtyChangeAmount, setQtyChangeAmount] = useState(1)
@@ -118,7 +119,7 @@ export default function GeneralPartsTab({ partsList, refreshParts, showAddForm, 
 
     let calculatedStock = 0
     let validSerials = []
-    const carryOver = Number(carryOverStock) || 0
+    const carryOver = Math.max(0, Number(carryOverStock) || 0)
 
     if (isSerialManaged) {
       validSerials = (serials || []).filter(s => s && s.sn && s.sn.trim() !== '').map(s => ({
@@ -126,7 +127,7 @@ export default function GeneralPartsTab({ partsList, refreshParts, showAddForm, 
         condition: s.condition || 'BG',
         received_date: s.received_date || new Date().toISOString().split('T')[0]
       }))
-      calculatedStock = validSerials.length + carryOver
+      calculatedStock = Math.max(0, validSerials.length + carryOver)
     } else {
       calculatedStock = carryOver
     }
@@ -182,9 +183,10 @@ export default function GeneralPartsTab({ partsList, refreshParts, showAddForm, 
       if (uploadedUrl) imageUrl = uploadedUrl
     }
 
-    const newCarryOver = Number(editForm.carry_over_stock) || 0
-    const diffCarry = newCarryOver - (Number(editingPart.carry_over_stock) || 0)
-    const updatedStock = (Number(editingPart.stock) || 0) + diffCarry
+    const newCarryOver = Math.max(0, Number(editForm.carry_over_stock) || 0)
+    const prevCarryOver = Math.max(0, Number(editingPart.carry_over_stock) || 0)
+    const diffCarry = newCarryOver - prevCarryOver
+    const updatedStock = Math.max(0, (Number(editingPart.stock) || 0) + diffCarry)
 
     const updatePayload = {
       name: editForm.name.trim(),
@@ -258,7 +260,7 @@ export default function GeneralPartsTab({ partsList, refreshParts, showAddForm, 
       }])
     } else {
       if (currentStock < amount) return alert('현재 재고보다 출고 수량이 많습니다!')
-      newStock -= amount
+      newStock = Math.max(0, currentStock - amount)
 
       await supabase.from('delivery_history').insert([{
         date: new Date().toISOString().split('T')[0],
@@ -315,7 +317,7 @@ export default function GeneralPartsTab({ partsList, refreshParts, showAddForm, 
 
       if (partObj.is_serial_managed) {
         updatedSerials = parsedSerials.filter(s => s.sn !== item.selectedSn)
-        newStock = updatedSerials.length
+        newStock = Math.max(0, (Number(partObj.carry_over_stock) || 0) + updatedSerials.length)
         summaryPartsList.push(`${partObj.name} (S/N: ${item.selectedSn})`)
         serialListForNote.push(`${item.selectedSn}: ${partObj.name} 교체`)
 
@@ -325,7 +327,7 @@ export default function GeneralPartsTab({ partsList, refreshParts, showAddForm, 
       } else {
         const amt = Number(item.quantity) || 1
         if (newStock < amt) return alert(`[${partObj.name}] 부품의 재고가 부족합니다!`)
-        newStock -= amt
+        newStock = Math.max(0, newStock - amt)
         summaryPartsList.push(`${partObj.name} (${amt}개)`)
       }
 
@@ -543,7 +545,12 @@ export default function GeneralPartsTab({ partsList, refreshParts, showAddForm, 
                     
                     <td style={{ padding: '12px 16px', textAlign: 'center' }}>
                       {p.is_serial_managed ? (
-                        <button type="button" onClick={() => { setSelectedSerialPart(p); setEditableSerials(parsedSerials); }} style={{ border: 'none', background: '#EFF6FF', color: '#2563EB', padding: '6px 12px', borderRadius: '6px', fontSize: '11px', fontWeight: '800', cursor: 'pointer' }}>
+                        <button type="button" onClick={() => {
+                          const cloned = parsedSerials.map(s => ({ ...s }))
+                          setSelectedSerialPart(p)
+                          setEditableSerials(cloned)
+                          setInitialSerialsSnapshot(cloned)
+                        }} style={{ border: 'none', background: '#EFF6FF', color: '#2563EB', padding: '6px 12px', borderRadius: '6px', fontSize: '11px', fontWeight: '800', cursor: 'pointer' }}>
                           ✏️ S/N 관리
                         </button>
                       ) : (
@@ -638,21 +645,51 @@ export default function GeneralPartsTab({ partsList, refreshParts, showAddForm, 
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', borderTop: '1px solid #E2E8F0', paddingTop: '14px' }}>
               <button type="button" onClick={() => setSelectedSerialPart(null)} style={{ padding: '10px 18px', background: '#F1F5F9', border: '1px solid #CBD5E1', borderRadius: '8px', fontWeight: '600', cursor: 'pointer' }}>취소</button>
               <button type="button" onClick={async () => {
-                const validSerials = editableSerials.filter(s => s && s.sn && s.sn.trim() !== '').map(s => ({
-                  ...s,
-                  sn: s.sn.replace(/^SN-/i, '')
-                }))
+                const validSerials = editableSerials
+                  .filter(s => s && s.sn && s.sn.trim() !== '')
+                  .map(s => ({
+                    sn: s.sn.trim().replace(/^SN-/i, ''),
+                    condition: s.condition || 'BG',
+                    received_date: s.received_date || new Date().toISOString().split('T')[0]
+                  }))
 
                 const { error } = await supabase.from('parts').update({
                   serials: JSON.stringify(validSerials),
-                  stock: (Number(selectedSerialPart.carry_over_stock) || 0) + validSerials.length
+                  stock: Math.max(0, (Number(selectedSerialPart.carry_over_stock) || 0) + validSerials.length)
                 }).eq('id', selectedSerialPart.id)
 
                 if (error) {
                   return alert('저장 실패: ' + error.message)
                 }
 
-                alert('S/N별 상태 정보가 성공적으로 반영되었습니다.')
+                const prevSnSet = new Set(
+                  (initialSerialsSnapshot || [])
+                    .filter(s => s && s.sn && s.sn.trim() !== '')
+                    .map(s => s.sn.trim().replace(/^SN-/i, ''))
+                )
+                const nextSnSet = new Set(validSerials.map(s => s.sn))
+
+                const addedSerials = validSerials.filter(s => !prevSnSet.has(s.sn))
+                const removedSns = Array.from(prevSnSet).filter(sn => !nextSnSet.has(sn))
+
+                for (const s of addedSerials) {
+                  await supabase.from('part_stock_lots').insert([{
+                    part_id: selectedSerialPart.id,
+                    po_number: `SN-${s.sn} (${s.condition})`,
+                    import_date: s.received_date,
+                    unit_price: 0,
+                    initial_qty: 1,
+                    current_qty: 1
+                  }])
+                }
+
+                for (const sn of removedSns) {
+                  await supabase.from('part_stock_lots').update({ current_qty: 0 }).eq('part_id', selectedSerialPart.id).eq('po_number', `SN-${sn} (BG)`)
+                  await supabase.from('part_stock_lots').update({ current_qty: 0 }).eq('part_id', selectedSerialPart.id).eq('po_number', `SN-${sn} (EX)`)
+                  await supabase.from('part_stock_lots').update({ current_qty: 0 }).eq('part_id', selectedSerialPart.id).eq('po_number', `SN-${sn} (OH)`)
+                }
+
+                alert('S/N별 상태 정보 및 로트가 성공적으로 반영되었습니다.')
                 setSelectedSerialPart(null)
                 refreshParts()
               }} style={{ padding: '10px 22px', background: '#2563EB', color: 'white', border: 'none', borderRadius: '8px', fontWeight: '800', cursor: 'pointer' }}>저장하기</button>
@@ -723,10 +760,11 @@ export default function GeneralPartsTab({ partsList, refreshParts, showAddForm, 
                 <div style={{ padding: '30px', textAlign: 'center', color: '#94A3B8' }}>등록된 추가 입고 로트 내역이 없습니다. (이월 재고로 관리 중)</div>
               ) : (
                 partLotsList.map((lot, idx) => {
-                  const currentPriceInput = lotPriceInputs[idx] !== undefined ? lotPriceInputs[idx] : (lot.unit_price > 0 ? lot.unit_price : '')
+                  const lotKey = lot.id ?? idx
+                  const currentPriceInput = lotPriceInputs[lotKey] !== undefined ? lotPriceInputs[lotKey] : (lot.unit_price > 0 ? lot.unit_price : '')
                   
                   return (
-                    <div key={lot.id || idx} style={{ backgroundColor: '#ffffff', border: '1px solid #E2E8F0', borderRadius: '12px', padding: '16px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                    <div key={lotKey} style={{ backgroundColor: '#ffffff', border: '1px solid #E2E8F0', borderRadius: '12px', padding: '16px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)', display: 'flex', flexDirection: 'column', gap: '10px' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <div style={{ fontSize: '15px', fontWeight: '800', color: '#0F172A' }}>
                           <span>Lot/PO: <span style={{ color: '#2563EB' }}>{lot.po_number || '(미지정)'}</span></span>
@@ -739,17 +777,14 @@ export default function GeneralPartsTab({ partsList, refreshParts, showAddForm, 
                           const currentStock = Number(lotCheckPart.stock) || 0
                           const newStock = Math.max(0, currentStock - deletedQty)
 
-                          // 1. 로트 삭제
                           const { error: lotErr } = await supabase.from('part_stock_lots').delete().eq('id', lot.id)
                           if (lotErr) return alert('로트 삭제 실패: ' + lotErr.message)
 
-                          // 2. 부품 총 재고(stock) 차감 업데이트
                           const { error: partErr } = await supabase.from('parts').update({ stock: newStock }).eq('id', lotCheckPart.id)
                           if (partErr) return alert('재고 수량 업데이트 실패: ' + partErr.message)
 
                           alert('로트가 삭제되었으며, 재고 수량도 정상적으로 차감되었습니다.')
                           
-                          // 상태 즉시 반영
                           const updatedPart = { ...lotCheckPart, stock: newStock }
                           setLotCheckPart(updatedPart)
                           handleOpenLotCheck(updatedPart)
@@ -773,7 +808,7 @@ export default function GeneralPartsTab({ partsList, refreshParts, showAddForm, 
                           value={currentPriceInput}
                           onChange={e => {
                             const val = e.target.value
-                            setLotPriceInputs(prev => ({ ...prev, [idx]: val }))
+                            setLotPriceInputs(prev => ({ ...prev, [lotKey]: val }))
                           }}
                           style={{ ...inputStyle, backgroundColor: '#F8FAFC', flex: 1 }}
                         />
