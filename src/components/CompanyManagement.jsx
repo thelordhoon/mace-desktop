@@ -100,6 +100,15 @@ export default function CompanyManagement({ partsList }) {
     return splitArr.length > 0 ? splitArr : ['']
   }
 
+  const normalizeCompanyCompare = (str) => {
+    if (!str) return ''
+    return String(str)
+      .replace(/\(주\)|주식회사|\(유\)|유한회사/g, '')
+      .replace(/\s+/g, '')
+      .trim()
+      .toLowerCase()
+  }
+
   const getPartPriceInfo = (itemCodeOrName, companyName, isDealerComp) => {
     if (!partsList || !itemCodeOrName || !itemCodeOrName.trim()) return null
     const query = itemCodeOrName.trim().toLowerCase()
@@ -110,9 +119,17 @@ export default function CompanyManagement({ partsList }) {
     try {
       if (matchedPart.company_prices) {
         const cpList = typeof matchedPart.company_prices === 'string' ? JSON.parse(matchedPart.company_prices) : matchedPart.company_prices
-        if (Array.isArray(cpList)) {
-          const matchedCp = cpList.find(cp => cp.company_name && cp.company_name.toLowerCase() === companyName.toLowerCase())
-          if (matchedCp && matchedCp.price) companySpecialPrice = Number(matchedCp.price)
+        if (Array.isArray(cpList) && companyName) {
+          const targetNorm = normalizeCompanyCompare(companyName)
+          const matchedCp = cpList.find(cp => {
+            if (!cp || !cp.company_name) return false
+            if (cp.company_name.trim().toLowerCase() === companyName.trim().toLowerCase()) return true
+            return targetNorm !== '' && normalizeCompanyCompare(cp.company_name) === targetNorm
+          })
+          if (matchedCp && matchedCp.price !== undefined && matchedCp.price !== null && String(matchedCp.price).trim() !== '') {
+            const parsedPrice = Number(String(matchedCp.price).replace(/,/g, ''))
+            if (!Number.isNaN(parsedPrice)) companySpecialPrice = parsedPrice
+          }
         }
       }
     } catch (e) {}

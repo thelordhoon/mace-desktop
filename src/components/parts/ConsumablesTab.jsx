@@ -55,6 +55,7 @@ export default function ConsumablesTab({ partsList, refreshParts, showAddForm, s
 
   const [selectedSpecialPart, setSelectedSpecialPart] = useState(null)
   const [selectedSpecialPrices, setSelectedSpecialPrices] = useState([])
+  const [activeSpecialCompanyIdx, setActiveSpecialCompanyIdx] = useState(null)
 
   const [editingPart, setEditingPart] = useState(null)
   const [editForm, setEditForm] = useState({ name: '', code: '', category: '잉크', customer_price: 0, dealer_price: 0, stock: 0, note: '' })
@@ -459,7 +460,7 @@ export default function ConsumablesTab({ partsList, refreshParts, showAddForm, s
                       </div>
                     </td>
                     <td style={{ padding: '12px 16px', whiteSpace: 'nowrap' }}>
-                      <button type="button" onClick={() => { setSelectedSpecialPart(p); setSelectedSpecialPrices(parsedCompanyPrices); }} style={{ fontSize: '11px', fontWeight: '700', color: specialPriceCount > 0 ? '#D97706' : '#64748B', backgroundColor: specialPriceCount > 0 ? '#FEF3C7' : '#F1F5F9', border: specialPriceCount > 0 ? '1px solid #FCD34D' : '1px solid #CBD5E1', padding: '4px 10px', borderRadius: '20px', cursor: 'pointer' }}>
+                      <button type="button" onClick={() => { setSelectedSpecialPart(p); setSelectedSpecialPrices(parsedCompanyPrices); setActiveSpecialCompanyIdx(null); }} style={{ fontSize: '11px', fontWeight: '700', color: specialPriceCount > 0 ? '#D97706' : '#64748B', backgroundColor: specialPriceCount > 0 ? '#FEF3C7' : '#F1F5F9', border: specialPriceCount > 0 ? '1px solid #FCD34D' : '1px solid #CBD5E1', padding: '4px 10px', borderRadius: '20px', cursor: 'pointer' }}>
                         🏷️ 지정 특가 {specialPriceCount}개 [보기]
                       </button>
                     </td>
@@ -761,46 +762,95 @@ export default function ConsumablesTab({ partsList, refreshParts, showAddForm, s
                 <h3 style={{ margin: 0, fontSize: '17px', color: '#0F172A', fontWeight: '800' }}>🏷️ 업체별 지정 특가 관리</h3>
                 <div style={{ fontSize: '12px', color: '#D97706', fontWeight: '700', marginTop: '2px' }}>[{selectedSpecialPart.code}] {selectedSpecialPart.name}</div>
               </div>
-              <button type="button" onClick={() => setSelectedSpecialPart(null)} style={{ border: 'none', background: 'none', fontSize: '18px', color: '#64748B', cursor: 'pointer', fontWeight: '700' }}>✕</button>
+              <button type="button" onClick={() => { setSelectedSpecialPart(null); setActiveSpecialCompanyIdx(null); }} style={{ border: 'none', background: 'none', fontSize: '18px', color: '#64748B', cursor: 'pointer', fontWeight: '700' }}>✕</button>
             </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '16px' }}>
-              {(selectedSpecialPrices || []).map((sp, idx) => (
-                <div key={idx} style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                  <input
-                    type="text"
-                    placeholder="업체명 입력"
-                    value={sp.company_name}
-                    onChange={e => {
-                      const updated = [...selectedSpecialPrices]
-                      updated[idx].company_name = e.target.value
-                      setSelectedSpecialPrices(updated)
-                    }}
-                    style={{ ...inputStyle, flex: 1.5 }}
-                  />
-                  <input
-                    type="number"
-                    placeholder="지정 단가(원)"
-                    value={sp.price}
-                    onChange={e => {
-                      const updated = [...selectedSpecialPrices]
-                      updated[idx].price = e.target.value
-                      setSelectedSpecialPrices(updated)
-                    }}
-                    style={{ ...inputStyle, flex: 1 }}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setSelectedSpecialPrices(selectedSpecialPrices.filter((_, i) => i !== idx))}
-                    style={{ border: 'none', background: '#FEE2E2', color: '#EF4444', width: '28px', height: '28px', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer' }}
-                  >
-                    ✕
-                  </button>
-                </div>
-              ))}
+              {(selectedSpecialPrices || []).map((sp, idx) => {
+                const kw = (sp.company_name || '').trim().toLowerCase()
+                const matchedCompanies = (companies || []).filter(c =>
+                  c && c.name && (!kw || c.name.toLowerCase().includes(kw))
+                )
+
+                return (
+                  <div key={idx} style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                    <div style={{ position: 'relative', flex: 1.5 }}>
+                      <input
+                        type="text"
+                        placeholder="업체명 검색 또는 입력"
+                        value={sp.company_name}
+                        onFocus={() => setActiveSpecialCompanyIdx(idx)}
+                        onChange={e => {
+                          const updated = [...selectedSpecialPrices]
+                          updated[idx].company_name = e.target.value
+                          setSelectedSpecialPrices(updated)
+                          setActiveSpecialCompanyIdx(idx)
+                        }}
+                        style={inputStyle}
+                      />
+                      {activeSpecialCompanyIdx === idx && matchedCompanies.length > 0 && (
+                        <div style={{
+                          position: 'absolute',
+                          top: '100%',
+                          left: 0,
+                          right: 0,
+                          backgroundColor: '#fff',
+                          border: '1px solid #CBD5E1',
+                          borderRadius: '8px',
+                          maxHeight: '140px',
+                          overflowY: 'auto',
+                          zIndex: 60,
+                          marginTop: '2px',
+                          boxShadow: '0 4px 6px rgba(0,0,0,0.1)'
+                        }}>
+                          {matchedCompanies.map(c => (
+                            <div
+                              key={c.id || c.name}
+                              onMouseDown={() => {
+                                const updated = [...selectedSpecialPrices]
+                                updated[idx].company_name = c.name
+                                setSelectedSpecialPrices(updated)
+                                setActiveSpecialCompanyIdx(null)
+                              }}
+                              style={{ padding: '8px 12px', fontSize: '12px', cursor: 'pointer', borderBottom: '1px solid #F1F5F9' }}
+                            >
+                              <strong>{c.name}</strong> {c.ceo ? <span style={{ color: '#64748B' }}>({c.ceo})</span> : ''}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    <input
+                      type="number"
+                      placeholder="지정 단가(원)"
+                      value={sp.price}
+                      onChange={e => {
+                        const updated = [...selectedSpecialPrices]
+                        updated[idx].price = e.target.value
+                        setSelectedSpecialPrices(updated)
+                      }}
+                      style={{ ...inputStyle, flex: 1 }}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedSpecialPrices(selectedSpecialPrices.filter((_, i) => i !== idx))
+                        if (activeSpecialCompanyIdx === idx) setActiveSpecialCompanyIdx(null)
+                      }}
+                      style={{ border: 'none', background: '#FEE2E2', color: '#EF4444', width: '28px', height: '28px', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer' }}
+                    >
+                      ✕
+                    </button>
+                  </div>
+                )
+              })}
               <button
                 type="button"
-                onClick={() => setSelectedSpecialPrices([...(selectedSpecialPrices || []), { company_name: '', price: 0 }])}
+                onClick={() => {
+                  const nextList = [...(selectedSpecialPrices || []), { company_name: '', price: 0 }]
+                  setSelectedSpecialPrices(nextList)
+                  setActiveSpecialCompanyIdx(nextList.length - 1)
+                }}
                 style={{ background: '#FEF3C7', color: '#D97706', border: '1px dashed #FCD34D', padding: '8px', borderRadius: '8px', fontWeight: '700', fontSize: '12px', cursor: 'pointer' }}
               >
                 + 업체 특가 추가
@@ -808,7 +858,7 @@ export default function ConsumablesTab({ partsList, refreshParts, showAddForm, s
             </div>
 
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
-              <button type="button" onClick={() => setSelectedSpecialPart(null)} style={{ padding: '8px 16px', background: '#F1F5F9', border: '1px solid #CBD5E1', borderRadius: '8px', fontWeight: '600', cursor: 'pointer' }}>취소</button>
+              <button type="button" onClick={() => { setSelectedSpecialPart(null); setActiveSpecialCompanyIdx(null); }} style={{ padding: '8px 16px', background: '#F1F5F9', border: '1px solid #CBD5E1', borderRadius: '8px', fontWeight: '600', cursor: 'pointer' }}>취소</button>
               <button
                 type="button"
                 onClick={async () => {
@@ -820,6 +870,7 @@ export default function ConsumablesTab({ partsList, refreshParts, showAddForm, s
                   if (!error) {
                     alert('업체별 지정 특가가 저장되었습니다.')
                     setSelectedSpecialPart(null)
+                    setActiveSpecialCompanyIdx(null)
                     refreshParts()
                   } else {
                     alert('저장 실패: ' + error.message)

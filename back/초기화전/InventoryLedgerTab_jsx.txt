@@ -5,13 +5,14 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
   const [ledgerData, setLedgerData] = useState([])
   const [loading, setLoading] = useState(false)
   const [searchTerm, setSearchTerm] = useState('')
-  const [selectedCategory, setSelectedCategory] = useState('ALL') // 💡 구분별 필터 상태 추가
+  const [selectedCategory, setSelectedCategory] = useState('ALL') // 구분별 필터 상태
+  const [hideZeroStock, setHideZeroStock] = useState(false) // 💡 잔여 재고 0인 항목 제외 필터 상태 추가
   
   // 상세 이력 모달 (드릴다운용)
   const [selectedItemHistory, setSelectedItemHistory] = useState(null)
   const [historyList, setHistoryList] = useState([])
 
-  // 데이터 집계 및 계산 (잉크·희석제 소모품 포함)
+  // 데이터 집계 및 계산 (잉크·희석제 소모품 포함 - 품번/코드 기준 분리)
   const fetchLedgerSummary = async () => {
     setLoading(true)
     try {
@@ -30,7 +31,7 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
 
       if (lotsErr) throw lotsErr
 
-      // 3. 전체 품목 매핑 및 수불부 집계 산출
+      // 3. 전체 품목 매핑 및 수불부 집계 산출 (ID 및 품번/코드 기준 매칭 강화)
       const computed = (partsList || []).map(part => {
         const partLots = (lotsData || []).filter(l => String(l.part_id) === String(part.id))
         const currentStock = part.is_serial_managed 
@@ -59,10 +60,10 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
           }
         }
 
-        // 해당 부품/소모품과 관련된 히스토리 필터링
+        // 해당 부품의 고유 ID 및 코드를 최우선으로 하여 히스토리 필터링 (품명 중복 오매칭 원천 차단)
         const partHistories = (historyData || []).filter(h => {
           if (h.part_id && String(h.part_id) === String(part.id)) return true
-          if (h.summary && h.summary.includes(part.name)) return true
+          if (part.code && h.summary && h.summary.includes(`[${part.code}]`)) return true
           return false
         })
 
@@ -146,14 +147,20 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
     document.body.removeChild(a)
   }
 
-  // 💡 검색어 및 선택된 구분(Category)에 따른 필터링 적용
+  // 💡 검색어, 구분 필터, 그리고 '잔여 재고 0인 항목 제외' 필터 적용
   const filteredLedger = ledgerData.filter(item => {
     const matchesSearch = !searchTerm.trim() || 
       item.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
       item.code.toLowerCase().includes(searchTerm.toLowerCase())
     
-    if (selectedCategory === 'ALL') return matchesSearch
-    return matchesSearch && item.category === selectedCategory
+    const matchesCategory = selectedCategory === 'ALL' || item.category === selectedCategory
+    const matchesZeroStock = hideZeroStock ? item.current > 0 : true
+
+    return matchesSearch && matchesCategory && matchesZeroStock
+  }).sort((a, b) => {
+    const codeDiff = (a.code || '').localeCompare(b.code || '', 'ko-KR')
+    if (codeDiff !== 0) return codeDiff
+    return (a.name || '').localeCompare(b.name || '', 'ko-KR')
   })
 
   // 동적으로 존재하는 구분(카테고리) 목록 추출 (중복 제거)
@@ -168,9 +175,9 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
 
   return (
     <div style={{ padding: '4px' }}>
-      {/* 상단 검색, 구분 필터 및 액션바 */}
+      {/* 상단 검색, 구분 필터, 0재고 제외 체크박스 및 액션바 */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', gap: '10px', flexWrap: 'wrap' }}>
-        <div style={{ display: 'flex', gap: '8px', flex: 1, maxWidth: '500px', flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', gap: '8px', flex: 1, maxWidth: '640px', flexWrap: 'wrap', alignItems: 'center' }}>
           <select 
             value={selectedCategory} 
             onChange={e => setSelectedCategory(e.target.value)} 
@@ -184,11 +191,22 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
 
           <input 
             type="text" 
-            placeholder="🔍 품명 또는 코드 검색..." 
+            placeholder="🔍 품번/코드 또는 품명 검색..." 
             value={searchTerm} 
             onChange={e => setSearchTerm(e.target.value)} 
-            style={{ ...inputStyle, flex: 1, padding: '11px 14px', minWidth: '200px' }} 
+            style={{ ...inputStyle, flex: 1, padding: '11px 14px', minWidth: '180px' }} 
           />
+
+          {/* 💡 잔여 재고 0인 항목 제외 체크박스 토글 버튼 */}
+          <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', fontWeight: '700', color: '#334155', cursor: 'pointer', whiteSpace: 'nowrap', backgroundColor: '#F1F5F9', padding: '10px 12px', borderRadius: '8px', border: '1px solid #CBD5E1' }}>
+            <input 
+              type="checkbox" 
+              checked={hideZeroStock} 
+              onChange={e => setHideZeroStock(e.target.checked)} 
+              style={{ width: '16px', height: '16px', cursor: 'pointer', accentColor: '#2563EB' }}
+            />
+            잔여 재고 0 제외
+          </label>
         </div>
         
         <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
@@ -217,7 +235,7 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
         <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '14px', tableLayout: 'fixed' }}>
           <thead>
             <tr style={{ backgroundColor: '#F8FAFC', borderBottom: '1px solid #E2E8F0', color: '#475569' }}>
-              <th style={{ padding: '14px 16px', width: '130px' }}>Ident No.</th>
+              <th style={{ padding: '14px 16px', width: '140px' }}>Ident No. (코드)</th>
               <th style={{ padding: '14px 16px', width: '200px' }}>ITEM (품명)</th>
               <th style={{ padding: '14px 16px', width: '100px' }}>구분</th>
               <th style={{ padding: '14px 16px', width: '90px', textAlign: 'center' }}>이월 재고</th>
@@ -235,7 +253,7 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
             ) : (
               filteredLedger.map(item => (
                 <tr key={item.id} style={{ borderBottom: '1px solid #F1F5F9', verticalAlign: 'middle' }}>
-                  <td style={{ padding: '12px 16px', fontWeight: '600', color: '#475569', wordBreak: 'break-all' }}>{item.code}</td>
+                  <td style={{ padding: '12px 16px', fontWeight: '800', color: '#2563EB', wordBreak: 'break-all' }}>{item.code}</td>
                   <td style={{ padding: '12px 16px', fontWeight: '700', color: '#0F172A', wordBreak: 'break-all' }}>{item.name}</td>
                   <td style={{ padding: '12px 16px' }}>
                     <span style={{ padding: '3px 8px', backgroundColor: '#F1F5F9', color: '#334155', borderRadius: '4px', fontSize: '11px', fontWeight: '700' }}>

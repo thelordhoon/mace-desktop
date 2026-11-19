@@ -5,18 +5,15 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
   const [ledgerData, setLedgerData] = useState([])
   const [loading, setLoading] = useState(false)
   const [searchTerm, setSearchTerm] = useState('')
-  const [selectedCategory, setSelectedCategory] = useState('ALL') // 구분별 필터 상태
-  const [hideZeroStock, setHideZeroStock] = useState(false) // 💡 잔여 재고 0인 항목 제외 필터 상태 추가
+  const [selectedCategory, setSelectedCategory] = useState('ALL')
+  const [hideZeroStock, setHideZeroStock] = useState(false)
   
-  // 상세 이력 모달 (드릴다운용)
   const [selectedItemHistory, setSelectedItemHistory] = useState(null)
   const [historyList, setHistoryList] = useState([])
 
-  // 데이터 집계 및 계산 (잉크·희석제 소모품 포함 - 품번/코드 기준 분리)
   const fetchLedgerSummary = async () => {
     setLoading(true)
     try {
-      // 1. delivery_history(입출고 내역) 가져오기
       const { data: historyData, error: histErr } = await supabase
         .from('delivery_history')
         .select('*')
@@ -24,21 +21,17 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
 
       if (histErr) throw histErr
 
-      // 2. part_stock_lots(로트별 입고 단가) 가져오기
       const { data: lotsData, error: lotsErr } = await supabase
         .from('part_stock_lots')
         .select('*')
 
       if (lotsErr) throw lotsErr
 
-      // 3. 전체 품목 매핑 및 수불부 집계 산출 (ID 및 품번/코드 기준 매칭 강화)
       const computed = (partsList || []).map(part => {
         const partLots = (lotsData || []).filter(l => String(l.part_id) === String(part.id))
-        const currentStock = part.is_serial_managed 
-          ? (tryParseSerials(part.serials).length) 
-          : (Number(part.stock) || 0)
+        const currentStock = Number(part.stock) || 0
+        const carryOverStock = Number(part.carry_over_stock) || 0
 
-        // 재고 금액 계산 (현재고 기준 로트별 단가 또는 대표 단가 적용)
         let totalAssetValue = 0
         if (part.is_serial_managed) {
           const serialsArr = tryParseSerials(part.serials)
@@ -60,7 +53,6 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
           }
         }
 
-        // 해당 부품의 고유 ID 및 코드를 최우선으로 하여 히스토리 필터링 (품명 중복 오매칭 원천 차단)
         const partHistories = (historyData || []).filter(h => {
           if (h.part_id && String(h.part_id) === String(part.id)) return true
           if (part.code && h.summary && h.summary.includes(`[${part.code}]`)) return true
@@ -71,18 +63,18 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
         let outboundQty = 0
 
         partHistories.forEach(h => {
-          if (h.type === 'INBOUND' || h.company_name?.includes('입고')) {
-            const match = h.summary?.match(/\((\d+)개\)/)
-            const qty = match ? parseInt(match[1]) : 1
-            inboundQty += qty
-          } else if (h.type === 'OUTBOUND' || h.company_name?.includes('출고')) {
+          if (h.type === 'OUTBOUND' || h.company_name?.includes('출고')) {
             const match = h.summary?.match(/\((\d+)개\)/)
             const qty = match ? parseInt(match[1]) : 1
             outboundQty += qty
           }
         })
 
-        const carryOverStock = Math.max(0, currentStock - inboundQty + outboundQty)
+        partLots.forEach(lot => {
+          if (lot.po_number && !lot.po_number.startsWith('SN-')) {
+            inboundQty += Number(lot.initial_qty) || 0
+          }
+        })
 
         return {
           id: part.id,
@@ -130,7 +122,7 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
   }
 
   const handleExportExcel = () => {
-    let csv = '\uFEFF' // UTF-8 BOM
+    let csv = '\uFEFF'
     csv += 'Ident No.,품명,구분,이월재고,입고수량,출고수량,현재고,재고금액(원)\n'
     
     filteredLedger.forEach(item => {
@@ -147,7 +139,6 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
     document.body.removeChild(a)
   }
 
-  // 💡 검색어, 구분 필터, 그리고 '잔여 재고 0인 항목 제외' 필터 적용
   const filteredLedger = ledgerData.filter(item => {
     const matchesSearch = !searchTerm.trim() || 
       item.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
@@ -163,7 +154,6 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
     return (a.name || '').localeCompare(b.name || '', 'ko-KR')
   })
 
-  // 동적으로 존재하는 구분(카테고리) 목록 추출 (중복 제거)
   const availableCategories = ['ALL', ...new Set(ledgerData.map(i => i.category).filter(Boolean))]
 
   const totalSumAssetValue = filteredLedger.reduce((acc, cur) => acc + (cur.assetValue || 0), 0)
@@ -175,7 +165,6 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
 
   return (
     <div style={{ padding: '4px' }}>
-      {/* 상단 검색, 구분 필터, 0재고 제외 체크박스 및 액션바 */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', gap: '10px', flexWrap: 'wrap' }}>
         <div style={{ display: 'flex', gap: '8px', flex: 1, maxWidth: '640px', flexWrap: 'wrap', alignItems: 'center' }}>
           <select 
@@ -197,7 +186,6 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
             style={{ ...inputStyle, flex: 1, padding: '11px 14px', minWidth: '180px' }} 
           />
 
-          {/* 💡 잔여 재고 0인 항목 제외 체크박스 토글 버튼 */}
           <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', fontWeight: '700', color: '#334155', cursor: 'pointer', whiteSpace: 'nowrap', backgroundColor: '#F1F5F9', padding: '10px 12px', borderRadius: '8px', border: '1px solid #CBD5E1' }}>
             <input 
               type="checkbox" 
@@ -230,7 +218,6 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
         </div>
       </div>
 
-      {/* 수불부 메인 테이블 */}
       <div style={{ backgroundColor: '#ffffff', borderRadius: '16px', border: '1px solid #E2E8F0', overflow: 'hidden', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.02)' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '14px', tableLayout: 'fixed' }}>
           <thead>
@@ -262,7 +249,6 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
                   </td>
                   <td style={{ padding: '12px 16px', textAlign: 'center', fontWeight: '600', color: '#64748B' }}>{item.carryOver}</td>
                   
-                  {/* 입고수량 클릭 시 상세 드릴다운 */}
                   <td style={{ padding: '12px 16px', textAlign: 'center' }}>
                     <button 
                       type="button" 
@@ -273,7 +259,6 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
                     </button>
                   </td>
 
-                  {/* 출고수량 클릭 시 상세 드릴다운 */}
                   <td style={{ padding: '12px 16px', textAlign: 'center' }}>
                     <button 
                       type="button" 
@@ -290,7 +275,6 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
                     </span>
                   </td>
 
-                  {/* 재고 금액 (자산 평가액) */}
                   <td style={{ padding: '12px 16px', textAlign: 'right', fontWeight: '800', color: '#059669', backgroundColor: '#F0FDF4' }}>
                     {item.assetValue ? item.assetValue.toLocaleString() : 0} 원
                   </td>
@@ -301,7 +285,6 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
         </table>
       </div>
 
-      {/* 드릴다운 상세 이력 팝업 모달 */}
       {selectedItemHistory && (
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.6)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1100, padding: '20px' }}>
           <div style={{ backgroundColor: '#ffffff', borderRadius: '16px', padding: '24px', width: '700px', maxWidth: '95vw', maxHeight: '85vh', overflowY: 'auto', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)' }}>

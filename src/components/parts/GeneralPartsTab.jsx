@@ -24,10 +24,9 @@ export default function GeneralPartsTab({ partsList, refreshParts, showAddForm, 
   const [partCategory, setPartCategory] = useState('일반부품')
   const [dealerPrice, setDealerPrice] = useState(0)
   const [customerPrice, setCustomerPrice] = useState(0)
-  const [unitPrice, setUnitPrice] = useState(0)
   const [partNote, setPartNote] = useState('')
   const [isSerialManaged, setIsSerialManaged] = useState(false)
-  const [initialStock, setInitialStock] = useState(0)
+  const [carryOverStock, setCarryOverStock] = useState(0)
   const [serials, setSerials] = useState([])
   const [imageFile, setImageFile] = useState(null)
 
@@ -37,13 +36,18 @@ export default function GeneralPartsTab({ partsList, refreshParts, showAddForm, 
   const [quantityStockPart, setQuantityStockPart] = useState(null)
   const [qtyChangeAmount, setQtyChangeAmount] = useState(1)
   const [qtyChangeType, setQtyChangeType] = useState('IN')
-  const [qtyUnitPrice, setQtyUnitPrice] = useState(0)
+  const [qtyPoNumber, setQtyPoNumber] = useState('')
+  const [qtyImportDate, setQtyImportDate] = useState(new Date().toISOString().split('T')[0])
   const [qtyNote, setQtyNote] = useState('')
+
+  const [lotCheckPart, setLotCheckPart] = useState(null)
+  const [partLotsList, setPartLotsList] = useState([])
+  const [lotPriceInputs, setLotPriceInputs] = useState({})
 
   const [previewImage, setPreviewImage] = useState(null)
 
   const [editingPart, setEditingPart] = useState(null)
-  const [editForm, setEditForm] = useState({ name: '', code: '', category: '일반부품', customer_price: 0, dealer_price: 0, unit_price: 0, note: '', is_serial_managed: false, stock: 0 })
+  const [editForm, setEditForm] = useState({ name: '', code: '', category: '일반부품', customer_price: 0, dealer_price: 0, note: '', is_serial_managed: false, carry_over_stock: 0, stock: 0 })
   const [editImageFile, setEditImageFile] = useState(null)
 
   const [isInternalIssueModalOpen, setIsInternalIssueModalOpen] = useState(false)
@@ -67,6 +71,22 @@ export default function GeneralPartsTab({ partsList, refreshParts, showAddForm, 
   const fetchCompanies = async () => {
     const { data } = await supabase.from('companies').select('*').order('name', { ascending: true })
     if (data) setCompanies(data)
+  }
+
+  const handleOpenLotCheck = async (part) => {
+    setLotCheckPart(part)
+    setLotPriceInputs({})
+    const { data, error } = await supabase
+      .from('part_stock_lots')
+      .select('*')
+      .eq('part_id', part.id)
+      .order('import_date', { ascending: false })
+
+    if (!error && data) {
+      setPartLotsList(data)
+    } else {
+      setPartLotsList([])
+    }
   }
 
   const inputStyle = {
@@ -98,18 +118,17 @@ export default function GeneralPartsTab({ partsList, refreshParts, showAddForm, 
 
     let calculatedStock = 0
     let validSerials = []
-    const baseUnitPrice = Number(unitPrice) || 0
+    const carryOver = Number(carryOverStock) || 0
 
     if (isSerialManaged) {
       validSerials = (serials || []).filter(s => s && s.sn && s.sn.trim() !== '').map(s => ({
-        sn: s.sn.trim(),
+        sn: s.sn.trim().replace(/^SN-/i, ''),
         condition: s.condition || 'BG',
-        received_date: s.received_date || new Date().toISOString().split('T')[0],
-        unit_price: Number(s.unit_price || baseUnitPrice)
+        received_date: s.received_date || new Date().toISOString().split('T')[0]
       }))
-      calculatedStock = validSerials.length
+      calculatedStock = validSerials.length + carryOver
     } else {
-      calculatedStock = Number(initialStock) || 0
+      calculatedStock = carryOver
     }
 
     const { data: insertedPart, error } = await supabase.from('parts').insert([{
@@ -118,8 +137,9 @@ export default function GeneralPartsTab({ partsList, refreshParts, showAddForm, 
       category: partCategory,
       dealer_price: Number(dealerPrice),
       customer_price: Number(customerPrice),
-      unit_price: baseUnitPrice,
+      unit_price: 0,
       stock: calculatedStock,
+      carry_over_stock: carryOver,
       serials: JSON.stringify(validSerials),
       lots: JSON.stringify([]),
       image_url: imageUrl,
@@ -135,26 +155,17 @@ export default function GeneralPartsTab({ partsList, refreshParts, showAddForm, 
             part_id: insertedPart.id,
             po_number: `SN-${s.sn} (${s.condition})`,
             import_date: s.received_date,
-            unit_price: s.unit_price,
+            unit_price: 0,
             initial_qty: 1,
             current_qty: 1
           }])
         }
-      } else if (!isSerialManaged && calculatedStock > 0) {
-        await supabase.from('part_stock_lots').insert([{
-          part_id: insertedPart.id,
-          po_number: '최초등록재고',
-          import_date: new Date().toISOString().split('T')[0],
-          unit_price: baseUnitPrice,
-          initial_qty: calculatedStock,
-          current_qty: calculatedStock
-        }])
       }
     }
 
     if (!error) {
       alert('신규 부품이 정상 등록되었습니다.')
-      setPartName(''); setPartCode(''); setPartNote(''); setSerials([]); setImageFile(null); setIsSerialManaged(false); setInitialStock(0); setUnitPrice(0); setDealerPrice(0); setCustomerPrice(0); setShowAddForm(false)
+      setPartName(''); setPartCode(''); setPartNote(''); setSerials([]); setImageFile(null); setIsSerialManaged(false); setCarryOverStock(0); setDealerPrice(0); setCustomerPrice(0); setShowAddForm(false)
       refreshParts()
     } else {
       alert('등록 실패: ' + error.message)
@@ -171,20 +182,21 @@ export default function GeneralPartsTab({ partsList, refreshParts, showAddForm, 
       if (uploadedUrl) imageUrl = uploadedUrl
     }
 
+    const newCarryOver = Number(editForm.carry_over_stock) || 0
+    const diffCarry = newCarryOver - (Number(editingPart.carry_over_stock) || 0)
+    const updatedStock = (Number(editingPart.stock) || 0) + diffCarry
+
     const updatePayload = {
       name: editForm.name.trim(),
       code: editForm.code.trim(),
-      category: editForm.category, // 💡 수정 모달에서 선택한 구분(카테고리) 반영
+      category: editForm.category,
       customer_price: Number(editForm.customer_price),
       dealer_price: Number(editForm.dealer_price),
-      unit_price: Number(editForm.unit_price || 0),
       note: editForm.note,
       is_serial_managed: editForm.is_serial_managed,
+      carry_over_stock: newCarryOver,
+      stock: updatedStock,
       image_url: imageUrl
-    }
-
-    if (!editForm.is_serial_managed) {
-      updatePayload.stock = Number(editForm.stock) || 0
     }
 
     const { error } = await supabase.from('parts').update(updatePayload).eq('id', editingPart.id)
@@ -211,126 +223,63 @@ export default function GeneralPartsTab({ partsList, refreshParts, showAddForm, 
     }
   }
 
-  const handleDeleteDeliveryHistory = async (historyId) => {
-    if (!window.confirm('이 출고 내역을 삭제하시겠습니까? (출고된 부품 재고가 원래대로 원복됩니다)')) return
-
-    const { data: historyData, error: fetchErr } = await supabase
-      .from('delivery_history')
-      .select('*')
-      .eq('id', historyId)
-      .single()
-
-    if (fetchErr || !historyData) {
-      return alert('출고 내역을 찾을 수 없습니다.')
-    }
-
-    try {
-      const noteStr = historyData.note || ''
-      const match = noteStr.match(/\[DELIVERY_DETAILS:(.*?)\]/)
-      if (match && match[1]) {
-        const details = JSON.parse(match[1])
-        if (details && details.items) {
-          for (const item of details.items) {
-            const { data: partObj } = await supabase
-              .from('parts')
-              .select('*')
-              .eq('code', item.code)
-              .single()
-
-            if (partObj) {
-              if (item.isSerial && item.selectedSn) {
-                let parsedSerials = []
-                try {
-                  parsedSerials = partObj.serials ? (typeof partObj.serials === 'string' ? JSON.parse(partObj.serials) : partObj.serials) : []
-                } catch (e) { parsedSerials = [] }
-
-                if (!parsedSerials.some(s => s.sn === item.selectedSn)) {
-                  parsedSerials.push({ sn: item.selectedSn, condition: 'BG', received_date: new Date().toISOString().split('T')[0], unit_price: partObj.unit_price || 0 })
-                }
-
-                await supabase.from('parts').update({
-                  stock: parsedSerials.length,
-                  serials: JSON.stringify(parsedSerials)
-                }).eq('id', partObj.id)
-
-                await supabase.from('part_stock_lots').update({ current_qty: 1 }).eq('part_id', partObj.id).eq('po_number', `SN-${item.selectedSn} (BG)`)
-              } else {
-                const restoreQty = Number(item.quantity) || 1
-                const newStock = (Number(partObj.stock) || 0) + restoreQty
-
-                await supabase.from('parts').update({
-                  stock: newStock
-                }).eq('id', partObj.id)
-              }
-            }
-          }
-        }
-      }
-    } catch (e) {
-      console.error('재고 자동 원복 중 오류 발생:', e)
-    }
-
-    const { error: deleteErr } = await supabase
-      .from('delivery_history')
-      .delete()
-      .eq('id', historyId)
-
-    if (deleteErr) {
-      alert('출고 내역 삭제 실패: ' + deleteErr.message)
-    } else {
-      alert('출고 내역이 삭제되었으며, 부품 재고가 정상적으로 원복되었습니다.')
-      refreshParts()
-    }
-  }
-
   const handleQuantityStockChange = async (e) => {
     e.preventDefault()
     if (!quantityStockPart) return
     const amount = Number(qtyChangeAmount) || 0
     if (amount <= 0) return alert('수량을 올바르게 입력해주세요!')
-    const priceNum = Number(qtyUnitPrice) || 0
 
     const currentStock = Number(quantityStockPart.stock) || 0
     let newStock = currentStock
 
     if (qtyChangeType === 'IN') {
       newStock += amount
-      if (priceNum <= 0) return alert('입고 시 단가(원가)를 입력해주세요!')
+      const lotPoNumber = qtyPoNumber.trim() || `LOT-${Date.now().toString().slice(-6)}`
+      const lotImportDate = qtyImportDate || new Date().toISOString().split('T')[0]
 
       await supabase.from('part_stock_lots').insert([{
         part_id: quantityStockPart.id,
-        po_number: `LOT-QTY-${Date.now().toString().slice(-6)}`,
-        import_date: new Date().toISOString().split('T')[0],
-        unit_price: priceNum,
+        po_number: lotPoNumber,
+        import_date: lotImportDate,
+        unit_price: 0,
         initial_qty: amount,
         current_qty: amount
+      }])
+
+      await supabase.from('delivery_history').insert([{
+        date: lotImportDate,
+        company_name: '본사 창고 (입고)',
+        equipment_sn: '-',
+        summary: `[${quantityStockPart.code}] ${quantityStockPart.name} (${amount}개)`,
+        author: currentLoggedInName,
+        note: `LOT/PO: ${lotPoNumber} / ${qtyNote || '수량 입고'}`,
+        type: 'INBOUND',
+        part_id: quantityStockPart.id
       }])
     } else {
       if (currentStock < amount) return alert('현재 재고보다 출고 수량이 많습니다!')
       newStock -= amount
+
+      await supabase.from('delivery_history').insert([{
+        date: new Date().toISOString().split('T')[0],
+        company_name: '일반 출고',
+        equipment_sn: '-',
+        summary: `[${quantityStockPart.code}] ${quantityStockPart.name} (${amount}개)`,
+        author: currentLoggedInName,
+        note: qtyNote || '수량 출고',
+        type: 'OUTBOUND',
+        part_id: quantityStockPart.id
+      }])
     }
 
-    const updatePayload = { stock: newStock }
-
-    const { error } = await supabase.from('parts').update(updatePayload).eq('id', quantityStockPart.id)
+    const { error } = await supabase.from('parts').update({ stock: newStock }).eq('id', quantityStockPart.id)
     if (error) return alert('재고 변경 실패: ' + error.message)
 
-    const partCodeStr = quantityStockPart.code ? `[${quantityStockPart.code}] ` : ''
-    await supabase.from('delivery_history').insert([{
-      date: new Date().toISOString().split('T')[0],
-      company_name: qtyChangeType === 'IN' ? '본사 창고 (입고)' : '수량 출고',
-      equipment_sn: '-',
-      summary: `${partCodeStr}${quantityStockPart.name} (${amount}개)` + (qtyChangeType === 'IN' ? ` / 입고단가: ${priceNum.toLocaleString()}원` : ''),
-      author: currentLoggedInName,
-      note: qtyNote || (qtyChangeType === 'IN' ? `수량 입고 (입고단가: ${priceNum.toLocaleString()}원)` : '수량 출고'),
-      type: qtyChangeType === 'IN' ? 'INBOUND' : 'OUTBOUND',
-      part_id: quantityStockPart.id
-    }])
-
-    alert(qtyChangeType === 'IN' ? '수량 및 입고 단가별 로트(Lot)가 정상 적립되었습니다. (기존 대표 단가는 유지됩니다)' : '수량이 출고되었습니다.')
+    alert(qtyChangeType === 'IN' ? '입고 처리되어 수불부 및 발행 이력에 반영되었습니다.' : '수량이 출고되었습니다.')
     setQuantityStockPart(null)
     setQtyChangeAmount(1)
-    setQtyUnitPrice(0)
+    setQtyPoNumber('')
+    setQtyImportDate(new Date().toISOString().split('T')[0])
     setQtyNote('')
     refreshParts()
   }
@@ -375,7 +324,7 @@ export default function GeneralPartsTab({ partsList, refreshParts, showAddForm, 
         await supabase.from('part_stock_lots').update({ current_qty: 0 }).eq('part_id', partObj.id).eq('po_number', `SN-${item.selectedSn} (OH)`)
       } else {
         const amt = Number(item.quantity) || 1
-        if (newStock < amt) return alert(`[${partObj.name}] 부품의 재고가 부족합니다! (현재고: ${newStock}개)`)
+        if (newStock < amt) return alert(`[${partObj.name}] 부품의 재고가 부족합니다!`)
         newStock -= amt
         summaryPartsList.push(`${partObj.name} (${amt}개)`)
       }
@@ -470,8 +419,8 @@ export default function GeneralPartsTab({ partsList, refreshParts, showAddForm, 
               <div><label style={labelStyle}>소비자 기본가 (원)</label><input type="number" value={customerPrice} onChange={e => setCustomerPrice(e.target.value)} style={inputStyle} /></div>
               <div><label style={labelStyle}>딜러 기본가 (원)</label><input type="number" value={dealerPrice} onChange={e => setDealerPrice(e.target.value)} style={inputStyle} /></div>
               <div>
-                <label style={{ ...labelStyle, color: '#2563EB' }}>💰 대표 기준 단가 (원)</label>
-                <input type="number" value={unitPrice} onChange={e => setUnitPrice(e.target.value)} style={{ ...inputStyle, fontWeight: '700', color: '#2563EB', backgroundColor: '#EFF6FF', border: '1px solid #93C5FD' }} />
+                <label style={{ ...labelStyle, color: '#2563EB' }}>📦 이월 재고 (기초)*</label>
+                <input type="number" min="0" value={carryOverStock} onChange={e => setCarryOverStock(e.target.value)} style={{ ...inputStyle, fontWeight: '700', backgroundColor: '#EFF6FF', border: '1px solid #BFDBFE' }} />
               </div>
               <div><label style={labelStyle}>📌 비고</label><input placeholder="특이사항 입력..." value={partNote} onChange={e => setPartNote(e.target.value)} style={inputStyle} /></div>
             </div>
@@ -484,11 +433,11 @@ export default function GeneralPartsTab({ partsList, refreshParts, showAddForm, 
                 </label>
               </div>
               {isSerialManaged && (
-                <button type="button" onClick={() => setSerials([...serials, { sn: '', condition: 'BG', unit_price: unitPrice }])} style={{ border: 'none', background: '#2563EB', color: '#fff', padding: '4px 10px', borderRadius: '6px', fontSize: '11px', fontWeight: '700', cursor: 'pointer' }}>+ S/N 추가</button>
+                <button type="button" onClick={() => setSerials([...serials, { sn: '', condition: 'BG', received_date: new Date().toISOString().split('T')[0] }])} style={{ border: 'none', background: '#2563EB', color: '#fff', padding: '4px 10px', borderRadius: '6px', fontSize: '11px', fontWeight: '700', cursor: 'pointer' }}>+ S/N 추가</button>
               )}
             </div>
 
-            {isSerialManaged ? (
+            {isSerialManaged && (
               (serials || []).length > 0 && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '130px', overflowY: 'auto' }}>
                   {serials.map((s, idx) => (
@@ -503,19 +452,14 @@ export default function GeneralPartsTab({ partsList, refreshParts, showAddForm, 
                         <option value="EX">EX (수리)</option>
                         <option value="OH">OH (중고)</option>
                       </select>
-                      <input type="number" placeholder="개별 단가" value={s.unit_price} onChange={e => {
-                        const updated = [...serials]; updated[idx].unit_price = e.target.value; setSerials(updated);
-                      }} style={{ ...inputStyle, flex: 1, padding: '6px 10px', color: '#059669', fontWeight: '700' }} />
+                      <input type="date" value={s.received_date} onChange={e => {
+                        const updated = [...serials]; updated[idx].received_date = e.target.value; setSerials(updated);
+                      }} style={{ ...inputStyle, flex: 1, padding: '6px 10px', fontSize: '11px' }} />
                       <button type="button" onClick={() => setSerials(serials.filter((_, i) => i !== idx))} style={{ border: 'none', background: 'none', color: '#EF4444', fontSize: '13px', cursor: 'pointer' }}>✕</button>
                     </div>
                   ))}
                 </div>
               )
-            ) : (
-              <div style={{ maxWidth: '200px' }}>
-                <label style={labelStyle}>최초 보유 수량 (Stock)</label>
-                <input type="number" min="0" value={initialStock} onChange={e => setInitialStock(e.target.value)} style={inputStyle} />
-              </div>
             )}
 
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '4px' }}>
@@ -545,10 +489,10 @@ export default function GeneralPartsTab({ partsList, refreshParts, showAddForm, 
               <th style={{ padding: '14px 16px', width: '100px' }}>구분</th>
               <th style={{ padding: '14px 16px', width: '140px' }}>Ident No.</th>
               <th style={{ padding: '14px 16px', width: '180px' }}>품명</th>
-              <th style={{ padding: '14px 16px', width: '100px' }}>재고 수량</th>
+              <th style={{ padding: '14px 16px', width: '180px' }}>재고 수량 및 로트</th>
               <th style={{ padding: '14px 16px', width: '100px' }}>딜러가</th>
               <th style={{ padding: '14px 16px', width: '100px' }}>소비자가</th>
-              <th style={{ padding: '14px 16px', width: '150px', textAlign: 'center' }}>입고 및 S/N 관리</th>
+              <th style={{ padding: '14px 16px', width: '110px', textAlign: 'center' }}>입·출고</th>
               <th style={{ padding: '14px 16px', width: '90px', textAlign: 'center' }}>관리</th>
             </tr>
           </thead>
@@ -563,7 +507,7 @@ export default function GeneralPartsTab({ partsList, refreshParts, showAddForm, 
                   parsedSerials = Array.isArray(temp) ? temp : []
                 } catch (e) {}
 
-                const totalStock = p.is_serial_managed ? parsedSerials.length : (Number(p.stock) || 0)
+                const totalStock = Number(p.stock) || 0
 
                 return (
                   <tr key={p.id} style={{ borderBottom: '1px solid #F1F5F9', verticalAlign: 'middle' }}>
@@ -586,9 +530,12 @@ export default function GeneralPartsTab({ partsList, refreshParts, showAddForm, 
                     <td style={{ padding: '12px 16px', fontWeight: '700', color: '#0F172A', wordBreak: 'break-all' }}>{p.name}</td>
                     
                     <td style={{ padding: '12px 16px' }}>
-                      <span style={{ fontWeight: '800', fontSize: '14px', color: '#0F172A', backgroundColor: '#F8FAFC', padding: '3px 10px', borderRadius: '6px', border: '1px solid #CBD5E1' }}>
-                        {totalStock} 개
-                      </span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <span style={{ fontWeight: '800', fontSize: '14px', color: '#0F172A' }}>{totalStock} 개</span>
+                        <button type="button" onClick={() => handleOpenLotCheck(p)} style={{ border: 'none', background: '#F0FDF4', color: '#166534', padding: '3px 6px', borderRadius: '6px', fontSize: '11px', fontWeight: '700', cursor: 'pointer' }}>
+                          ⏳ 로트확인 🔍
+                        </button>
+                      </div>
                     </td>
 
                     <td style={{ padding: '12px 16px', fontWeight: '700', color: '#D97706' }}>{p.dealer_price ? Number(p.dealer_price).toLocaleString() : 0} 원</td>
@@ -596,11 +543,15 @@ export default function GeneralPartsTab({ partsList, refreshParts, showAddForm, 
                     
                     <td style={{ padding: '12px 16px', textAlign: 'center' }}>
                       {p.is_serial_managed ? (
-                        <button type="button" onClick={() => { setSelectedSerialPart(p); setEditableSerials(parsedSerials); }} style={{ border: 'none', background: '#EFF6FF', color: '#2563EB', padding: '6px 12px', borderRadius: '6px', fontSize: '11px', fontWeight: '800', cursor: 'pointer', boxShadow: '0 1px 2px rgba(0,0,0,0.05)' }}>
-                          ✏️ S/N 관리 ({parsedSerials.length})
+                        <button type="button" onClick={() => { setSelectedSerialPart(p); setEditableSerials(parsedSerials); }} style={{ border: 'none', background: '#EFF6FF', color: '#2563EB', padding: '6px 12px', borderRadius: '6px', fontSize: '11px', fontWeight: '800', cursor: 'pointer' }}>
+                          ✏️ S/N 관리
                         </button>
                       ) : (
-                        <button type="button" onClick={() => setQuantityStockPart(p)} style={{ background: '#2563EB', color: '#fff', border: 'none', padding: '6px 12px', borderRadius: '6px', fontSize: '11px', fontWeight: '700', cursor: 'pointer' }}>
+                        <button type="button" onClick={() => {
+                          setQuantityStockPart(p)
+                          setQtyPoNumber('')
+                          setQtyImportDate(new Date().toISOString().split('T')[0])
+                        }} style={{ background: '#2563EB', color: '#fff', border: 'none', padding: '6px 12px', borderRadius: '6px', fontSize: '11px', fontWeight: '700', cursor: 'pointer' }}>
                           + 수량 입·출고
                         </button>
                       )}
@@ -616,9 +567,9 @@ export default function GeneralPartsTab({ partsList, refreshParts, showAddForm, 
                             category: p.category || '일반부품', 
                             customer_price: p.customer_price || 0, 
                             dealer_price: p.dealer_price || 0, 
-                            unit_price: p.unit_price || 0, 
                             note: p.note || '', 
                             is_serial_managed: !!p.is_serial_managed, 
+                            carry_over_stock: p.carry_over_stock || 0,
                             stock: p.stock || 0 
                           })
                           setEditImageFile(null)
@@ -641,9 +592,9 @@ export default function GeneralPartsTab({ partsList, refreshParts, showAddForm, 
       {/* S/N 관리 모달 */}
       {selectedSerialPart && (
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.6)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1100, padding: '20px' }}>
-          <div style={{ backgroundColor: '#ffffff', borderRadius: '16px', padding: '24px', width: '640px', maxHeight: '85vh', overflowY: 'auto', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)' }}>
+          <div style={{ backgroundColor: '#ffffff', borderRadius: '16px', padding: '24px', width: '600px', maxHeight: '85vh', overflowY: 'auto', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', borderBottom: '1px solid #E2E8F0', paddingBottom: '10px' }}>
-              <h3 style={{ margin: 0, fontSize: '16px', fontWeight: '800', color: '#0F172A' }}>🏷️ S/N별 상태(BG/EX/OH) 및 원가 관리</h3>
+              <h3 style={{ margin: 0, fontSize: '16px', fontWeight: '800', color: '#0F172A' }}>🏷️ S/N별 상태(BG/EX/OH) 관리</h3>
               <button type="button" onClick={() => setSelectedSerialPart(null)} style={{ border: 'none', background: 'none', fontSize: '16px', color: '#64748B', cursor: 'pointer', fontWeight: 'bold' }}>✕</button>
             </div>
             <div style={{ fontSize: '13px', color: '#2563EB', fontWeight: '700', marginBottom: '14px' }}>{selectedSerialPart.code} - {selectedSerialPart.name}</div>
@@ -651,31 +602,22 @@ export default function GeneralPartsTab({ partsList, refreshParts, showAddForm, 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '340px', overflowY: 'auto', marginBottom: '16px', paddingRight: '4px' }}>
               {(editableSerials || []).map((s, idx) => (
                 <div key={idx} style={{ backgroundColor: '#F8FAFC', padding: '12px', borderRadius: '10px', border: '1px solid #E2E8F0', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: '8px', alignItems: 'center' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr 1.2fr 36px', gap: '8px', alignItems: 'center' }}>
                     <div>
-                      <span style={{ fontSize: '11px', fontWeight: '700', color: '#475569', display: 'block', marginBottom: '3px' }}>📌 S/N (시리얼 번호)</span>
-                      <input type="text" placeholder="예: LJ-000000" value={s.sn} onChange={e => {
-                        const updated = [...editableSerials]; updated[idx].sn = e.target.value; setEditableSerials(updated);
+                      <span style={{ fontSize: '11px', fontWeight: '700', color: '#475569', display: 'block', marginBottom: '3px' }}>📌 S/N 번호</span>
+                      <input type="text" placeholder="예: LJ-300001" value={s.sn} onChange={e => {
+                        const updated = [...editableSerials]; updated[idx].sn = e.target.value.replace(/^SN-/i, ''); setEditableSerials(updated);
                       }} style={{ ...inputStyle, backgroundColor: '#ffffff', height: '38px' }} />
                     </div>
                     <div>
-                      <span style={{ fontSize: '11px', fontWeight: '700', color: '#475569', display: 'block', marginBottom: '3px' }}>🏷️ 상태 구분</span>
+                      <span style={{ fontSize: '11px', fontWeight: '700', color: '#475569', display: 'block', marginBottom: '3px' }}>🏷️ 상태</span>
                       <select value={s.condition || 'BG'} onChange={e => {
                         const updated = [...editableSerials]; updated[idx].condition = e.target.value; setEditableSerials(updated);
-                      }} style={{ ...inputStyle, backgroundColor: '#ffffff', height: '38px', fontWeight: '700', color: s.condition === 'BG' ? '#059669' : s.condition === 'EX' ? '#2563EB' : '#D97706' }}>
+                      }} style={{ ...inputStyle, backgroundColor: '#ffffff', height: '38px', fontWeight: '700' }}>
                         <option value="BG">BG (신품)</option>
                         <option value="EX">EX (수리)</option>
                         <option value="OH">OH (중고)</option>
                       </select>
-                    </div>
-                  </div>
-
-                  <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1.2fr 36px', gap: '8px', alignItems: 'flex-end' }}>
-                    <div>
-                      <span style={{ fontSize: '11px', fontWeight: '700', color: '#059669', display: 'block', marginBottom: '3px' }}>💰 개별 원가 (결산용)</span>
-                      <input type="number" placeholder="금액 입력" value={s.unit_price ?? selectedSerialPart.unit_price ?? 0} onChange={e => {
-                        const updated = [...editableSerials]; updated[idx].unit_price = Number(e.target.value); setEditableSerials(updated);
-                      }} style={{ ...inputStyle, backgroundColor: '#ffffff', height: '38px', color: '#059669', fontWeight: '700' }} />
                     </div>
                     <div>
                       <span style={{ fontSize: '11px', fontWeight: '700', color: '#475569', display: 'block', marginBottom: '3px' }}>📅 입고일자</span>
@@ -683,12 +625,12 @@ export default function GeneralPartsTab({ partsList, refreshParts, showAddForm, 
                         const updated = [...editableSerials]; updated[idx].received_date = e.target.value; setEditableSerials(updated);
                       }} style={{ ...inputStyle, backgroundColor: '#ffffff', height: '38px', fontSize: '12px' }} />
                     </div>
-                    <button type="button" onClick={() => setEditableSerials(editableSerials.filter((_, i) => i !== idx))} style={{ border: 'none', background: '#FEE2E2', color: '#EF4444', height: '38px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>✕</button>
+                    <button type="button" onClick={() => setEditableSerials(editableSerials.filter((_, i) => i !== idx))} style={{ border: 'none', background: '#FEE2E2', color: '#EF4444', height: '38px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', marginTop: '16px' }}>✕</button>
                   </div>
                 </div>
               ))}
 
-              <button type="button" onClick={() => setEditableSerials([...editableSerials, { sn: '', condition: 'BG', received_date: new Date().toISOString().split('T')[0], unit_price: selectedSerialPart.unit_price || 0 }])} style={{ background: '#EFF6FF', color: '#2563EB', border: '1px dashed #BFDBFE', padding: '12px', borderRadius: '10px', fontWeight: '800', fontSize: '13px', cursor: 'pointer', marginTop: '4px' }}>
+              <button type="button" onClick={() => setEditableSerials([...editableSerials, { sn: '', condition: 'BG', received_date: new Date().toISOString().split('T')[0] }])} style={{ background: '#EFF6FF', color: '#2563EB', border: '1px dashed #BFDBFE', padding: '12px', borderRadius: '10px', fontWeight: '800', fontSize: '13px', cursor: 'pointer', marginTop: '4px' }}>
                 + 신규 S/N 추가 입고
               </button>
             </div>
@@ -696,34 +638,24 @@ export default function GeneralPartsTab({ partsList, refreshParts, showAddForm, 
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', borderTop: '1px solid #E2E8F0', paddingTop: '14px' }}>
               <button type="button" onClick={() => setSelectedSerialPart(null)} style={{ padding: '10px 18px', background: '#F1F5F9', border: '1px solid #CBD5E1', borderRadius: '8px', fontWeight: '600', cursor: 'pointer' }}>취소</button>
               <button type="button" onClick={async () => {
-                const validSerials = editableSerials.filter(s => s && s.sn && s.sn.trim() !== '')
+                const validSerials = editableSerials.filter(s => s && s.sn && s.sn.trim() !== '').map(s => ({
+                  ...s,
+                  sn: s.sn.replace(/^SN-/i, '')
+                }))
 
                 const { error } = await supabase.from('parts').update({
                   serials: JSON.stringify(validSerials),
-                  stock: validSerials.length
+                  stock: (Number(selectedSerialPart.carry_over_stock) || 0) + validSerials.length
                 }).eq('id', selectedSerialPart.id)
 
                 if (error) {
                   return alert('저장 실패: ' + error.message)
                 }
 
-                await supabase.from('part_stock_lots').delete().eq('part_id', selectedSerialPart.id)
-
-                for (const s of validSerials) {
-                  await supabase.from('part_stock_lots').insert([{
-                    part_id: selectedSerialPart.id,
-                    po_number: `SN-${s.sn} (${s.condition})`,
-                    import_date: s.received_date || new Date().toISOString().split('T')[0],
-                    unit_price: Number(s.unit_price || selectedSerialPart.unit_price || 0),
-                    initial_qty: 1,
-                    current_qty: 1
-                  }])
-                }
-
-                alert('S/N별 상태 및 결산용 원가 정보가 성공적으로 반영되었습니다.')
+                alert('S/N별 상태 정보가 성공적으로 반영되었습니다.')
                 setSelectedSerialPart(null)
                 refreshParts()
-              }} style={{ padding: '10px 22px', background: '#2563EB', color: 'white', border: 'none', borderRadius: '8px', fontWeight: '800', cursor: 'pointer' }}>저장 및 결산 반영</button>
+              }} style={{ padding: '10px 22px', background: '#2563EB', color: 'white', border: 'none', borderRadius: '8px', fontWeight: '800', cursor: 'pointer' }}>저장하기</button>
             </div>
           </div>
         </div>
@@ -732,7 +664,7 @@ export default function GeneralPartsTab({ partsList, refreshParts, showAddForm, 
       {/* 수량 입·출고 모달 */}
       {quantityStockPart && (
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.6)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1100, padding: '20px' }}>
-          <div style={{ backgroundColor: '#ffffff', borderRadius: '16px', padding: '24px', width: '400px', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)' }}>
+          <div style={{ backgroundColor: '#ffffff', borderRadius: '16px', padding: '24px', width: '420px', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', borderBottom: '1px solid #E2E8F0', paddingBottom: '10px' }}>
               <h3 style={{ margin: 0, fontSize: '16px', fontWeight: '800', color: '#0F172A' }}>📦 수량 입·출고 처리</h3>
               <button type="button" onClick={() => setQuantityStockPart(null)} style={{ border: 'none', background: 'none', fontSize: '16px', color: '#64748B', cursor: 'pointer', fontWeight: 'bold' }}>✕</button>
@@ -747,14 +679,22 @@ export default function GeneralPartsTab({ partsList, refreshParts, showAddForm, 
                   <option value="OUTBOUND">출고 (-)</option>
                 </select>
               </div>
+
               <div><label style={labelStyle}>수량*</label><input type="number" min="1" value={qtyChangeAmount} onChange={e => setQtyChangeAmount(e.target.value)} style={inputStyle} required /></div>
+
               {qtyChangeType === 'IN' && (
-                <div>
-                  <label style={{ ...labelStyle, color: '#059669' }}>💰 입고 단가 / 원가 (결산용)*</label>
-                  <input type="number" placeholder="예: 2000" value={qtyUnitPrice} onChange={e => setQtyUnitPrice(e.target.value)} style={{ ...inputStyle, fontWeight: '700', color: '#059669', backgroundColor: '#ECFDF5', border: '1px solid #A7F3D0' }} required />
-                  <span style={{ fontSize: '11px', color: '#64748B', marginTop: '3px', display: 'block' }}>* 입고 시 해당 단가는 결산(로트)용으로만 적립되며, 기존 대표 단가는 유지됩니다.</span>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                  <div>
+                    <label style={labelStyle}>입고 날짜*</label>
+                    <input type="date" value={qtyImportDate} onChange={e => setQtyImportDate(e.target.value)} style={inputStyle} required />
+                  </div>
+                  <div>
+                    <label style={labelStyle}>LOT 번호 / P.O.*</label>
+                    <input type="text" placeholder="예: LOT-2026-001" value={qtyPoNumber} onChange={e => setQtyPoNumber(e.target.value)} style={inputStyle} required />
+                  </div>
                 </div>
               )}
+
               <div><label style={labelStyle}>비고 및 메모</label><input type="text" placeholder="사유 입력..." value={qtyNote} onChange={e => setQtyNote(e.target.value)} style={inputStyle} /></div>
 
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '10px' }}>
@@ -762,6 +702,112 @@ export default function GeneralPartsTab({ partsList, refreshParts, showAddForm, 
                 <button type="submit" style={{ padding: '8px 20px', background: '#2563EB', color: 'white', border: 'none', borderRadius: '8px', fontWeight: '700', cursor: 'pointer' }}>확인</button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* 로트 확인 모달 */}
+      {lotCheckPart && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.6)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1100, padding: '20px' }}>
+          <div style={{ backgroundColor: '#ffffff', borderRadius: '16px', padding: '24px', width: '680px', maxWidth: '95vw', maxHeight: '85vh', overflowY: 'auto', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', borderBottom: '1px solid #E2E8F0', paddingBottom: '12px' }}>
+              <div>
+                <h3 style={{ margin: 0, fontSize: '18px', fontWeight: '800', color: '#0F172A' }}>⏳ 로트별 단가 및 입고 내역 관리</h3>
+                <span style={{ fontSize: '13px', color: '#2563EB', fontWeight: '700', marginTop: '2px', display: 'block' }}>[{lotCheckPart.code}] {lotCheckPart.name}</span>
+              </div>
+              <button type="button" onClick={() => setLotCheckPart(null)} style={{ border: 'none', background: 'none', fontSize: '18px', color: '#64748B', cursor: 'pointer', fontWeight: 'bold' }}>✕</button>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              {partLotsList.length === 0 ? (
+                <div style={{ padding: '30px', textAlign: 'center', color: '#94A3B8' }}>등록된 추가 입고 로트 내역이 없습니다. (이월 재고로 관리 중)</div>
+              ) : (
+                partLotsList.map((lot, idx) => {
+                  const currentPriceInput = lotPriceInputs[idx] !== undefined ? lotPriceInputs[idx] : (lot.unit_price > 0 ? lot.unit_price : '')
+                  
+                  return (
+                    <div key={lot.id || idx} style={{ backgroundColor: '#ffffff', border: '1px solid #E2E8F0', borderRadius: '12px', padding: '16px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <div style={{ fontSize: '15px', fontWeight: '800', color: '#0F172A' }}>
+                          <span>Lot/PO: <span style={{ color: '#2563EB' }}>{lot.po_number || '(미지정)'}</span></span>
+                          <span style={{ color: '#059669', marginLeft: '12px', fontSize: '14px' }}>수량: {lot.current_qty ?? 0}개</span>
+                        </div>
+                        <button type="button" onClick={async () => {
+                          if (!window.confirm(`이 로트 항목을 삭제하시겠습니까? (총 재고 수량도 함께 차감됩니다)`)) return
+                          
+                          const deletedQty = Number(lot.current_qty || lot.initial_qty) || 0
+                          const currentStock = Number(lotCheckPart.stock) || 0
+                          const newStock = Math.max(0, currentStock - deletedQty)
+
+                          // 1. 로트 삭제
+                          const { error: lotErr } = await supabase.from('part_stock_lots').delete().eq('id', lot.id)
+                          if (lotErr) return alert('로트 삭제 실패: ' + lotErr.message)
+
+                          // 2. 부품 총 재고(stock) 차감 업데이트
+                          const { error: partErr } = await supabase.from('parts').update({ stock: newStock }).eq('id', lotCheckPart.id)
+                          if (partErr) return alert('재고 수량 업데이트 실패: ' + partErr.message)
+
+                          alert('로트가 삭제되었으며, 재고 수량도 정상적으로 차감되었습니다.')
+                          
+                          // 상태 즉시 반영
+                          const updatedPart = { ...lotCheckPart, stock: newStock }
+                          setLotCheckPart(updatedPart)
+                          handleOpenLotCheck(updatedPart)
+                          refreshParts()
+                        }} style={{ backgroundColor: '#FEE2E2', color: '#DC2626', border: 'none', padding: '5px 12px', borderRadius: '8px', fontWeight: '700', fontSize: '12px', cursor: 'pointer' }}>
+                          삭제
+                        </button>
+                      </div>
+
+                      <div style={{ fontSize: '13px', color: '#475569' }}>
+                        입고일: <strong style={{ color: '#0F172A' }}>{lot.import_date || '-'}</strong> | 입고 단가: <strong style={{ color: '#059669' }}>{Number(lot.unit_price || 0).toLocaleString()}원</strong>
+                      </div>
+
+                      <div style={{ borderTop: '1px dashed #E2E8F0', margin: '2px 0' }}></div>
+                      
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                        <span style={{ fontSize: '13px', fontWeight: '700', color: '#D97706', whiteSpace: 'nowrap' }}>💰 입고 단가(원):</span>
+                        <input
+                          type="number"
+                          placeholder="단가 입력..."
+                          value={currentPriceInput}
+                          onChange={e => {
+                            const val = e.target.value
+                            setLotPriceInputs(prev => ({ ...prev, [idx]: val }))
+                          }}
+                          style={{ ...inputStyle, backgroundColor: '#F8FAFC', flex: 1 }}
+                        />
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            const newPrice = Number(currentPriceInput || 0)
+                            const { error } = await supabase
+                              .from('part_stock_lots')
+                              .update({ unit_price: newPrice })
+                              .eq('id', lot.id)
+
+                            if (!error) {
+                              alert(`단가가 ${newPrice.toLocaleString()}원으로 저장되었습니다.`)
+                              handleOpenLotCheck(lotCheckPart)
+                              refreshParts()
+                            } else {
+                              alert('단가 저장 실패: ' + error.message)
+                            }
+                          }}
+                          style={{ backgroundColor: '#2563EB', color: '#fff', border: 'none', padding: '9px 18px', borderRadius: '8px', fontWeight: '800', fontSize: '13px', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                        >
+                          단가 저장
+                        </button>
+                      </div>
+                    </div>
+                  )
+                })
+              )}
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '20px', borderTop: '1px solid #E2E8F0', paddingTop: '14px' }}>
+              <button type="button" onClick={() => setLotCheckPart(null)} style={{ padding: '9px 20px', background: '#475569', color: '#fff', border: 'none', borderRadius: '8px', fontWeight: '700', cursor: 'pointer', fontSize: '13px' }}>닫기</button>
+            </div>
           </div>
         </div>
       )}
@@ -779,7 +825,6 @@ export default function GeneralPartsTab({ partsList, refreshParts, showAddForm, 
               <div><label style={labelStyle}>Ident No. (코드)*</label><input type="text" value={editForm.code} onChange={e => setEditForm({ ...editForm, code: e.target.value })} style={inputStyle} required /></div>
               <div><label style={labelStyle}>품명*</label><input type="text" value={editForm.name} onChange={e => setEditForm({ ...editForm, name: e.target.value })} style={inputStyle} required /></div>
               
-              {/* 💡 수정 모달에 '구분 / 모델' 선택 필드 복원 */}
               <div>
                 <label style={labelStyle}>구분 / 모델</label>
                 <select value={editForm.category} onChange={e => setEditForm({ ...editForm, category: e.target.value })} style={inputStyle}>
@@ -791,18 +836,15 @@ export default function GeneralPartsTab({ partsList, refreshParts, showAddForm, 
                 </select>
               </div>
 
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '10px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
                 <div><label style={labelStyle}>소비자가 (원)</label><input type="number" value={editForm.customer_price} onChange={e => setEditForm({ ...editForm, customer_price: e.target.value })} style={inputStyle} /></div>
                 <div><label style={{ ...labelStyle, color: '#D97706' }}>딜러가 (원)</label><input type="number" value={editForm.dealer_price} onChange={e => setEditForm({ ...editForm, dealer_price: e.target.value })} style={{ ...inputStyle, fontWeight: '700', color: '#D97706', backgroundColor: '#FEF3C7', border: '1px solid #FCD34D' }} /></div>
-                <div>
-                  <label style={{ ...labelStyle, color: '#059669' }}>기준 원가 (원)</label>
-                  <input type="number" value={editForm.unit_price} onChange={e => setEditForm({ ...editForm, unit_price: e.target.value })} style={{ ...inputStyle, fontWeight: '700', color: '#059669', backgroundColor: '#ECFDF5', border: '1px solid #A7F3D0' }} />
-                </div>
               </div>
 
-              {!editForm.is_serial_managed && (
-                <div><label style={labelStyle}>재고 수량</label><input type="number" min="0" value={editForm.stock} onChange={e => setEditForm({ ...editForm, stock: e.target.value })} style={inputStyle} /></div>
-              )}
+              <div>
+                <label style={{ ...labelStyle, color: '#2563EB' }}>📦 이월 재고 (기초 수량)*</label>
+                <input type="number" min="0" value={editForm.carry_over_stock} onChange={e => setEditForm({ ...editForm, carry_over_stock: e.target.value })} style={{ ...inputStyle, fontWeight: '700', backgroundColor: '#EFF6FF', border: '1px solid #BFDBFE' }} required />
+              </div>
 
               <div><label style={labelStyle}>부품 사진 변경</label><input type="file" accept="image/*" onChange={e => setEditImageFile(e.target.files[0])} style={{ ...inputStyle, padding: '5px', fontSize: '11px' }} /></div>
               <div><label style={labelStyle}>비고</label><input type="text" value={editForm.note} onChange={e => setEditForm({ ...editForm, note: e.target.value })} style={inputStyle} /></div>
@@ -936,7 +978,7 @@ export default function GeneralPartsTab({ partsList, refreshParts, showAddForm, 
                                       const temp = p.serials ? (typeof p.serials === 'string' ? JSON.parse(p.serials) : p.serials) : []
                                       pSerials = Array.isArray(temp) ? temp : []
                                     } catch (err) {}
-                                    const stockCnt = p.is_serial_managed ? pSerials.length : (Number(p.stock) || 0)
+                                    const stockCnt = Number(p.stock) || 0
                                     return (
                                       <div key={p.id} onMouseDown={() => {
                                         const updated = [...deliveryItems];

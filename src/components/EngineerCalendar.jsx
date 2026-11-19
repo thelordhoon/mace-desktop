@@ -197,6 +197,7 @@ export default function EngineerCalendar({ user, isMobileView = false, companies
       note: ''
     })
     setCompanySearchTerm('')
+    setShowCompanyDropdown(false)
     setShowModal(true)
   }
 
@@ -213,6 +214,7 @@ export default function EngineerCalendar({ user, isMobileView = false, companies
       note: sch.note || ''
     })
     setCompanySearchTerm(sch.company_name || '')
+    setShowCompanyDropdown(false)
     setShowModal(true)
   }
 
@@ -513,6 +515,45 @@ export default function EngineerCalendar({ user, isMobileView = false, companies
                       {workTypes.map(t => <option key={t} value={t}>{t}</option>)}
                     </select>
                   </div>
+                </div>
+
+                <div style={{ position: 'relative' }}>
+                  <label style={labelStyle}>관련 거래처 (선택)</label>
+                  <input 
+                    type="text"
+                    placeholder="거래처 검색..."
+                    value={companySearchTerm}
+                    onChange={(e) => {
+                      const val = e.target.value
+                      setCompanySearchTerm(val)
+                      setForm(prev => ({ ...prev, company_name: val }))
+                      setShowCompanyDropdown(true)
+                    }}
+                    onFocus={() => setShowCompanyDropdown(true)}
+                    style={inputStyle}
+                  />
+                  {showCompanyDropdown && companySearchTerm && filteredCompanies.length > 0 && (
+                    <ul style={{ 
+                      position: 'absolute', left: 0, right: 0, top: '100%', zIndex: 50, 
+                      maxHeight: '140px', overflowY: 'auto', backgroundColor: '#fff', 
+                      border: '1px solid #CBD5E1', borderRadius: '8px', listStyle: 'none', padding: 0, margin: '2px 0 0 0',
+                      boxShadow: '0 4px 6px rgba(0,0,0,0.1)'
+                    }}>
+                      {filteredCompanies.map(c => (
+                        <li 
+                          key={c.id}
+                          onClick={() => {
+                            setForm(prev => ({ ...prev, company_name: c.name }))
+                            setCompanySearchTerm(c.name)
+                            setShowCompanyDropdown(false)
+                          }}
+                          style={{ padding: '8px 12px', cursor: 'pointer', borderBottom: '1px solid #F1F5F9', fontSize: '13px' }}
+                        >
+                          {c.name}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
                 </div>
 
                 <div>
