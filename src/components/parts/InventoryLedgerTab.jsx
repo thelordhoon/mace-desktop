@@ -176,16 +176,30 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
       const hasLots = Array.isArray(item.lots) && item.lots.length > 0
 
       if (hasLots) {
+        const inboundHistories = (item.histories || []).filter(
+          h => h.type === 'INBOUND' || h.company_name?.includes('입고')
+        )
+
         const lotInboundRows = item.lots.map(lot => {
           const qty = Number(lot.initial_qty ?? lot.current_qty ?? 0)
           const lotPrice = lot.unit_price !== undefined && lot.unit_price !== null ? Number(lot.unit_price) : null
-          const expiryText = lot.expiry_date ? ` · 유통기한: ${lot.expiry_date}` : ''
+
+          const matchedHistory = inboundHistories.find(h => {
+            const noteText = cleanNoteText(h.note)
+            if (lot.po_number && noteText.includes(`LOT/PO: ${lot.po_number}`)) {
+              return !lot.import_date || h.date === lot.import_date
+            }
+            return false
+          }) || inboundHistories.find(h => lot.import_date && h.date === lot.import_date)
+
+          const historyNote = matchedHistory ? cleanNoteText(matchedHistory.note) : ''
+
           return {
             date: lot.import_date || '-',
             badge: `로트 (${lot.po_number || '미지정'})`,
             summary: `[${item.code}] ${item.name} (${qty}개)`,
-            note: `잔여 수량: ${Number(lot.current_qty || 0)}개${expiryText}`,
-            author: '로트 관리',
+            note: historyNote,
+            author: matchedHistory?.author || '로트 관리',
             unitPrice: lotPrice
           }
         }).sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0))
@@ -227,12 +241,26 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
     setHistoryList(filteredOutbound)
   }
 
+  const escapeCsvCell = (value) => {
+    const str = value === null || value === undefined ? '' : String(value)
+    return `"${str.replace(/"/g, '""')}"`
+  }
+
   const handleExportExcel = () => {
     let csv = '\uFEFF'
     csv += 'Ident No.,품명,구분,이월재고,입고수량,출고수량,현재고,재고금액(원)\n'
     
     filteredLedger.forEach(item => {
-      csv += `"${item.code}","${item.name}","${item.category}",${item.carryOver},${item.inbound},${item.outbound},${item.current},${item.assetValue}\n`
+      csv += [
+        escapeCsvCell(item.code),
+        escapeCsvCell(item.name),
+        escapeCsvCell(item.category),
+        escapeCsvCell(item.carryOver),
+        escapeCsvCell(item.inbound),
+        escapeCsvCell(item.outbound),
+        escapeCsvCell(item.current),
+        escapeCsvCell(item.assetValue)
+      ].join(',') + '\n'
     })
 
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
