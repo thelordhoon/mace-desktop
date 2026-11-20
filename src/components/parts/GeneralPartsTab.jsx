@@ -90,6 +90,21 @@ export default function GeneralPartsTab({ partsList, refreshParts, showAddForm, 
     }
   }
 
+  const parseSerialsArray = (rawSerials) => {
+    try {
+      const parsed = typeof rawSerials === 'string' ? JSON.parse(rawSerials || '[]') : rawSerials
+      return Array.isArray(parsed) ? parsed : []
+    } catch (e) {
+      return []
+    }
+  }
+
+  const extractSnFromPoNumber = (poNumber) => {
+    if (!poNumber) return ''
+    const match = String(poNumber).match(/^SN-([^\s(]+)/i)
+    return match ? match[1].trim() : ''
+  }
+
   const inputStyle = {
     width: '100%', padding: '9px 12px', fontSize: '13px', borderRadius: '8px',
     border: '1px solid #CBD5E1', backgroundColor: '#F8FAFC', outline: 'none', boxSizing: 'border-box'
@@ -306,12 +321,7 @@ export default function GeneralPartsTab({ partsList, refreshParts, showAddForm, 
       const partObj = (partsList || []).find(p => String(p.id) === String(item.partId))
       if (!partObj) continue
 
-      let parsedSerials = []
-      try {
-        const temp = partObj.serials ? (typeof partObj.serials === 'string' ? JSON.parse(partObj.serials) : partObj.serials) : []
-        parsedSerials = Array.isArray(temp) ? temp : []
-      } catch (err) { parsedSerials = [] }
-
+      const parsedSerials = parseSerialsArray(partObj.serials)
       let newStock = Number(partObj.stock) || 0
       let updatedSerials = [...parsedSerials]
 
@@ -533,12 +543,7 @@ export default function GeneralPartsTab({ partsList, refreshParts, showAddForm, 
               <tr><td colSpan="9" style={{ padding: '40px', textAlign: 'center', color: '#94A3B8' }}>등록된 스페어 부품이 없습니다.</td></tr>
             ) : (
               filteredParts.map(p => {
-                let parsedSerials = []
-                try {
-                  const temp = p.serials ? (typeof p.serials === 'string' ? JSON.parse(p.serials) : p.serials) : []
-                  parsedSerials = Array.isArray(temp) ? temp : []
-                } catch (e) {}
-
+                const parsedSerials = parseSerialsArray(p.serials)
                 const totalStock = Number(p.stock) || 0
 
                 return (
@@ -815,17 +820,36 @@ export default function GeneralPartsTab({ partsList, refreshParts, showAddForm, 
                           
                           const deletedQty = Number(lot.current_qty || lot.initial_qty) || 0
                           const currentStock = Number(lotCheckPart.stock) || 0
-                          const newStock = Math.max(0, currentStock - deletedQty)
+                          const snToRemove = extractSnFromPoNumber(lot.po_number)
+                          const currentSerials = parseSerialsArray(lotCheckPart.serials)
+
+                          let updatedSerials = currentSerials
+                          let newStock = Math.max(0, currentStock - deletedQty)
+
+                          if (lotCheckPart.is_serial_managed && snToRemove) {
+                            updatedSerials = currentSerials.filter(s => String(s?.sn || '').trim() !== snToRemove)
+                            const carryOver = Math.max(0, Number(lotCheckPart.carry_over_stock) || 0)
+                            newStock = Math.max(0, carryOver + updatedSerials.length)
+                          }
 
                           const { error: lotErr } = await supabase.from('part_stock_lots').delete().eq('id', lot.id)
                           if (lotErr) return alert('로트 삭제 실패: ' + lotErr.message)
 
-                          const { error: partErr } = await supabase.from('parts').update({ stock: newStock }).eq('id', lotCheckPart.id)
+                          const partUpdatePayload = { stock: newStock }
+                          if (lotCheckPart.is_serial_managed && snToRemove) {
+                            partUpdatePayload.serials = JSON.stringify(updatedSerials)
+                          }
+
+                          const { error: partErr } = await supabase.from('parts').update(partUpdatePayload).eq('id', lotCheckPart.id)
                           if (partErr) return alert('재고 수량 업데이트 실패: ' + partErr.message)
 
                           alert('로트가 삭제되었으며, 재고 수량도 정상적으로 차감되었습니다.')
                           
-                          const updatedPart = { ...lotCheckPart, stock: newStock }
+                          const updatedPart = {
+                            ...lotCheckPart,
+                            stock: newStock,
+                            serials: lotCheckPart.is_serial_managed && snToRemove ? JSON.stringify(updatedSerials) : lotCheckPart.serials
+                          }
                           setLotCheckPart(updatedPart)
                           handleOpenLotCheck(updatedPart)
                           refreshParts()
@@ -1037,10 +1061,7 @@ export default function GeneralPartsTab({ partsList, refreshParts, showAddForm, 
 
                       let activeSerials = []
                       if (selectedPartObj && selectedPartObj.is_serial_managed) {
-                        try {
-                          const temp = selectedPartObj.serials ? (typeof selectedPartObj.serials === 'string' ? JSON.parse(selectedPartObj.serials) : selectedPartObj.serials) : []
-                          activeSerials = Array.isArray(temp) ? temp : []
-                        } catch (e) { activeSerials = [] }
+                        activeSerials = parseSerialsArray(selectedPartObj.serials)
                       }
 
                       return (
@@ -1076,11 +1097,6 @@ export default function GeneralPartsTab({ partsList, refreshParts, showAddForm, 
                                   <div style={{ padding: '12px', fontSize: '12px', color: '#94A3B8', textAlign: 'center' }}>검색 결과가 없습니다.</div>
                                 ) : (
                                   matchedParts.map(p => {
-                                    let pSerials = []
-                                    try {
-                                      const temp = p.serials ? (typeof p.serials === 'string' ? JSON.parse(p.serials) : p.serials) : []
-                                      pSerials = Array.isArray(temp) ? temp : []
-                                    } catch (err) {}
                                     const stockCnt = Number(p.stock) || 0
                                     return (
                                       <div key={p.id} onMouseDown={() => {
