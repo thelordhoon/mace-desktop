@@ -195,7 +195,7 @@ export default function GeneralPartsTab({ partsList, refreshParts, showAddForm, 
       customer_price: Number(editForm.customer_price),
       dealer_price: Number(editForm.dealer_price),
       note: editForm.note,
-      is_serial_managed: editForm.is_serial_managed,
+      is_serial_managed: !!editForm.is_serial_managed,
       carry_over_stock: newCarryOver,
       stock: updatedStock,
       image_url: imageUrl
@@ -427,13 +427,43 @@ export default function GeneralPartsTab({ partsList, refreshParts, showAddForm, 
               <div><label style={labelStyle}>📌 비고</label><input placeholder="특이사항 입력..." value={partNote} onChange={e => setPartNote(e.target.value)} style={inputStyle} /></div>
             </div>
 
-            <div style={{ backgroundColor: '#F8FAFC', padding: '10px 12px', borderRadius: '8px', border: '1px solid #E2E8F0', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <input type="checkbox" id="serialCheck" checked={isSerialManaged} onChange={e => setIsSerialManaged(e.target.checked)} style={{ width: '16px', height: '16px', cursor: 'pointer' }} />
-                <label htmlFor="serialCheck" style={{ fontSize: '13px', fontWeight: '700', color: '#1E293B', cursor: 'pointer' }}>
-                  이 부품은 개별 S/N(시리얼 번호) 및 상태(BG/EX/OH) 관리 대상입니다.
-                </label>
+            <div style={{ backgroundColor: '#F8FAFC', padding: '10px 12px', borderRadius: '8px', border: '1px solid #E2E8F0', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '10px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <input
+                    type="checkbox"
+                    id="addQtyManagedCheck"
+                    checked={!isSerialManaged}
+                    onChange={e => {
+                      const nextIsSerial = !e.target.checked
+                      setIsSerialManaged(nextIsSerial)
+                      if (!nextIsSerial) setSerials([])
+                    }}
+                    style={{ width: '16px', height: '16px', cursor: 'pointer', accentColor: '#059669' }}
+                  />
+                  <label htmlFor="addQtyManagedCheck" style={{ fontSize: '13px', fontWeight: '700', color: '#0F172A', cursor: 'pointer' }}>
+                    📦 수량 관리품
+                  </label>
+                </div>
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <input
+                    type="checkbox"
+                    id="serialCheck"
+                    checked={isSerialManaged}
+                    onChange={e => {
+                      const checked = e.target.checked
+                      setIsSerialManaged(checked)
+                      if (!checked) setSerials([])
+                    }}
+                    style={{ width: '16px', height: '16px', cursor: 'pointer', accentColor: '#2563EB' }}
+                  />
+                  <label htmlFor="serialCheck" style={{ fontSize: '13px', fontWeight: '700', color: '#1E293B', cursor: 'pointer' }}>
+                    🏷️ S/N 관리품 (시리얼 번호 및 BG/EX/OH 상태 관리)
+                  </label>
+                </div>
               </div>
+
               {isSerialManaged && (
                 <button type="button" onClick={() => setSerials([...serials, { sn: '', condition: 'BG', received_date: new Date().toISOString().split('T')[0] }])} style={{ border: 'none', background: '#2563EB', color: '#fff', padding: '4px 10px', borderRadius: '6px', fontSize: '11px', fontWeight: '700', cursor: 'pointer' }}>+ S/N 추가</button>
               )}
@@ -879,6 +909,34 @@ export default function GeneralPartsTab({ partsList, refreshParts, showAddForm, 
                   <option value="Tools">Tools</option>
                   <option value="부자재">부자재</option>
                 </select>
+              </div>
+
+              <div style={{ backgroundColor: '#F8FAFC', padding: '10px 12px', borderRadius: '8px', border: '1px solid #E2E8F0', display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <input
+                    type="checkbox"
+                    id="editQtyManagedCheck"
+                    checked={!editForm.is_serial_managed}
+                    onChange={e => setEditForm({ ...editForm, is_serial_managed: !e.target.checked })}
+                    style={{ width: '16px', height: '16px', cursor: 'pointer', accentColor: '#059669' }}
+                  />
+                  <label htmlFor="editQtyManagedCheck" style={{ fontSize: '13px', fontWeight: '700', color: '#0F172A', cursor: 'pointer' }}>
+                    📦 수량 관리품
+                  </label>
+                </div>
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <input
+                    type="checkbox"
+                    id="editSerialManagedCheck"
+                    checked={!!editForm.is_serial_managed}
+                    onChange={e => setEditForm({ ...editForm, is_serial_managed: e.target.checked })}
+                    style={{ width: '16px', height: '16px', cursor: 'pointer', accentColor: '#2563EB' }}
+                  />
+                  <label htmlFor="editSerialManagedCheck" style={{ fontSize: '13px', fontWeight: '700', color: '#1E293B', cursor: 'pointer' }}>
+                    🏷️ S/N 관리품
+                  </label>
+                </div>
               </div>
 
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
