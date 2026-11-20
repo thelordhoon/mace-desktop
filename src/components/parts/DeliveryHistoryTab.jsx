@@ -28,145 +28,11 @@ export default function DeliveryHistoryTab({ refreshParts }) {
   }
 
   const handleDeleteHistory = async (item) => {
-    if (!window.confirm(`[${item.summary}]\n이 내역을 삭제하시겠습니까?\n(삭제 시 차감되었던 수량이나 S/N, 로트가 원래 상태로 정확하게 복원됩니다.)`)) return
-
-    const qtyMatch = item.summary?.match(/\((\d+)개\)/)
-    const totalQty = qtyMatch ? Number(qtyMatch[1]) : 1
-    
-    const codeMatch = item.summary?.match(/\[(.*?)\]/)
-    let partCode = null
-    if (codeMatch && codeMatch[1]) {
-      const rawCode = codeMatch[1]
-      partCode = rawCode.split(' ')[0].trim()
-    }
-
-    if (partCode) {
-      const { data: partsMatched, error: fetchError } = await supabase
-        .from('parts')
-        .select('*')
-        .eq('code', partCode)
-
-      if (!fetchError && partsMatched && partsMatched.length > 0) {
-        const partData = partsMatched[0]
-        const cat = partData.category || ''
-        const isConsumable = cat.includes('잉크') || cat.includes('희석제') || cat.includes('소모품')
-
-        if (isConsumable) {
-          let currentLots = []
-          try {
-            currentLots = partData.lots ? (typeof partData.lots === 'string' ? JSON.parse(partData.lots) : partData.lots) : []
-          } catch (e) { currentLots = [] }
-
-          if (item.type === 'OUTBOUND') {
-            let restored = false
-            const restoreTagMatch = item.note?.match(/\[LOT_RESTORE:(.*?)\]/)
-            if (restoreTagMatch) {
-              try {
-                const restoredDetails = JSON.parse(restoreTagMatch[1])
-                if (Array.isArray(restoredDetails) && restoredDetails.length > 0) {
-                  restoredDetails.forEach(rd => {
-                    const rdQty = Number(rd.qty || 0)
-                    if (rdQty <= 0) return
-
-                    const existingLot = currentLots.find(l => 
-                      String(l.lot_number || '').trim() === String(rd.lot_number || '').trim() && 
-                      String(l.expiry || '').trim() === String(rd.expiry || '').trim()
-                    )
-
-                    if (existingLot) {
-                      existingLot.qty = Number(existingLot.qty || 0) + rdQty
-                    } else {
-                      currentLots.push({
-                        lot_number: rd.lot_number || '',
-                        received_date: rd.received_date || new Date().toISOString().split('T')[0],
-                        expiry: rd.expiry || '',
-                        qty: rdQty
-                      })
-                    }
-                  })
-                  restored = true
-                }
-              } catch (e) {
-                console.error('LOT 복원 파싱 에러:', e)
-              }
-            }
-
-            if (!restored) {
-              if (currentLots.length > 0) {
-                currentLots[0].qty = Number(currentLots[0].qty || 0) + totalQty
-              } else {
-                currentLots.push({
-                  lot_number: '',
-                  received_date: new Date().toISOString().split('T')[0],
-                  expiry: '',
-                  qty: totalQty
-                })
-              }
-            }
-          } else if (item.type === 'INBOUND') {
-            let rem = totalQty
-            currentLots = currentLots.map(lot => {
-              if (rem <= 0) return lot
-              const lQty = Number(lot.qty || 0)
-              if (lQty <= rem) {
-                rem -= lQty
-                return { ...lot, qty: 0 }
-              } else {
-                const newQ = lQty - rem
-                rem = 0
-                return { ...lot, qty: newQ }
-              }
-            }).filter(l => Number(l.qty) > 0)
-          }
-
-          const newStock = currentLots.reduce((sum, l) => sum + Number(l.qty || 0), 0)
-          await supabase.from('parts').update({
-            lots: JSON.stringify(currentLots),
-            stock: newStock
-          }).eq('id', partData.id)
-
-        } else if (partData.is_serial_managed) {
-          let currentSerials = []
-          try {
-            currentSerials = partData.serials ? (typeof partData.serials === 'string' ? JSON.parse(partData.serials) : partData.serials) : []
-          } catch (e) { currentSerials = [] }
-
-          const snMatch = item.equipment_sn?.match(/S\/N:\s*([^\s(]+)/) || item.summary?.match(/S\/N:\s*([^)]+)/)
-          const snValue = snMatch ? snMatch[1].trim() : null
-
-          if (item.type === 'INBOUND' && snValue) {
-            currentSerials = currentSerials.filter(s => s.sn !== snValue)
-          } else if (item.type === 'OUTBOUND' && snValue) {
-            if (!currentSerials.some(s => s.sn === snValue)) {
-              currentSerials.push({ sn: snValue, condition: 'BG', received_date: item.date })
-            }
-          }
-
-          await supabase.from('parts').update({
-            serials: JSON.stringify(currentSerials),
-            stock: currentSerials.length
-          }).eq('id', partData.id)
-
-        } else {
-          const currentStock = Number(partData.stock) || 0
-          let newStock = currentStock
-
-          if (item.type === 'OUTBOUND') {
-            newStock += totalQty
-          } else if (item.type === 'INBOUND') {
-            newStock = Math.max(0, newStock - totalQty)
-          }
-
-          await supabase.from('parts').update({
-            stock: newStock
-          }).eq('id', partData.id)
-        }
-      }
-    }
+    if (!window.confirm(`[${item.summary}]\n이 내역을 삭제하시겠습니까?\n(발행 이력만 삭제되며 재고·로트·S/N 수량은 자동 변경되지 않습니다.)`)) return
 
     const { error: delError } = await supabase.from('delivery_history').delete().eq('id', item.id)
     if (!delError) {
-      alert('이력이 성공적으로 삭제되고 재고가 정확하게 원복되었습니다.')
+      alert('이력이 삭제되었습니다.')
       fetchHistory()
       if (typeof refreshParts === 'function') refreshParts()
     } else {
@@ -297,7 +163,7 @@ export default function DeliveryHistoryTab({ refreshParts }) {
               <th style={{ padding: '14px 16px', width: '280px' }}>품목 명세 요약</th>
               <th style={{ padding: '14px 16px', width: '260px' }}>비고</th>
               <th style={{ padding: '14px 16px', width: '95px', textAlign: 'center' }}>작성자</th>
-              <th style={{ padding: '14px 16px', width: '150px', textAlign: 'center' }}>관리 / 보기</th>
+              <th style={{ padding: '14px 16px', width: '165px', textAlign: 'center' }}>관리 / 보기</th>
             </tr>
           </thead>
           <tbody>
@@ -331,9 +197,9 @@ export default function DeliveryHistoryTab({ refreshParts }) {
                     <td style={{ padding: '12px 16px', fontWeight: '700', color: '#1E293B', wordBreak: 'break-all' }}>{item.summary}</td>
                     <td style={{ padding: '12px 16px', color: '#64748B', wordBreak: 'break-all', fontSize: '12px' }}>{getCleanNote(item.note)}</td>
                     <td style={{ padding: '12px 16px', textAlign: 'center', color: '#475569', fontWeight: '600' }}>{item.author || '-'}</td>
-                    <td style={{ padding: '12px 16px', textAlign: 'center' }}>
-                      <div style={{ display: 'flex', justifyContent: 'center', gap: '6px' }}>
-                        {item.type === 'OUTBOUND' && hasDetails && (
+                    <td style={{ padding: '12px 16px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', gap: '6px' }}>
+                        {item.type === 'OUTBOUND' && hasDetails ? (
                           <button
                             type="button"
                             onClick={() => setViewingDeliveryItem(item)}
@@ -345,11 +211,14 @@ export default function DeliveryHistoryTab({ refreshParts }) {
                               borderRadius: '6px',
                               fontSize: '11px',
                               fontWeight: '700',
-                              cursor: 'pointer'
+                              cursor: 'pointer',
+                              whiteSpace: 'nowrap'
                             }}
                           >
                             출고증 보기
                           </button>
+                        ) : (
+                          <span />
                         )}
                         <button
                           type="button"
@@ -362,7 +231,9 @@ export default function DeliveryHistoryTab({ refreshParts }) {
                             borderRadius: '6px',
                             fontSize: '11px',
                             fontWeight: '700',
-                            cursor: 'pointer'
+                            cursor: 'pointer',
+                            marginLeft: 'auto',
+                            whiteSpace: 'nowrap'
                           }}
                         >
                           삭제

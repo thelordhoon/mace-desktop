@@ -117,7 +117,7 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
           return sum + (qty > 0 ? qty : 1)
         }, 0)
 
-        inboundQty = lotInboundSum > 0 ? lotInboundSum : inboundHistorySum
+        inboundQty = partLots.length > 0 ? lotInboundSum : inboundHistorySum
 
         partHistories.forEach(h => {
           if (h.type === 'OUTBOUND' || h.company_name?.includes('출고')) {
@@ -166,6 +166,27 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
     setSelectedItemHistory({ name: item.name, code: item.code, type })
 
     if (type === 'INBOUND') {
+      const hasLots = Array.isArray(item.lots) && item.lots.length > 0
+
+      if (hasLots) {
+        const lotInboundRows = item.lots.map(lot => {
+          const qty = Number(lot.initial_qty ?? lot.current_qty ?? 0)
+          const lotPrice = lot.unit_price !== undefined && lot.unit_price !== null ? Number(lot.unit_price) : null
+          const expiryText = lot.expiry_date ? ` · 유통기한: ${lot.expiry_date}` : ''
+          return {
+            date: lot.import_date || '-',
+            badge: `로트 (${lot.po_number || '미지정'})`,
+            summary: `[${item.code}] ${item.name} (${qty}개)`,
+            note: `잔여 수량: ${Number(lot.current_qty || 0)}개${expiryText}`,
+            author: '로트 관리',
+            unitPrice: lotPrice
+          }
+        }).sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0))
+
+        setHistoryList(lotInboundRows)
+        return
+      }
+
       const historyInboundRows = (item.histories || [])
         .filter(h => h.type === 'INBOUND' || h.company_name?.includes('입고'))
         .map(h => {
@@ -179,25 +200,9 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
             unitPrice: parsedPrice
           }
         })
+        .sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0))
 
-      const lotInboundRows = (item.lots || []).map(lot => {
-        const qty = Number(lot.initial_qty ?? lot.current_qty ?? 0)
-        const lotPrice = lot.unit_price !== undefined && lot.unit_price !== null ? Number(lot.unit_price) : null
-        return {
-          date: lot.import_date || '-',
-          badge: `로트 (${lot.po_number || '미지정'})`,
-          summary: `[${item.code}] ${item.name} (${qty}개)`,
-          note: `잔여 수량: ${Number(lot.current_qty || 0)}개`,
-          author: '로트 등록',
-          unitPrice: lotPrice
-        }
-      })
-
-      const combinedInbound = [...lotInboundRows, ...historyInboundRows].sort((a, b) => {
-        return new Date(b.date || 0) - new Date(a.date || 0)
-      })
-
-      setHistoryList(combinedInbound)
+      setHistoryList(historyInboundRows)
       return
     }
 
