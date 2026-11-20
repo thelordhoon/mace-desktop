@@ -149,6 +149,13 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
     }
   }
 
+  const handleRefreshAll = async () => {
+    if (typeof refreshParts === 'function') {
+      await refreshParts()
+    }
+    await fetchLedgerSummary()
+  }
+
   const tryParseSerials = (serialsStr) => {
     try {
       const parsed = typeof serialsStr === 'string' ? JSON.parse(serialsStr) : serialsStr
@@ -302,7 +309,7 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
           </div>
           <button 
             type="button" 
-            onClick={fetchLedgerSummary} 
+            onClick={handleRefreshAll} 
             style={{ background: '#F1F5F9', color: '#334155', border: '1px solid #CBD5E1', padding: '10px 14px', borderRadius: '8px', fontSize: '13px', fontWeight: '700', cursor: 'pointer' }}
           >
             🔄 새로고침

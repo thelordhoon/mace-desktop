@@ -11,6 +11,14 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
   const [selectedItemHistory, setSelectedItemHistory] = useState(null)
   const [historyList, setHistoryList] = useState([])
 
+  const cleanNoteText = (rawNote) => {
+    if (!rawNote) return ''
+    const str = String(rawNote)
+    const cutIndex = str.search(/\[(LOT_RESTORE|DELIVERY_DETAILS):/)
+    const baseText = cutIndex >= 0 ? str.slice(0, cutIndex) : str
+    return baseText.trim()
+  }
+
   const extractQtyFromSummary = (summary, partName) => {
     if (!summary) return 0
     if (partName) {
@@ -109,7 +117,7 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
           return sum + (qty > 0 ? qty : 1)
         }, 0)
 
-        inboundQty = lotInboundSum > 0 ? lotInboundSum : inboundHistorySum
+        inboundQty = partLots.length > 0 ? lotInboundSum : inboundHistorySum
 
         partHistories.forEach(h => {
           if (h.type === 'OUTBOUND' || h.company_name?.includes('출고')) {
@@ -158,6 +166,27 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
     setSelectedItemHistory({ name: item.name, code: item.code, type })
 
     if (type === 'INBOUND') {
+      const hasLots = Array.isArray(item.lots) && item.lots.length > 0
+
+      if (hasLots) {
+        const lotInboundRows = item.lots.map(lot => {
+          const qty = Number(lot.initial_qty ?? lot.current_qty ?? 0)
+          const lotPrice = lot.unit_price !== undefined && lot.unit_price !== null ? Number(lot.unit_price) : null
+          const expiryText = lot.expiry_date ? ` · 유통기한: ${lot.expiry_date}` : ''
+          return {
+            date: lot.import_date || '-',
+            badge: `로트 (${lot.po_number || '미지정'})`,
+            summary: `[${item.code}] ${item.name} (${qty}개)`,
+            note: `잔여 수량: ${Number(lot.current_qty || 0)}개${expiryText}`,
+            author: '로트 관리',
+            unitPrice: lotPrice
+          }
+        }).sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0))
+
+        setHistoryList(lotInboundRows)
+        return
+      }
+
       const historyInboundRows = (item.histories || [])
         .filter(h => h.type === 'INBOUND' || h.company_name?.includes('입고'))
         .map(h => {
@@ -166,30 +195,14 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
             date: h.date || '-',
             badge: h.company_name || '입고 이력',
             summary: h.summary || '-',
-            note: h.note || '',
+            note: cleanNoteText(h.note),
             author: h.author || '배진철',
             unitPrice: parsedPrice
           }
         })
+        .sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0))
 
-      const lotInboundRows = (item.lots || []).map(lot => {
-        const qty = Number(lot.initial_qty ?? lot.current_qty ?? 0)
-        const lotPrice = lot.unit_price !== undefined && lot.unit_price !== null ? Number(lot.unit_price) : null
-        return {
-          date: lot.import_date || '-',
-          badge: `로트 (${lot.po_number || '미지정'})`,
-          summary: `[${item.code}] ${item.name} (${qty}개)`,
-          note: `잔여 수량: ${Number(lot.current_qty || 0)}개`,
-          author: '로트 등록',
-          unitPrice: lotPrice
-        }
-      })
-
-      const combinedInbound = [...lotInboundRows, ...historyInboundRows].sort((a, b) => {
-        return new Date(b.date || 0) - new Date(a.date || 0)
-      })
-
-      setHistoryList(combinedInbound)
+      setHistoryList(historyInboundRows)
       return
     }
 
@@ -199,7 +212,7 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
         date: h.date || '-',
         badge: h.company_name || '거래처 미지정',
         summary: h.summary || '-',
-        note: h.note || '',
+        note: cleanNoteText(h.note),
         author: h.author || '배진철',
         unitPrice: null
       }))
