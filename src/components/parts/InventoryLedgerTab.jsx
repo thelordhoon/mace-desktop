@@ -84,9 +84,16 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
         }
 
         const partHistories = (historyData || []).filter(h => {
-          if (h.part_id && String(h.part_id) === String(part.id)) return true
-          if (part.code && h.summary && h.summary.includes(`[${part.code}]`)) return true
-          if (part.name && h.summary && h.summary.includes(part.name)) return true
+          if (h.part_id !== undefined && h.part_id !== null && String(h.part_id).trim() !== '') {
+            return String(h.part_id) === String(part.id)
+          }
+          if (!h.summary) return false
+          if (part.code && String(part.code).trim() !== '') {
+            return h.summary.includes(`[${part.code}]`)
+          }
+          if (part.name && String(part.name).trim() !== '') {
+            return h.summary.includes(part.name)
+          }
           return false
         })
 
