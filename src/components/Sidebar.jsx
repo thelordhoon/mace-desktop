@@ -55,7 +55,7 @@ export default function Sidebar({ currentMenu, setCurrentMenu, userRole, isAdmin
 
       {isManagerOrAdmin && (
         <button onClick={() => handleMenuClick('stock_closing')} style={getButtonStyle('stock_closing')}>
-          📊 결산/재고 관리
+          📊 재고 수불부 (결산용)
         </button>
       )}
 

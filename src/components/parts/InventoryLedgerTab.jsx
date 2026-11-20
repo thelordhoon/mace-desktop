@@ -11,6 +11,14 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
   const [selectedItemHistory, setSelectedItemHistory] = useState(null)
   const [historyList, setHistoryList] = useState([])
 
+  const cleanNoteText = (rawNote) => {
+    if (!rawNote) return ''
+    const str = String(rawNote)
+    const cutIndex = str.search(/\[(LOT_RESTORE|DELIVERY_DETAILS):/)
+    const baseText = cutIndex >= 0 ? str.slice(0, cutIndex) : str
+    return baseText.trim()
+  }
+
   const extractQtyFromSummary = (summary, partName) => {
     if (!summary) return 0
     if (partName) {
@@ -166,7 +174,7 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
             date: h.date || '-',
             badge: h.company_name || '입고 이력',
             summary: h.summary || '-',
-            note: h.note || '',
+            note: cleanNoteText(h.note),
             author: h.author || '배진철',
             unitPrice: parsedPrice
           }
@@ -199,7 +207,7 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
         date: h.date || '-',
         badge: h.company_name || '거래처 미지정',
         summary: h.summary || '-',
-        note: h.note || '',
+        note: cleanNoteText(h.note),
         author: h.author || '배진철',
         unitPrice: null
       }))

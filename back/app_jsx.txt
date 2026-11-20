@@ -42,7 +42,25 @@ export default function App() {
 
   const checkUserSession = async () => {
     const savedUser = localStorage.getItem('mace_desk_user')
-    if (savedUser) setUser(JSON.parse(savedUser))
+    if (savedUser) {
+      let parsedUser = JSON.parse(savedUser)
+      if (parsedUser?.id || parsedUser?.username) {
+        try {
+          let query = supabase.from('profiles').select('*')
+          if (parsedUser.id) query = query.eq('id', parsedUser.id)
+          else query = query.eq('username', parsedUser.username)
+          
+          const { data: profileData } = await query.single()
+          if (profileData) {
+            parsedUser = { ...parsedUser, ...profileData }
+            localStorage.setItem('mace_desk_user', JSON.stringify(parsedUser))
+          }
+        } catch (e) {
+          console.error('프로필 보정 조회 실패:', e)
+        }
+      }
+      setUser(parsedUser)
+    }
   }
 
   const fetchParts = async () => {
@@ -76,9 +94,23 @@ export default function App() {
     }
   }
 
-  const handleLoginSuccess = (loggedInUser) => {
-    setUser(loggedInUser)
-    localStorage.setItem('mace_desk_user', JSON.stringify(loggedInUser))
+  const handleLoginSuccess = async (loggedInUser) => {
+    let finalUser = loggedInUser
+    try {
+      let query = supabase.from('profiles').select('*')
+      if (loggedInUser.id) query = query.eq('id', loggedInUser.id)
+      else if (loggedInUser.username) query = query.eq('username', loggedInUser.username)
+
+      const { data: profileData } = await query.single()
+      if (profileData) {
+        finalUser = { ...loggedInUser, ...profileData }
+      }
+    } catch (e) {
+      console.error('로그인 후 프로필 연동 실패:', e)
+    }
+
+    setUser(finalUser)
+    localStorage.setItem('mace_desk_user', JSON.stringify(finalUser))
     fetchPurchaseAlerts()
   }
 
@@ -166,17 +198,14 @@ export default function App() {
         />
         <main style={{ flex: 1, padding: '24px', overflowY: 'auto', boxSizing: 'border-box' }}>
           {currentMenu === 'calendar' && <EngineerCalendar user={user} isMobileView={false} />}
-          {currentMenu === 'companies' && <CompanyManagement partsList={partsList} />}
-          {currentMenu === 'parts' && <PartManagement />}
+          {currentMenu === 'companies' && <CompanyManagement partsList={partsList} user={user} />}
+          {currentMenu === 'parts' && <PartManagement user={user} />}
           {currentMenu === 'estimate' && <EstimateForm user={user} />}
-          {currentMenu === 'service_management' && <ServiceManagement />}
-          {currentMenu === 'delivery_history' && <DeliveryHistory partsList={partsList} />}
+          {currentMenu === 'service_management' && <ServiceManagement user={user} />}
+          {currentMenu === 'delivery_history' && <DeliveryHistory partsList={partsList} user={user} />}
           {currentMenu === 'users' && isAdmin && <UserManagement />}
           {currentMenu === 'purchase_request' && <PurchaseRequest user={user} isAdmin={isAdmin} onUpdateRequests={fetchPurchaseAlerts} />}
-          
-         {currentMenu === 'stock_closing' && (isAdmin || userRole === 'manager') && (
-  <StockClosingTab />
-)}
+          {currentMenu === 'stock_closing' && (isAdmin || userRole === 'manager') && <StockClosingTab user={user} />}
         </main>
       </div>
     </div>

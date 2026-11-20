@@ -3,10 +3,12 @@ import { supabase } from '../../supabaseClient'
 import ConsumablesTab from './ConsumablesTab'
 import GeneralPartsTab from './GeneralPartsTab'
 import PrintersTab from './PrintersTab'
-import DeliveryHistoryTab from './DeliveryHistoryTab'
+import PartDeliveryHistoryTab from "./DeliveryHistoryTab";
+// 💡 [수불부 탭 추가용] 나중에 삭제하려면 이 임포트 문을 지우세요.
+import InventoryLedgerTab from './InventoryLedgerTab'
 
 export default function PartManagement() {
-  const [activeTab, setActiveTab] = useState('소모품') // '소모품' | '일반부품' | '프린터' | '이력관리'
+  const [activeTab, setActiveTab] = useState('소모품') // '소모품' | '일반부품' | '프린터' | '이력관리' | '재고수불부'
   const [partsList, setPartsList] = useState([])
   const [showAddPartForm, setShowAddPartForm] = useState(false) // 💡 올바른 상태 이름 정의
 
@@ -30,9 +32,12 @@ export default function PartManagement() {
             {activeTab === '일반부품' && '⚙️ 일반 부품 및 부자재 S/N별 보유 상태 및 매입가·특가를 관리합니다.'}
             {activeTab === '프린터' && '🖨️ 프린터 및 라이너 장비 S/N별 상태를 관리합니다.'}
             {activeTab === '이력관리' && '📋 발행된 모든 입고 및 출고 이력을 시간순으로 확인합니다.'}
+            {/* 💡 [수불부 탭 추가용] 나중에 삭제하려면 이 줄을 지우세요. */}
+            {activeTab === '재고수불부' && '📊 이월재고, 입고, 출고, 현재고의 수불 흐름 및 결산용 자산 수량을 확인합니다.'}
           </p>
         </div>
-        {activeTab !== '이력관리' && (
+        {/* 이력관리와 재고수불부 탭에서는 신규 등록 버튼 숨김 */}
+        {activeTab !== '이력관리' && activeTab !== '재고수불부' && (
           <button 
             type="button" 
             onClick={() => setShowAddPartForm(!showAddPartForm)} 
@@ -44,8 +49,9 @@ export default function PartManagement() {
       </div>
 
       {/* 📌 상단 탭 메뉴 */}
-      <div style={{ display: 'flex', gap: '8px', marginBottom: '20px', borderBottom: '2px solid #E2E8F0', paddingBottom: '2px' }}>
-        {['소모품', '일반부품', '프린터', '이력관리'].map(tab => (
+      <div style={{ display: 'flex', gap: '8px', marginBottom: '20px', borderBottom: '2px solid #E2E8F0', paddingBottom: '2px', flexWrap: 'wrap' }}>
+        {/* 💡 [수불부 탭 추가용] 나중에 삭제하려면 배열에서 '재고수불부'를 빼세요. */}
+        {['소모품', '일반부품', '프린터', '이력관리', '재고수불부'].map(tab => (
           <button 
             key={tab} 
             type="button" 
@@ -60,15 +66,20 @@ export default function PartManagement() {
             {tab === '일반부품' && '⚙️ 일반 부품 및 부자재'}
             {tab === '프린터' && '🖨️ 프린터 관리'}
             {tab === '이력관리' && '📋 입·출고증 발행 이력'}
+            {/* 💡 [수불부 탭 추가용] 나중에 삭제하려면 이 줄을 지우세요. */}
+            {tab === '재고수불부' && '📊 재고 수불부 (결산용)'}
           </button>
         ))}
       </div>
 
-      {/* 탭별 컴포넌트 렌더링 (올바른 prop명인 setShowAddPartForm 전달) */}
+      {/* 탭별 컴포넌트 렌더링 */}
       {activeTab === '소모품' && <ConsumablesTab partsList={partsList} refreshParts={fetchParts} showAddForm={showAddPartForm} setShowAddForm={setShowAddPartForm} />}
       {activeTab === '일반부품' && <GeneralPartsTab partsList={partsList} refreshParts={fetchParts} showAddForm={showAddPartForm} setShowAddForm={setShowAddPartForm} />}
       {activeTab === '프린터' && <PrintersTab partsList={partsList} refreshParts={fetchParts} showAddForm={showAddPartForm} setShowAddForm={setShowAddPartForm} />}
-      {activeTab === '이력관리' && <DeliveryHistoryTab refreshParts={fetchParts} />}
+      {activeTab === '이력관리' && <PartDeliveryHistoryTab refreshParts={fetchParts} />}
+      
+      {/* 💡 [수불부 탭 추가용] 나중에 삭제하려면 이 아래 줄 전체를 지우세요. */}
+      {activeTab === '재고수불부' && <InventoryLedgerTab partsList={partsList} refreshParts={fetchParts} />}
     </div>
   )
 }

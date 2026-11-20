@@ -11,6 +11,25 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
   const [selectedItemHistory, setSelectedItemHistory] = useState(null)
   const [historyList, setHistoryList] = useState([])
 
+  const extractQtyFromSummary = (summary, partName) => {
+    if (!summary) return 0
+    if (partName) {
+      const escapedName = String(partName).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+      const namedMatch = summary.match(new RegExp(`${escapedName}[^\\n(]*\\((\\d+)개\\)`))
+      if (namedMatch) return parseInt(namedMatch[1], 10)
+    }
+    const genericMatch = summary.match(/\((\d+)개\)/)
+    return genericMatch ? parseInt(genericMatch[1], 10) : 0
+  }
+
+  const extractUnitPriceFromText = (text) => {
+    if (!text) return null
+    const match = String(text).match(/단가\s*[:：]?\s*([\d,]+)\s*원?/)
+    if (!match) return null
+    const parsed = Number(match[1].replace(/,/g, ''))
+    return Number.isNaN(parsed) ? null : parsed
+  }
+
   const fetchLedgerSummary = async () => {
     setLoading(true)
     try {
@@ -33,46 +52,69 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
         const carryOverStock = Number(part.carry_over_stock) || 0
 
         let totalAssetValue = 0
-        if (part.is_serial_managed) {
-          const serialsArr = tryParseSerials(part.serials)
-          serialsArr.forEach(s => {
-            totalAssetValue += Number(s.unit_price || part.unit_price || 0)
+        let remainingStockToCalc = currentStock
+        const validLots = partLots.filter(l => (Number(l.current_qty) || 0) > 0)
+
+        if (validLots.length > 0 && remainingStockToCalc > 0) {
+          validLots.forEach(l => {
+            if (remainingStockToCalc <= 0) return
+            const qty = Math.min(remainingStockToCalc, Number(l.current_qty) || 0)
+            const lotUnitPrice = Number(l.unit_price) || Number(part.unit_price) || 0
+            totalAssetValue += qty * lotUnitPrice
+            remainingStockToCalc -= qty
           })
-        } else {
-          let remainingStockToCalc = currentStock
-          const validLots = partLots.filter(l => (Number(l.current_qty) || 0) > 0)
-          if (validLots.length > 0) {
-            validLots.forEach(l => {
-              const qty = Math.min(remainingStockToCalc, Number(l.current_qty) || 0)
-              totalAssetValue += qty * (Number(l.unit_price) || Number(part.unit_price) || 0)
-              remainingStockToCalc -= qty
+        }
+
+        if (remainingStockToCalc > 0) {
+          if (part.is_serial_managed) {
+            const serialsArr = tryParseSerials(part.serials)
+            let snCalculated = 0
+            serialsArr.forEach(s => {
+              if (snCalculated < remainingStockToCalc) {
+                totalAssetValue += Number(s.unit_price || part.unit_price || 0)
+                snCalculated += 1
+              }
             })
-          }
-          if (remainingStockToCalc > 0) {
+            if (snCalculated < remainingStockToCalc) {
+              totalAssetValue += (remainingStockToCalc - snCalculated) * (Number(part.unit_price) || 0)
+            }
+          } else {
             totalAssetValue += remainingStockToCalc * (Number(part.unit_price) || 0)
           }
         }
 
         const partHistories = (historyData || []).filter(h => {
-          if (h.part_id && String(h.part_id) === String(part.id)) return true
-          if (part.code && h.summary && h.summary.includes(`[${part.code}]`)) return true
+          if (h.part_id !== undefined && h.part_id !== null && String(h.part_id).trim() !== '') {
+            return String(h.part_id) === String(part.id)
+          }
+          if (!h.summary) return false
+          if (part.code && String(part.code).trim() !== '') {
+            return h.summary.includes(`[${part.code}]`)
+          }
+          if (part.name && String(part.name).trim() !== '') {
+            return h.summary.includes(part.name)
+          }
           return false
         })
 
         let inboundQty = 0
         let outboundQty = 0
 
+        const lotInboundSum = partLots.reduce((sum, lot) => sum + (Number(lot.initial_qty) || 0), 0)
+
+        const inboundHistorySum = partHistories.reduce((sum, h) => {
+          const isInbound = h.type === 'INBOUND' || h.company_name?.includes('입고')
+          if (!isInbound) return sum
+          const qty = extractQtyFromSummary(h.summary, part.name)
+          return sum + (qty > 0 ? qty : 1)
+        }, 0)
+
+        inboundQty = lotInboundSum > 0 ? lotInboundSum : inboundHistorySum
+
         partHistories.forEach(h => {
           if (h.type === 'OUTBOUND' || h.company_name?.includes('출고')) {
-            const match = h.summary?.match(/\((\d+)개\)/)
-            const qty = match ? parseInt(match[1]) : 1
-            outboundQty += qty
-          }
-        })
-
-        partLots.forEach(lot => {
-          if (lot.po_number && !lot.po_number.startsWith('SN-')) {
-            inboundQty += Number(lot.initial_qty) || 0
+            const qty = extractQtyFromSummary(h.summary, part.name)
+            outboundQty += qty > 0 ? qty : 1
           }
         })
 
@@ -86,7 +128,8 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
           outbound: outboundQty,
           current: currentStock,
           assetValue: totalAssetValue,
-          histories: partHistories
+          histories: partHistories,
+          lots: partLots
         }
       })
 
@@ -113,12 +156,55 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
 
   const handleOpenDetailHistory = (item, type) => {
     setSelectedItemHistory({ name: item.name, code: item.code, type })
-    const filtered = (item.histories || []).filter(h => {
-      if (type === 'INBOUND') return h.type === 'INBOUND' || h.company_name?.includes('입고')
-      if (type === 'OUTBOUND') return h.type === 'OUTBOUND' || h.company_name?.includes('출고')
-      return true
-    })
-    setHistoryList(filtered)
+
+    if (type === 'INBOUND') {
+      const historyInboundRows = (item.histories || [])
+        .filter(h => h.type === 'INBOUND' || h.company_name?.includes('입고'))
+        .map(h => {
+          const parsedPrice = extractUnitPriceFromText(`${h.summary || ''} ${h.note || ''}`)
+          return {
+            date: h.date || '-',
+            badge: h.company_name || '입고 이력',
+            summary: h.summary || '-',
+            note: h.note || '',
+            author: h.author || '배진철',
+            unitPrice: parsedPrice
+          }
+        })
+
+      const lotInboundRows = (item.lots || []).map(lot => {
+        const qty = Number(lot.initial_qty ?? lot.current_qty ?? 0)
+        const lotPrice = lot.unit_price !== undefined && lot.unit_price !== null ? Number(lot.unit_price) : null
+        return {
+          date: lot.import_date || '-',
+          badge: `로트 (${lot.po_number || '미지정'})`,
+          summary: `[${item.code}] ${item.name} (${qty}개)`,
+          note: `잔여 수량: ${Number(lot.current_qty || 0)}개`,
+          author: '로트 등록',
+          unitPrice: lotPrice
+        }
+      })
+
+      const combinedInbound = [...lotInboundRows, ...historyInboundRows].sort((a, b) => {
+        return new Date(b.date || 0) - new Date(a.date || 0)
+      })
+
+      setHistoryList(combinedInbound)
+      return
+    }
+
+    const filteredOutbound = (item.histories || [])
+      .filter(h => h.type === 'OUTBOUND' || h.company_name?.includes('출고'))
+      .map(h => ({
+        date: h.date || '-',
+        badge: h.company_name || '거래처 미지정',
+        summary: h.summary || '-',
+        note: h.note || '',
+        author: h.author || '배진철',
+        unitPrice: null
+      }))
+
+    setHistoryList(filteredOutbound)
   }
 
   const handleExportExcel = () => {
@@ -307,16 +393,21 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
                 historyList.map((h, idx) => (
                   <div key={idx} style={{ backgroundColor: '#F8FAFC', padding: '12px 14px', borderRadius: '10px', border: '1px solid #E2E8F0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px' }}>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                      <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                      <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
                         <span style={{ fontSize: '12px', fontWeight: '700', color: '#2563EB' }}>📅 {h.date}</span>
-                        <span style={{ fontSize: '11px', backgroundColor: '#E2E8F0', padding: '2px 6px', borderRadius: '4px', fontWeight: '700', color: '#334155' }}>{h.company_name || '거래처 미지정'}</span>
+                        <span style={{ fontSize: '11px', backgroundColor: '#E2E8F0', padding: '2px 6px', borderRadius: '4px', fontWeight: '700', color: '#334155' }}>{h.badge}</span>
+                        {selectedItemHistory.type === 'INBOUND' && (
+                          <span style={{ fontSize: '11px', backgroundColor: '#ECFDF5', border: '1px solid #A7F3D0', padding: '2px 7px', borderRadius: '4px', fontWeight: '800', color: '#059669' }}>
+                            💰 단가: {h.unitPrice !== null && h.unitPrice !== undefined ? `${Number(h.unitPrice).toLocaleString()}원` : '미입력'}
+                          </span>
+                        )}
                       </div>
                       <span style={{ fontSize: '13px', fontWeight: '700', color: '#0F172A' }}>{h.summary}</span>
                       {h.note && <span style={{ fontSize: '11px', color: '#64748B' }}>비고: {h.note}</span>}
                     </div>
                     <div style={{ textAlign: 'right', minWidth: '80px' }}>
-                      <span style={{ fontSize: '11px', fontWeight: '700', color: '#059669', display: 'block' }}>작성자</span>
-                      <span style={{ fontSize: '12px', fontWeight: '800', color: '#334155' }}>{h.author || '배진철'}</span>
+                      <span style={{ fontSize: '11px', fontWeight: '700', color: '#059669', display: 'block' }}>구분/작성자</span>
+                      <span style={{ fontSize: '12px', fontWeight: '800', color: '#334155' }}>{h.author}</span>
                     </div>
                   </div>
                 ))

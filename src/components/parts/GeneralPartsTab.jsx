@@ -32,7 +32,7 @@ export default function GeneralPartsTab({ partsList, refreshParts, showAddForm, 
 
   const [selectedSerialPart, setSelectedSerialPart] = useState(null)
   const [editableSerials, setEditableSerials] = useState([])
-  const [initialSerialsSnapshot, setInitialSerialsSnapshot] = useState([])
+  const [existingSerialsForPart, setExistingSerialsForPart] = useState([])
 
   const [quantityStockPart, setQuantityStockPart] = useState(null)
   const [qtyChangeAmount, setQtyChangeAmount] = useState(1)
@@ -546,12 +546,12 @@ export default function GeneralPartsTab({ partsList, refreshParts, showAddForm, 
                     <td style={{ padding: '12px 16px', textAlign: 'center' }}>
                       {p.is_serial_managed ? (
                         <button type="button" onClick={() => {
-                          const cloned = parsedSerials.map(s => ({ ...s }))
+                          const clonedExisting = parsedSerials.map(s => ({ ...s }))
                           setSelectedSerialPart(p)
-                          setEditableSerials(cloned)
-                          setInitialSerialsSnapshot(cloned)
+                          setExistingSerialsForPart(clonedExisting)
+                          setEditableSerials([{ sn: '', condition: 'BG', received_date: new Date().toISOString().split('T')[0] }])
                         }} style={{ border: 'none', background: '#EFF6FF', color: '#2563EB', padding: '6px 12px', borderRadius: '6px', fontSize: '11px', fontWeight: '800', cursor: 'pointer' }}>
-                          ✏️ S/N 관리
+                          + S/N 추가
                         </button>
                       ) : (
                         <button type="button" onClick={() => {
@@ -596,12 +596,12 @@ export default function GeneralPartsTab({ partsList, refreshParts, showAddForm, 
         </table>
       </div>
 
-      {/* S/N 관리 모달 */}
+      {/* S/N 로트 추가 모달 */}
       {selectedSerialPart && (
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.6)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1100, padding: '20px' }}>
           <div style={{ backgroundColor: '#ffffff', borderRadius: '16px', padding: '24px', width: '600px', maxHeight: '85vh', overflowY: 'auto', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', borderBottom: '1px solid #E2E8F0', paddingBottom: '10px' }}>
-              <h3 style={{ margin: 0, fontSize: '16px', fontWeight: '800', color: '#0F172A' }}>🏷️ S/N별 상태(BG/EX/OH) 관리</h3>
+              <h3 style={{ margin: 0, fontSize: '16px', fontWeight: '800', color: '#0F172A' }}>+ S/N 로트 추가 입고</h3>
               <button type="button" onClick={() => setSelectedSerialPart(null)} style={{ border: 'none', background: 'none', fontSize: '16px', color: '#64748B', cursor: 'pointer', fontWeight: 'bold' }}>✕</button>
             </div>
             <div style={{ fontSize: '13px', color: '#2563EB', fontWeight: '700', marginBottom: '14px' }}>{selectedSerialPart.code} - {selectedSerialPart.name}</div>
@@ -638,14 +638,14 @@ export default function GeneralPartsTab({ partsList, refreshParts, showAddForm, 
               ))}
 
               <button type="button" onClick={() => setEditableSerials([...editableSerials, { sn: '', condition: 'BG', received_date: new Date().toISOString().split('T')[0] }])} style={{ background: '#EFF6FF', color: '#2563EB', border: '1px dashed #BFDBFE', padding: '12px', borderRadius: '10px', fontWeight: '800', fontSize: '13px', cursor: 'pointer', marginTop: '4px' }}>
-                + 신규 S/N 추가 입고
+                + S/N 입력칸 추가
               </button>
             </div>
 
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', borderTop: '1px solid #E2E8F0', paddingTop: '14px' }}>
               <button type="button" onClick={() => setSelectedSerialPart(null)} style={{ padding: '10px 18px', background: '#F1F5F9', border: '1px solid #CBD5E1', borderRadius: '8px', fontWeight: '600', cursor: 'pointer' }}>취소</button>
               <button type="button" onClick={async () => {
-                const validSerials = editableSerials
+                const newInputSerials = editableSerials
                   .filter(s => s && s.sn && s.sn.trim() !== '')
                   .map(s => ({
                     sn: s.sn.trim().replace(/^SN-/i, ''),
@@ -653,27 +653,29 @@ export default function GeneralPartsTab({ partsList, refreshParts, showAddForm, 
                     received_date: s.received_date || new Date().toISOString().split('T')[0]
                   }))
 
-                const { error } = await supabase.from('parts').update({
-                  serials: JSON.stringify(validSerials),
-                  stock: Math.max(0, (Number(selectedSerialPart.carry_over_stock) || 0) + validSerials.length)
-                }).eq('id', selectedSerialPart.id)
-
-                if (error) {
-                  return alert('저장 실패: ' + error.message)
+                if (newInputSerials.length === 0) {
+                  alert('추가할 S/N을 입력해주세요.')
+                  return
                 }
 
-                const prevSnSet = new Set(
-                  (initialSerialsSnapshot || [])
-                    .filter(s => s && s.sn && s.sn.trim() !== '')
-                    .map(s => s.sn.trim().replace(/^SN-/i, ''))
-                )
-                const nextSnSet = new Set(validSerials.map(s => s.sn))
+                const existingClean = (existingSerialsForPart || [])
+                  .filter(s => s && s.sn && s.sn.trim() !== '')
+                  .map(s => ({
+                    sn: s.sn.trim().replace(/^SN-/i, ''),
+                    condition: s.condition || 'BG',
+                    received_date: s.received_date || new Date().toISOString().split('T')[0]
+                  }))
 
-                const addedSerials = validSerials.filter(s => !prevSnSet.has(s.sn))
-                const removedSns = Array.from(prevSnSet).filter(sn => !nextSnSet.has(sn))
+                const existingSnSet = new Set(existingClean.map(s => s.sn))
+                const addedSerials = newInputSerials.filter(s => !existingSnSet.has(s.sn))
+
+                if (addedSerials.length === 0) {
+                  alert('이미 등록된 S/N입니다. 새로운 S/N을 입력해주세요.')
+                  return
+                }
 
                 for (const s of addedSerials) {
-                  await supabase.from('part_stock_lots').insert([{
+                  const { error: lotErr } = await supabase.from('part_stock_lots').insert([{
                     part_id: selectedSerialPart.id,
                     po_number: `SN-${s.sn} (${s.condition})`,
                     import_date: s.received_date,
@@ -681,18 +683,26 @@ export default function GeneralPartsTab({ partsList, refreshParts, showAddForm, 
                     initial_qty: 1,
                     current_qty: 1
                   }])
+                  if (lotErr) {
+                    return alert('로트 추가 실패: ' + lotErr.message)
+                  }
                 }
 
-                for (const sn of removedSns) {
-                  await supabase.from('part_stock_lots').update({ current_qty: 0 }).eq('part_id', selectedSerialPart.id).eq('po_number', `SN-${sn} (BG)`)
-                  await supabase.from('part_stock_lots').update({ current_qty: 0 }).eq('part_id', selectedSerialPart.id).eq('po_number', `SN-${sn} (EX)`)
-                  await supabase.from('part_stock_lots').update({ current_qty: 0 }).eq('part_id', selectedSerialPart.id).eq('po_number', `SN-${sn} (OH)`)
+                const mergedSerials = [...existingClean, ...addedSerials]
+
+                const { error } = await supabase.from('parts').update({
+                  serials: JSON.stringify(mergedSerials),
+                  stock: Math.max(0, (Number(selectedSerialPart.carry_over_stock) || 0) + mergedSerials.length)
+                }).eq('id', selectedSerialPart.id)
+
+                if (error) {
+                  return alert('저장 실패: ' + error.message)
                 }
 
-                alert('S/N별 상태 정보 및 로트가 성공적으로 반영되었습니다.')
+                alert('신규 S/N이 로트에 추가되고 재고가 반영되었습니다.')
                 setSelectedSerialPart(null)
                 refreshParts()
-              }} style={{ padding: '10px 22px', background: '#2563EB', color: 'white', border: 'none', borderRadius: '8px', fontWeight: '800', cursor: 'pointer' }}>저장하기</button>
+              }} style={{ padding: '10px 22px', background: '#2563EB', color: 'white', border: 'none', borderRadius: '8px', fontWeight: '800', cursor: 'pointer' }}>로트에 추가</button>
             </div>
           </div>
         </div>

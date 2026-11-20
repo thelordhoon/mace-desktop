@@ -12,7 +12,7 @@ import DeliveryHistory from './components/DeliveryHistory'
 import EngineerCalendar from './components/EngineerCalendar'
 import PurchaseRequest from './components/PurchaseRequest'
 import MobileCompanyView from './components/mobile/MobileCompanyView'
-import StockClosingTab from './components/parts/StockClosingTab'
+import InventoryLedgerTab from './components/parts/InventoryLedgerTab'
 
 export default function App() {
   const [user, setUser] = useState(null)
@@ -205,7 +205,9 @@ export default function App() {
           {currentMenu === 'delivery_history' && <DeliveryHistory partsList={partsList} user={user} />}
           {currentMenu === 'users' && isAdmin && <UserManagement />}
           {currentMenu === 'purchase_request' && <PurchaseRequest user={user} isAdmin={isAdmin} onUpdateRequests={fetchPurchaseAlerts} />}
-          {currentMenu === 'stock_closing' && (isAdmin || userRole === 'manager') && <StockClosingTab user={user} />}
+          {currentMenu === 'stock_closing' && (isAdmin || userRole === 'manager') && (
+            <InventoryLedgerTab partsList={partsList} refreshParts={fetchParts} />
+          )}
         </main>
       </div>
     </div>
