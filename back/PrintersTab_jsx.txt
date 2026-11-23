@@ -1,0 +1,1512 @@
+import React, { useEffect, useMemo, useState } from 'react'
+import { supabase } from '../../supabaseClient'
+
+const STATUS_META = {
+  IN_STOCK: { label: '재고 보유', bg: '#DCFCE7', color: '#166534' },
+  DEMO: { label: '데모/임대', bg: '#FEF3C7', color: '#92400E' },
+  SOLD: { label: '납품 완료', bg: '#DBEAFE', color: '#1E40AF' },
+  REPAIR: { label: '수리 중', bg: '#F3E8FF', color: '#6B21A8' },
+  SCRAPPED: { label: '폐기', bg: '#FEE2E2', color: '#991B1B' },
+}
+
+const CONDITION_META = {
+  NEW: '신품',
+  DEMO_USED: '데모기',
+  REFURB: '리퍼',
+}
+
+const MOVEMENT_TYPE_META = {
+  INBOUND: '입고',
+  OUTBOUND_SALE: '판매 출고',
+  OUTBOUND_DEMO: '데모 출고',
+  RETURN_DEMO: '데모 회수',
+  TRANSFER: '위치 이동',
+  AS_SWAP: '대체 투입',
+  SCRAP: '폐기 처리',
+}
+
+const normalizeSerial = (val = '') => val.trim().replace(/\s+/g, '').toUpperCase()
+
+const formatCurrency = (amount, currency = 'KRW') => {
+  if (amount === null || amount === undefined || amount === '') return '-'
+  const num = Number(amount)
+  if (Number.isNaN(num)) return '-'
+  return `${num.toLocaleString('ko-KR')} ${currency || 'KRW'}`
+}
+
+/**
+ * 수불부 로트 집계 헬퍼
+ * 구분자 '||'로 시리즈, 입고일자(로트), 입고단가 조합 키를 생성해 수량 및 금액 집계
+ */
+export function buildLedgerLotSummary(units = []) {
+  const map = new Map()
+
+  for (const u of units) {
+    const series = u?.printer_models?.series || u?.series || '미지정'
+    const inboundDate = u?.inbound_date ? String(u.inbound_date).slice(0, 10) : '미입력'
+    const rawCost =
+      u?.unit_cost !== null && u?.unit_cost !== undefined && String(u.unit_cost).trim() !== ''
+        ? Number(u.unit_cost)
+        : 0
+    const unitCost = Number.isNaN(rawCost) ? 0 : rawCost
+    const currency = u?.currency || 'KRW'
+
+    const lotKey = `${series}||${inboundDate}||${unitCost}`
+
+    if (!map.has(lotKey)) {
+      map.set(lotKey, {
+        lot_key: lotKey,
+        series,
+        inbound_date: inboundDate,
+        unit_cost: unitCost,
+        currency,
+        qty: 0,
+        total_amount: 0,
+        serial_numbers: [],
+      })
+    }
+
+    const row = map.get(lotKey)
+    row.qty += 1
+    row.total_amount = row.unit_cost * row.qty
+    if (u?.serial_number) {
+      row.serial_numbers.push(u.serial_number)
+    }
+  }
+
+  return Array.from(map.values()).sort((a, b) => {
+    if (a.series !== b.series) return a.series.localeCompare(b.series, 'ko')
+    if (a.inbound_date !== b.inbound_date) return b.inbound_date.localeCompare(a.inbound_date)
+    return a.unit_cost - b.unit_cost
+  })
+}
+
+export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm }) {
+  const [models, setModels] = useState([])
+  const [units, setUnits] = useState([])
+  const [selectedUnitId, setSelectedUnitId] = useState(null)
+  const [movements, setMovements] = useState([])
+
+  const [viewMode, setViewMode] = useState('UNITS') // 'UNITS' | 'LEDGER'
+  const [loading, setLoading] = useState(true)
+  const [movementsLoading, setMovementsLoading] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [errorMsg, setErrorMsg] = useState('')
+
+  // 필터 상태
+  const [searchTerm, setSearchTerm] = useState('')
+  const [manufacturerFilter, setManufacturerFilter] = useState('ALL')
+  const [modelFilter, setModelFilter] = useState('ALL')
+  const [statusFilter, setStatusFilter] = useState('ALL')
+
+  // 신규 프린터 입고 폼
+  const [isAddOpen, setIsAddOpen] = useState(false)
+  const [newForm, setNewForm] = useState({
+    model_id: '',
+    serial_number: '',
+    condition: 'NEW',
+    inbound_date: new Date().toISOString().slice(0, 10),
+    unit_cost: '',
+    currency: 'KRW',
+    warehouse_location: '본사 창고',
+    memo: '',
+  })
+
+  // 선택 장비 입고일자 / 입고단가 별도 수정 모드 상태
+  const [isEditingInboundSpec, setIsEditingInboundSpec] = useState(false)
+  const [specForm, setSpecForm] = useState({
+    inbound_date: '',
+    unit_cost: '',
+  })
+  const [savingSpec, setSavingSpec] = useState(false)
+
+  // 상태/위치 변경 및 폐기 폼 (선택된 장비 기준)
+  const [moveForm, setMoveForm] = useState({
+    movement_type: 'OUTBOUND_SALE',
+    to_status: 'SOLD',
+    location_or_customer: '',
+    scrap_reason: '',
+    unit_cost: '',
+    note: '',
+  })
+
+  const openAddModal = () => {
+    setErrorMsg('')
+    setIsAddOpen(true)
+    setShowAddForm?.(true)
+  }
+
+  const closeAddModal = () => {
+    setIsAddOpen(false)
+    setShowAddForm?.(false)
+  }
+
+  useEffect(() => {
+    if (showAddForm) {
+      setIsAddOpen(true)
+    }
+  }, [showAddForm])
+
+  // 모델 및 프린터 개체 목록 조회
+  const fetchPrinterData = async () => {
+    setLoading(true)
+    setErrorMsg('')
+    try {
+      const [{ data: modelRows, error: modelErr }, { data: unitRows, error: unitErr }] =
+        await Promise.all([
+          supabase
+            .from('printer_models')
+            .select('*')
+            .order('manufacturer', { ascending: true })
+            .order('model_name', { ascending: true }),
+          supabase
+            .from('printer_units')
+            .select(`
+              *,
+              printer_models (
+                id,
+                manufacturer,
+                category,
+                series,
+                model_name,
+                track_serial
+              )
+            `)
+            .order('updated_at', { ascending: false }),
+        ])
+
+      if (modelErr) throw modelErr
+      if (unitErr) throw unitErr
+
+      setModels(modelRows || [])
+      setUnits(unitRows || [])
+
+      if (!newForm.model_id && modelRows?.length) {
+        setNewForm((prev) => ({ ...prev, model_id: modelRows[0].id }))
+      }
+
+      if (unitRows?.length) {
+        setSelectedUnitId((prev) => prev || unitRows[0].id)
+      } else {
+        setSelectedUnitId(null)
+      }
+    } catch (err) {
+      setErrorMsg(err.message || '프린터 데이터를 불러오는 중 오류가 발생했습니다.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  // 선택된 프린터의 이동 이력 조회
+  const fetchMovements = async (unitId) => {
+    if (!unitId) {
+      setMovements([])
+      return
+    }
+    setMovementsLoading(true)
+    try {
+      const { data, error } = await supabase
+        .from('printer_movements')
+        .select('*')
+        .eq('printer_unit_id', unitId)
+        .order('moved_at', { ascending: false })
+
+      if (error) throw error
+      setMovements(data || [])
+    } catch (err) {
+      setErrorMsg(err.message || '이동 이력을 불러오지 못했습니다.')
+    } finally {
+      setMovementsLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    fetchPrinterData()
+  }, [])
+
+  useEffect(() => {
+    fetchMovements(selectedUnitId)
+    setMoveForm((prev) => ({
+      ...prev,
+      location_or_customer: '',
+      scrap_reason: '',
+      unit_cost: '',
+      note: '',
+    }))
+  }, [selectedUnitId])
+
+  const manufacturers = useMemo(() => {
+    const set = new Set(models.map((m) => m.manufacturer).filter(Boolean))
+    return ['ALL', ...Array.from(set)]
+  }, [models])
+
+  const filteredModelsForFilter = useMemo(() => {
+    if (manufacturerFilter === 'ALL') return models
+    return models.filter((m) => m.manufacturer === manufacturerFilter)
+  }, [models, manufacturerFilter])
+
+  // S/N, 모델명, 거래처명, 창고위치 통합 검색 + 필터
+  const filteredUnits = useMemo(() => {
+    const q = searchTerm.trim().toLowerCase()
+    const normQ = normalizeSerial(searchTerm).toLowerCase()
+
+    return units.filter((u) => {
+      const model = u.printer_models
+      if (manufacturerFilter !== 'ALL' && model?.manufacturer !== manufacturerFilter) return false
+      if (modelFilter !== 'ALL' && u.model_id !== modelFilter) return false
+      if (statusFilter !== 'ALL' && u.status !== statusFilter) return false
+
+      if (!q) return true
+
+      const snMatch =
+        u.serial_number?.toLowerCase().includes(q) ||
+        normalizeSerial(u.serial_number).toLowerCase().includes(normQ) 
+        const modelMatch = model?.model_name?.toLowerCase().includes(q)
+      const custMatch = u.customer_name?.toLowerCase().includes(q)
+      const locMatch = u.warehouse_location?.toLowerCase().includes(q)
+      const scrapMatch = u.scrap_reason?.toLowerCase().includes(q)
+
+      return snMatch || modelMatch || custMatch || locMatch || scrapMatch
+    })
+  }, [units, searchTerm, manufacturerFilter, modelFilter, statusFilter])
+
+  // S/N 검색어와 정확히 일치하는 장비가 있으면 자동 선택
+  useEffect(() => {
+    const normQ = normalizeSerial(searchTerm)
+    if (!normQ) return
+    const exactMatch = units.find((u) => normalizeSerial(u.serial_number) === normQ)
+    if (exactMatch) {
+      setSelectedUnitId(exactMatch.id)
+    }
+  }, [searchTerm, units])
+
+  const selectedUnit = useMemo(
+    () => units.find((u) => u.id === selectedUnitId) || null,
+    [units, selectedUnitId]
+  )
+
+  const ledgerLots = useMemo(() => buildLedgerLotSummary(units), [units])
+
+  // 선택 장비 변경 시 입고정보 수정 모드 초기화
+  useEffect(() => {
+    setIsEditingInboundSpec(false)
+    if (selectedUnit) {
+      setSpecForm({
+        inbound_date: selectedUnit.inbound_date ? String(selectedUnit.inbound_date).slice(0, 10) : '',
+        unit_cost:
+          selectedUnit.unit_cost !== null && selectedUnit.unit_cost !== undefined
+            ? String(selectedUnit.unit_cost)
+            : '',
+      })
+    } else {
+      setSpecForm({ inbound_date: '', unit_cost: '' })
+    }
+  }, [selectedUnit])
+
+  const handleStartEditInboundSpec = () => {
+    if (!selectedUnit) return
+    setSpecForm({
+      inbound_date: selectedUnit.inbound_date ? String(selectedUnit.inbound_date).slice(0, 10) : '',
+      unit_cost:
+        selectedUnit.unit_cost !== null && selectedUnit.unit_cost !== undefined
+          ? String(selectedUnit.unit_cost)
+          : '',
+    })
+    setErrorMsg('')
+    setIsEditingInboundSpec(true)
+  }
+
+  const handleSaveInboundSpec = async () => {
+    if (!selectedUnit) return
+
+    const trimmedDate = specForm.inbound_date.trim()
+    const cleanedCost = String(specForm.unit_cost ?? '').replace(/,/g, '').trim()
+    const parsedCost = cleanedCost === '' ? null : Number(cleanedCost)
+
+    if (parsedCost !== null && (Number.isNaN(parsedCost) || parsedCost < 0)) {
+      setErrorMsg('입고단가는 0 이상의 숫자로 입력해 주세요.')
+      return
+    }
+
+    const seriesLabel = selectedUnit.printer_models?.series || '미지정'
+    const lotKey = `${seriesLabel}||${trimmedDate || '미입력'}||${parsedCost ?? 0}`
+
+    setSavingSpec(true)
+    setErrorMsg('')
+    try {
+      const { error } = await supabase
+        .from('printer_units')
+        .update({
+          inbound_date: trimmedDate || null,
+          unit_cost: parsedCost,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', selectedUnit.id)
+
+      if (error) throw error
+
+      console.debug('수불부 로트 키:', lotKey)
+      setIsEditingInboundSpec(false)
+      await fetchPrinterData()
+      refreshParts?.()
+    } catch (err) {
+      setErrorMsg(err.message || '입고일자 및 입고단가 저장 중 오류가 발생했습니다.')
+    } finally {
+      setSavingSpec(false)
+    }
+  }
+
+  // 신규 입고 등록 (printer_units INSERT + printer_movements INBOUND INSERT)
+  const handleCreateUnit = async (e) => {
+    e.preventDefault()
+    const cleanSerial = normalizeSerial(newForm.serial_number)
+    if (!newForm.model_id || !cleanSerial) {
+      setErrorMsg('모델과 시리얼 번호(S/N)는 필수입니다.')
+      return
+    }
+
+    setSaving(true)
+    setErrorMsg('')
+    try {
+      const parsedCost =
+        newForm.unit_cost === '' || newForm.unit_cost === null
+          ? null
+          : Number(newForm.unit_cost)
+
+      const { data: createdUnit, error: unitErr } = await supabase
+        .from('printer_units')
+        .insert([
+          {
+            model_id: newForm.model_id,
+            serial_number: cleanSerial,
+            status: 'IN_STOCK',
+            condition: newForm.condition,
+            inbound_date: newForm.inbound_date || null,
+            unit_cost: parsedCost,
+            currency: newForm.currency || 'KRW',
+            warehouse_location: newForm.warehouse_location.trim() || '본사 창고',
+            memo: newForm.memo.trim() || null,
+          },
+        ])
+        .select()
+        .single()
+
+      if (unitErr) throw unitErr
+
+      const { error: moveErr } = await supabase.from('printer_movements').insert([
+        {
+          printer_unit_id: createdUnit.id,
+          movement_type: 'INBOUND',
+          from_status: null,
+          to_status: 'IN_STOCK',
+          from_location: '외부 입고',
+          to_location: newForm.warehouse_location.trim() || '본사 창고',
+          unit_cost: parsedCost,
+          reference_type: 'MANUAL',
+          note: newForm.memo.trim() || '신규 프린터 입고',
+        },
+      ])
+
+      if (moveErr) throw moveErr
+
+      setNewForm((prev) => ({
+        ...prev,
+        serial_number: '',
+        unit_cost: '',
+        memo: '',
+      }))
+      closeAddModal()
+      setSelectedUnitId(createdUnit.id)
+      await fetchPrinterData()
+      await fetchMovements(createdUnit.id)
+      refreshParts?.()
+    } catch (err) {
+      setErrorMsg(err.message || '프린터 입고 등록 중 오류가 발생했습니다.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  // 상태/위치 변경 및 폐기 처리 (printer_movements INSERT -> 트리거로 printer_units 동기화)
+  const handleMovementSubmit = async (e) => {
+    e.preventDefault()
+    if (!selectedUnit) return
+
+    const targetLoc = moveForm.location_or_customer.trim()
+    if (['SOLD', 'DEMO', 'REPAIR'].includes(moveForm.to_status) && !targetLoc) {
+      setErrorMsg('납품/데모/수리 상태 변경 시 거래처명 또는 위치를 입력하세요.')
+      return
+    }
+  
+    setSaving(true)
+    setErrorMsg('')
+    try {
+      const prevLoc =
+        selectedUnit.customer_name || selectedUnit.warehouse_location || '-'
+
+      const { error: moveErr } = await supabase.from('printer_movements').insert([
+        {
+          printer_unit_id: selectedUnit.id,
+          movement_type: moveForm.movement_type,
+          from_status: selectedUnit.status,
+          to_status: moveForm.to_status,
+          from_location: prevLoc,
+          to_location:
+            moveForm.to_status === 'SCRAPPED'
+              ? `폐기 (${moveForm.scrap_reason.trim() || '사유 미기재'})`
+              : targetLoc,
+          customer_name: ['SOLD', 'DEMO', 'REPAIR'].includes(moveForm.to_status)
+            ? targetLoc
+            : null,
+          unit_cost: moveForm.unit_cost === '' ? null : Number(moveForm.unit_cost),
+          reference_type: 'MANUAL',
+          note: moveForm.note.trim() || moveForm.scrap_reason.trim() || null,
+        },
+      ])
+
+      if (moveErr) throw moveErr
+
+      // 폐기 상태일 때 폐기일시 및 폐기 사유 추가 기록
+      if (moveForm.to_status === 'SCRAPPED') {
+        const { error: scrapErr } = await supabase
+          .from('printer_units')
+          .update({
+            scrapped_at: new Date().toISOString(),
+            scrap_reason: moveForm.scrap_reason.trim() || '사유 미기재',
+          })
+          .eq('id', selectedUnit.id)
+
+        if (scrapErr) throw scrapErr
+      } else if (selectedUnit.status === 'SCRAPPED') {
+        await supabase
+          .from('printer_units')
+          .update({ scrapped_at: null, scrap_reason: null })
+          .eq('id', selectedUnit.id)
+      }
+
+      setMoveForm((prev) => ({
+        ...prev,
+        location_or_customer: '',
+        scrap_reason: '',
+        unit_cost: '',
+        note: '',
+      }))
+
+      await fetchPrinterData()
+      await fetchMovements(selectedUnit.id)
+      refreshParts?.()
+    } catch (err) {
+      setErrorMsg(err.message || '상태 변경 처리 중 오류가 발생했습니다.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  // 상태 요약 카운트
+  const summaryCounts = useMemo(() => {
+    return units.reduce(
+      (acc, u) => {
+        acc.total += 1
+        acc[u.status] = (acc[u.status] || 0) + 1
+        return acc
+      },
+      { total: 0, IN_STOCK: 0, DEMO: 0, SOLD: 0, REPAIR: 0, SCRAPPED: 0 }
+    )
+  }, [units])
+
+  const inputStyle = {
+    width: '100%',
+    padding: '10px 12px',
+    fontSize: '13px',
+    borderRadius: '10px',
+    border: '1px solid #CBD5E1',
+    backgroundColor: '#F8FAFC',
+    outline: 'none',
+    boxSizing: 'border-box',
+  }
+
+  const labelStyle = {
+    display: 'block',
+    fontSize: '12px',
+    fontWeight: '700',
+    color: '#334155',
+    marginBottom: '6px',
+  }
+
+  const renderStatusBadge = (status) => {
+    const meta = STATUS_META[status] || {
+      label: status || '-',
+      bg: '#F1F5F9',
+      color: '#334155',
+    }
+    return (
+      <span
+        style={{
+          display: 'inline-block',
+          padding: '4px 10px',
+          borderRadius: '999px',
+          fontSize: '12px',
+          fontWeight: '700',
+          backgroundColor: meta.bg,
+          color: meta.color,
+        }}
+      >
+        {meta.label}
+      </span>
+    )
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+      {/* 상단 요약 바 & 뷰 전환 & 신규 입고 버튼 */}
+      <div
+        style={{
+          display: 'flex',
+          flexWrap: 'wrap',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          gap: '12px',
+        }}
+      >
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center' }}>
+          <span style={{ fontWeight: '800', fontSize: '15px', color: '#0F172A' }}>
+            전체 {summaryCounts.total}대
+          </span>
+          {Object.entries(STATUS_META).map(([key, meta]) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => {
+                setViewMode('UNITS')
+                setStatusFilter((prev) => (prev === key ? 'ALL' : key))
+              }}
+              style={{
+                padding: '6px 12px',
+                borderRadius: '999px',
+                border: statusFilter === key ? '2px solid #0F172A' : '1px solid #E2E8F0',
+                backgroundColor: meta.bg,
+                color: meta.color,
+                fontSize: '12px',
+                fontWeight: '700',
+                cursor: 'pointer',
+              }}
+            >
+              {meta.label} {summaryCounts[key] || 0}
+            </button>
+          ))}
+        </div>
+
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center' }}>
+          <button
+            type="button"
+            onClick={() => setViewMode((prev) => (prev === 'UNITS' ? 'LEDGER' : 'UNITS'))}
+            style={{
+              padding: '10px 14px',
+              borderRadius: '10px',
+              border: '1px solid #CBD5E1',
+              backgroundColor: viewMode === 'LEDGER' ? '#0F172A' : '#FFFFFF',
+              color: viewMode === 'LEDGER' ? '#FFFFFF' : '#0F172A',
+              fontWeight: '700',
+              fontSize: '13px',
+              cursor: 'pointer',
+            }}
+          >
+            {viewMode === 'LEDGER' ? '개체(S/N) 목록 보기' : `수불부 로트 집계 (${ledgerLots.length})`}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => (isAddOpen ? closeAddModal() : openAddModal())}
+            style={{
+              padding: '10px 16px',
+              borderRadius: '10px',
+              border: 'none',
+              backgroundColor: '#2563EB',
+              color: '#FFFFFF',
+              fontWeight: '700',
+              fontSize: '13px',
+              cursor: 'pointer',
+            }}
+          >
+            {isAddOpen ? '입고 폼 닫기' : '+ 프린터 입고 등록'}
+          </button>
+        </div>
+      </div>
+
+      {errorMsg && (
+        <div
+          style={{
+            padding: '12px 14px',
+            borderRadius: '12px',
+            backgroundColor: '#FEF2F2',
+            border: '1px solid #FECACA',
+            color: '#991B1B',
+            fontSize: '13px',
+            fontWeight: '600',
+          }}
+        >
+          {errorMsg}
+        </div>
+      )}
+
+      {/* 신규 프린터 입고 등록 폼 */}
+      {isAddOpen && (
+        <form
+          onSubmit={handleCreateUnit}
+          style={{
+            backgroundColor: '#FFFFFF',
+            borderRadius: '16px',
+            border: '1px solid #CBD5E1',
+            padding: '18px',
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))',
+            gap: '12px',
+          }}
+        >
+          <div>
+            <label style={labelStyle}>프린터 모델 *</label>
+            <select
+              value={newForm.model_id}
+              onChange={(e) => setNewForm((prev) => ({ ...prev, model_id: e.target.value }))}
+              style={inputStyle}
+              required
+            >
+              {models.map((m) => (
+                <option key={m.id} value={m.id}>
+                  [{m.manufacturer}] {m.model_name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label style={labelStyle}>본체 시리얼 번호 (S/N) *</label>
+            <input
+              type="text"
+              placeholder="예: L-2501001"
+              value={newForm.serial_number}
+              onChange={(e) => setNewForm((prev) => ({ ...prev, serial_number: e.target.value }))}
+              style={inputStyle}
+              required
+            />
+          </div>
+
+          <div>
+            <label style={labelStyle}>입고일자</label>
+            <input
+              type="date"
+              value={newForm.inbound_date}
+              onChange={(e) => setNewForm((prev) => ({ ...prev, inbound_date: e.target.value }))}
+              style={inputStyle}
+            />
+          </div>
+
+          <div>
+            <label style={labelStyle}>입고단가</label>
+            <input
+              type="number"
+              step="0.01"
+              placeholder="예: 12000000"
+              value={newForm.unit_cost}
+              onChange={(e) => setNewForm((prev) => ({ ...prev, unit_cost: e.target.value }))}
+              style={inputStyle}
+            />
+          </div>
+
+          <div>
+            <label style={labelStyle}>장비 상태 구분</label>
+            <select
+              value={newForm.condition}
+              onChange={(e) => setNewForm((prev) => ({ ...prev, condition: e.target.value }))}
+              style={inputStyle}
+            >
+              <option value="NEW">신품 (NEW)</option>
+              <option value="DEMO_USED">데모기 (DEMO_USED)</option>
+              <option value="REFURB">리퍼 (REFURB)</option>
+            </select>
+          </div>
+
+          <div>
+            <label style={labelStyle}>보관 창고 위치</label>
+            <input
+              type="text"
+              value={newForm.warehouse_location}
+              onChange={(e) =>
+                setNewForm((prev) => ({ ...prev, warehouse_location: e.target.value }))
+              }
+              style={inputStyle}
+            />
+          </div>
+
+          <div>
+            <label style={labelStyle}>메모</label>
+            <input
+              type="text"
+              placeholder="옵션, 펌웨어 등"
+              value={newForm.memo}
+              onChange={(e) => setNewForm((prev) => ({ ...prev, memo: e.target.value }))}
+              style={inputStyle}
+            />
+          </div>
+
+          <div
+            style={{
+              gridColumn: '1 / -1',
+              display: 'flex',
+              justifyContent: 'flex-end',
+              gap: '8px',
+            }}
+          >
+            <button
+              type="button"
+              onClick={closeAddModal}
+              style={{
+                padding: '9px 14px',
+                borderRadius: '10px',
+                border: '1px solid #CBD5E1',
+                backgroundColor: '#FFFFFF',
+                fontWeight: '600',
+                fontSize: '13px',
+                cursor: 'pointer',
+              }}
+            >
+              취소
+            </button>
+            <button
+              type="submit"
+              disabled={saving}
+              style={{
+                padding: '9px 16px',
+                borderRadius: '10px',
+                border: 'none',
+                backgroundColor: '#0F172A',
+                color: '#FFFFFF',
+                fontWeight: '700',
+                fontSize: '13px',
+                cursor: 'pointer',
+              }}
+            >
+              {saving ? '저장 중...' : '입고 완료'}
+            </button>
+          </div>
+        </form>
+      )}
+
+      {viewMode === 'LEDGER' ? (
+        /* 수불부 로트 집계 테이블 (시리즈 × 입고일자 × 입고단가) */
+        <div
+          style={{
+            backgroundColor: '#FFFFFF',
+            borderRadius: '16px',
+            border: '1px solid #E2E8F0',
+            overflowX: 'auto',
+          }}
+        >
+          <table
+            style={{
+              width: '100%',
+              borderCollapse: 'collapse',
+              textAlign: 'left',
+              fontSize: '13px',
+            }}
+          >
+            <thead>
+              <tr
+                style={{
+                  backgroundColor: '#F8FAFC',
+                  borderBottom: '1px solid #E2E8F0',
+                  color: '#475569',
+                }}
+              >
+                <th style={{ padding: '12px' }}>시리즈</th>
+                <th style={{ padding: '12px' }}>입고일자 (로트)</th>
+                <th style={{ padding: '12px', textAlign: 'right' }}>입고단가</th>
+                <th style={{ padding: '12px', textAlign: 'right' }}>수량</th>
+                <th style={{ padding: '12px', textAlign: 'right' }}>로트 합계</th>
+                <th style={{ padding: '12px' }}>로트 키 (|| 구분)</th>
+                <th style={{ padding: '12px' }}>포함 S/N</th>
+              </tr>
+            </thead>
+            <tbody>
+              {ledgerLots.length === 0 ? (
+                <tr>
+                  <td
+                    colSpan={7}
+                    style={{ padding: '24px', textAlign: 'center', color: '#64748B' }}
+                  >
+                    집계할 로트 데이터가 없습니다.
+                  </td>
+                </tr>
+              ) : (
+                ledgerLots.map((lot) => (
+                  <tr
+                    key={lot.lot_key}
+                    style={{ borderBottom: '1px solid #F1F5F9', backgroundColor: '#FFFFFF' }}
+                  >
+                    <td style={{ padding: '11px 12px', fontWeight: '800', color: '#0F172A' }}>
+                      {lot.series}
+                    </td>
+                    <td style={{ padding: '11px 12px', color: '#334155', fontWeight: '600' }}>
+                      {lot.inbound_date}
+                    </td>
+                    <td
+                      style={{
+                        padding: '11px 12px',
+                        textAlign: 'right',
+                        fontWeight: '700',
+                        color: '#0F172A',
+                      }}
+                    >
+                      {formatCurrency(lot.unit_cost, lot.currency)}
+                    </td>
+                    <td
+                      style={{
+                        padding: '11px 12px',
+                        textAlign: 'right',
+                        fontWeight: '800',
+                        color: '#2563EB',
+                      }}
+                    >
+                      {lot.qty}
+                    </td>
+                    <td
+                      style={{
+                        padding: '11px 12px',
+                        textAlign: 'right',
+                        fontWeight: '800',
+                        color: '#0F172A',
+                      }}
+                    >
+                      {formatCurrency(lot.total_amount, lot.currency)}
+                    </td>
+                    <td
+                      style={{
+                        padding: '11px 12px',
+                        fontSize: '12px',
+                        color: '#64748B',
+                        fontFamily: 'monospace',
+                      }}
+                    >
+                      {lot.lot_key}
+                    </td>
+                    <td style={{ padding: '11px 12px', fontSize: '12px', color: '#475569' }}>
+                      {lot.serial_numbers.join(', ') || '-'}
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <>
+          {/* 검색 및 제조사/모델/상태 필터 */}
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+              gap: '10px',
+            }}
+          >
+            <input
+              type="text"
+              placeholder="🔍 S/N, 모델, 납품업체, 창고 검색..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              style={{ ...inputStyle, padding: '11px 12px' }}
+            />
+
+            <select
+              value={manufacturerFilter}
+              onChange={(e) => {
+                setManufacturerFilter(e.target.value)
+                setModelFilter('ALL')
+              }}
+              style={inputStyle}
+            >
+              {manufacturers.map((m) => (
+                <option key={m} value={m}>
+                  {m === 'ALL' ? '제조사 전체 (Leibinger / Reiner)' : m}
+                </option>
+              ))}
+            </select>
+
+            <select
+              value={modelFilter}
+              onChange={(e) => setModelFilter(e.target.value)}
+              style={inputStyle}
+            >
+              <option value="ALL">모델 전체</option>
+              {filteredModelsForFilter.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.model_name}
+                </option>
+              ))}
+            </select>
+
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+              style={inputStyle}
+            >
+              <option value="ALL">상태 전체</option>
+              {Object.entries(STATUS_META).map(([k, v]) => (
+                <option key={k} value={k}>
+                  {v.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* 본문 2단 레이아웃: 좌측 목록 / 우측 S/N 상세 & 이동 이력 */}
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))',
+              gap: '16px',
+              alignItems: 'start',
+            }}
+          >
+            {/* 좌측: 프린터 개체 목록 */}
+            <div
+              style={{
+                backgroundColor: '#FFFFFF',
+                borderRadius: '16px',
+                border: '1px solid #E2E8F0',
+                overflowX: 'auto',
+              }}
+            >
+              <table
+                style={{
+                  width: '100%',
+                  borderCollapse: 'collapse',
+                  textAlign: 'left',
+                  fontSize: '13px',
+                }}
+              >
+                <thead>
+                  <tr
+                    style={{
+                      backgroundColor: '#F8FAFC',
+                      borderBottom: '1px solid #E2E8F0',
+                      color: '#475569',
+                    }}
+                  >
+                    <th style={{ padding: '12px' }}>S/N</th>
+                    <th style={{ padding: '12px' }}>제조사 / 모델</th>
+                    <th style={{ padding: '12px' }}>상태</th>
+                    <th style={{ padding: '12px' }}>현재 위치 / 거래처</th>
+                    <th style={{ padding: '12px' }}>입고일</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {loading ? (
+                    <tr>
+                      <td
+                        colSpan={5}
+                        style={{ padding: '24px', textAlign: 'center', color: '#64748B' }}
+                      >
+                        불러오는 중...
+                      </td>
+                    </tr>
+                  ) : filteredUnits.length === 0 ? (
+                    <tr>
+                      <td
+                        colSpan={5}
+                        style={{ padding: '24px', textAlign: 'center', color: '#64748B' }}
+                      >
+                        조건에 맞는 프린터가 없습니다.
+                      </td>
+                    </tr>
+                  ) : (
+                    filteredUnits.map((u) => {
+                      const isSelected = u.id === selectedUnitId
+                      const locationText =
+                        u.status === 'SCRAPPED'
+                          ? `폐기 (${u.scrap_reason || '사유 미기재'})`
+                          : u.customer_name || u.warehouse_location || '-'
+
+                      return (
+                        <tr
+                          key={u.id}
+                          onClick={() => setSelectedUnitId(u.id)}
+                          style={{
+                            borderBottom: '1px solid #F1F5F9',
+                            backgroundColor: isSelected ? '#EFF6FF' : '#FFFFFF',
+                            cursor: 'pointer',
+                          }}
+                        >
+                          <td style={{ padding: '11px 12px', fontWeight: '800', color: '#0F172A' }}>
+                            {u.serial_number}
+                          </td>
+                          <td style={{ padding: '11px 12px' }}>
+                            <div style={{ fontSize: '11px', color: '#64748B' }}>
+                              {u.printer_models?.manufacturer || '-'}
+                            </div>
+                            <div style={{ fontWeight: '700' }}>
+                              {u.printer_models?.model_name || '-'}
+                            </div>
+                          </td>
+                          <td style={{ padding: '11px 12px' }}>{renderStatusBadge(u.status)}</td>
+                          <td style={{ padding: '11px 12px', fontWeight: '600', color: '#1E293B' }}>
+                            {locationText}
+                          </td>
+                          <td style={{ padding: '11px 12px', color: '#475569' }}>
+                            {u.inbound_date || '-'}
+                          </td>
+                        </tr>
+                      )
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            {/* 우측: 선택된 S/N 상세 스냅샷 + 출고/데모/폐기 처리 + 이동 이력 */}
+            <div
+              style={{
+                backgroundColor: '#FFFFFF',
+                borderRadius: '16px',
+                border: '1px solid #E2E8F0',
+                padding: '18px',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '16px',
+              }}
+            >
+              {!selectedUnit ? (
+                <div
+                  style={{
+                    padding: '28px',
+                    textAlign: 'center',
+                    color: '#64748B',
+                    fontSize: '13px',
+                  }}
+                >
+                  좌측 목록에서 프린터를 선택하거나 S/N을 검색하세요.
+                </div>
+              ) : (
+                <>
+                  {/* S/N 핵심 요약 헤더 */}
+                  <div
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'flex-start',
+                      gap: '12px',
+                      borderBottom: '1px solid #F1F5F9',
+                      paddingBottom: '14px',
+                    }}
+                  >
+                    <div>
+                      <div style={{ fontSize: '12px', color: '#64748B', fontWeight: '700' }}>
+                        {selectedUnit.printer_models?.manufacturer} ·{' '}
+                        {selectedUnit.printer_models?.series} ·{' '}
+                        {CONDITION_META[selectedUnit.condition] || selectedUnit.condition}
+                      </div>
+                      <div
+                        style={{
+                          fontSize: '20px',
+                          fontWeight: '900',
+                          color: '#0F172A',
+                          marginTop: '2px',
+                        }}
+                      >
+                        {selectedUnit.serial_number}
+                      </div>
+                      <div
+                        style={{
+                          fontSize: '14px',
+                          fontWeight: '700',
+                          color: '#2563EB',
+                          marginTop: '2px',
+                        }}
+                      >
+                        {selectedUnit.printer_models?.model_name || '-'}
+                      </div>
+                    </div>
+                    {renderStatusBadge(selectedUnit.status)}
+                  </div>
+
+                  {/* 입고일 · 입고단가 · 현재 위치/납품업체 · 폐기 여부 요약 (별도 수정 모드) */}
+                  <div
+                    style={{
+                      backgroundColor: '#F8FAFC',
+                      padding: '14px',
+                      borderRadius: '12px',
+                      border: '1px solid #E2E8F0',
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        marginBottom: '10px',
+                      }}
+                    >
+                      <span style={{ fontSize: '12px', fontWeight: '800', color: '#334155' }}>
+                        입고 및 개체 요약
+                      </span>
+
+                      {!isEditingInboundSpec ? (
+                        <button
+                          type="button"
+                          onClick={handleStartEditInboundSpec}
+                          style={{
+                            padding: '5px 10px',
+                            borderRadius: '8px',
+                            border: '1px solid #CBD5E1',
+                            backgroundColor: '#FFFFFF',
+                            color: '#0F172A',
+                            fontSize: '12px',
+                            fontWeight: '700',
+                            cursor: 'pointer',
+                          }}
+                        >
+                          입고정보 수정
+                        </button>
+                      ) : (
+                        <div style={{ display: 'flex', gap: '6px' }}>
+                          <button
+                            type="button"
+                            onClick={() => setIsEditingInboundSpec(false)}
+                            disabled={savingSpec}
+                            style={{
+                              padding: '5px 10px',
+                              borderRadius: '8px',
+                              border: '1px solid #CBD5E1',
+                              backgroundColor: '#FFFFFF',
+                              color: '#475569',
+                              fontSize: '12px',
+                              fontWeight: '700',
+                              cursor: 'pointer',
+                            }}
+                          >
+                            취소
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handleSaveInboundSpec}
+                            disabled={savingSpec}
+                            style={{
+                              padding: '5px 10px',
+                              borderRadius: '8px',
+                              border: 'none',
+                              backgroundColor: '#2563EB',
+                              color: '#FFFFFF',
+                              fontSize: '12px',
+                              fontWeight: '700',
+                              cursor: 'pointer',
+                            }}
+                          >
+                            {savingSpec ? '저장 중...' : '저장'}
+                          </button>
+                        </div>
+                      )}
+                    </div>
+
+                    <div
+                      style={{
+                        display: 'grid',
+                        gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+                        gap: '10px',
+                      }}
+                    >
+                      <div>
+                        <div style={{ fontSize: '11px', color: '#64748B' }}>입고일자</div>
+                        {isEditingInboundSpec ? (
+                          <input
+                            type="date"
+                            value={specForm.inbound_date}
+                            onChange={(e) =>
+                              setSpecForm((prev) => ({ ...prev, inbound_date: e.target.value }))
+                            }
+                            style={{ ...inputStyle, padding: '7px 10px', marginTop: '4px' }}
+                          />
+                        ) : (
+                          <div style={{ fontSize: '14px', fontWeight: '800', color: '#0F172A' }}>
+                            {selectedUnit.inbound_date || '-'}
+                          </div>
+                        )}
+                      </div>
+
+                      <div>
+                        <div style={{ fontSize: '11px', color: '#64748B' }}>입고단가</div>
+                        {isEditingInboundSpec ? (
+                          <input
+                            type="number"
+                            step="0.01"
+                            placeholder="예: 12000000"
+                            value={specForm.unit_cost}
+                            onChange={(e) =>
+                              setSpecForm((prev) => ({ ...prev, unit_cost: e.target.value }))
+                            }
+                            style={{ ...inputStyle, padding: '7px 10px', marginTop: '4px' }}
+                          />
+                        ) : (
+                          <div style={{ fontSize: '14px', fontWeight: '800', color: '#0F172A' }}>
+                            {formatCurrency(selectedUnit.unit_cost, selectedUnit.currency)}
+                          </div>
+                        )}
+                      </div>
+
+                      <div>
+                        <div style={{ fontSize: '11px', color: '#64748B' }}>
+                          현재 납품업체 / 보관위치
+                        </div>
+                        <div style={{ fontSize: '14px', fontWeight: '800', color: '#0F172A' }}>
+                          {selectedUnit.customer_name || selectedUnit.warehouse_location || '-'}
+                        </div>
+                      </div>
+
+                      <div>
+                        <div style={{ fontSize: '11px', color: '#64748B' }}>폐기 여부</div>
+                        <div
+                          style={{
+                            fontSize: '14px',
+                            fontWeight: '800',
+                            color: selectedUnit.status === 'SCRAPPED' ? '#991B1B' : '#166534',
+                          }}
+                        >
+                          {selectedUnit.status === 'SCRAPPED'
+                            ? `폐기됨 (${selectedUnit.scrapped_at ? selectedUnit.scrapped_at.slice(0, 10) : ''})`
+                            : '정상 (미폐기)'}
+                        </div>
+                      </div>
+
+                      {selectedUnit.status === 'SCRAPPED' && (
+                        <div style={{ gridColumn: '1 / -1' }}>
+                          <div style={{ fontSize: '11px', color: '#991B1B' }}>폐기 사유</div>
+                          <div style={{ fontSize: '13px', fontWeight: '700', color: '#991B1B' }}>
+                            {selectedUnit.scrap_reason || '폐기 사유 미기재'}
+                          </div>
+                        </div>
+                      )}
+
+                      <div>
+                        <div style={{ fontSize: '11px', color: '#64748B' }}>누적 A/S 횟수</div>
+                        <div style={{ fontSize: '13px', fontWeight: '700', color: '#334155' }}>
+                          {selectedUnit.service_count ?? 0} 회
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* 상태/위치 변경 및 폐기 처리 */}
+                  <form
+                    onSubmit={handleMovementSubmit}
+                    style={{
+                      border: '1px solid #E2E8F0',
+                      borderRadius: '12px',
+                      padding: '14px',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '10px',
+                    }}
+                  >
+                    <div style={{ fontSize: '13px', fontWeight: '800', color: '#0F172A' }}>
+                      출고 / 데모 / 위치이동 / 폐기 처리
+                    </div>
+
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                      <div>
+                        <label style={labelStyle}>처리 유형</label>
+                        <select
+                          value={moveForm.movement_type}
+                          onChange={(e) => {
+                            const val = e.target.value
+                            const nextStatusMap = {
+                              OUTBOUND_SALE: 'SOLD',
+                              OUTBOUND_DEMO: 'DEMO',
+                              RETURN_DEMO: 'IN_STOCK',
+                              TRANSFER: 'IN_STOCK',
+                              AS_SWAP: 'DEMO',
+                              SCRAP: 'SCRAPPED',
+                            }
+                            setMoveForm((prev) => ({
+                              ...prev,
+                              movement_type: val,
+                              to_status: nextStatusMap[val] || prev.to_status,
+                            }))
+                          }}
+                          style={inputStyle}
+                        >
+                          <option value="OUTBOUND_SALE">판매 출고 (납품)</option>
+                          <option value="OUTBOUND_DEMO">데모 출고</option>
+                          <option value="RETURN_DEMO">데모 회수 (재고복귀)</option>
+                          <option value="TRANSFER">창고 위치 이동</option>
+                          <option value="AS_SWAP">대체 장비 투입</option>
+                          <option value="SCRAP">폐기 처리</option>
+                        </select>
+                      </div>
+
+                      <div>
+                        <label style={labelStyle}>변경 후 상태</label>
+                        <select
+                          value={moveForm.to_status}
+                          onChange={(e) =>
+                            setMoveForm((prev) => ({ ...prev, to_status: e.target.value }))
+                          }
+                          style={inputStyle}
+                        >
+                          {Object.entries(STATUS_META).map(([k, v]) => (
+                            <option key={k} value={k}>
+                              {v.label} ({k})
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+
+                    {moveForm.to_status === 'SCRAPPED' ? (
+                      <div>
+                        <label style={labelStyle}>폐기 사유 *</label>
+                        <input
+                          type="text"
+                          placeholder="예: 메인보드/헤드 노후 수리불가, 데모기 폐기"
+                          value={moveForm.scrap_reason}
+                          onChange={(e) =>
+                            setMoveForm((prev) => ({ ...prev, scrap_reason: e.target.value }))
+                          }
+                          style={inputStyle}
+                          required
+                        />
+                      </div>
+                    ) : (
+                      <div>
+                        <label style={labelStyle}>
+                          {moveForm.to_status === 'IN_STOCK'
+                            ? '보관 창고 위치 *'
+                            : '납품/설치 업체명 *'}
+                        </label>
+                        <input
+                          type="text"
+                          placeholder={
+                            moveForm.to_status === 'IN_STOCK'
+                              ? '예: 본사 창고, 안산 사무실'
+                              : '예: (주)대한패키징'
+                          }
+                          value={moveForm.location_or_customer}
+                          onChange={(e) =>
+                            setMoveForm((prev) => ({
+                              ...prev,
+                              location_or_customer: e.target.value,
+                            }))
+                          }
+                          style={inputStyle}
+                          required
+                        />
+                      </div>
+                    )}
+
+                    <div>
+                      <label style={labelStyle}>비고 / 메모</label>
+                      <input
+                        type="text"
+                        placeholder="견적번호, 리포트 번호, 특이사항 등"
+                        value={moveForm.note}
+                        onChange={(e) => setMoveForm((prev) => ({ ...prev, note: e.target.value }))}
+                        style={inputStyle}
+                      />
+                    </div>
+
+                    <button
+                      type="submit"
+                      disabled={saving}
+                      style={{
+                        padding: '10px 14px',
+                        borderRadius: '10px',
+                        border: 'none',
+                        backgroundColor:
+                          moveForm.to_status === 'SCRAPPED' ? '#DC2626' : '#2563EB',
+                        color: '#FFFFFF',
+                        fontWeight: '700',
+                        fontSize: '13px',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      {saving ? '처리 중...' : '이력 기록 및 상태 반영'}
+                    </button>
+                  </form>
+
+                  {/* 이동/입출고/폐기 이력 타임라인 */}
+                  <div>
+                    <div
+                      style={{
+                        fontSize: '13px',
+                        fontWeight: '800',
+                        color: '#0F172A',
+                        marginBottom: '8px',
+                      }}
+                    >
+                      입출고 · 이동 · 폐기 이력 ({movements.length})
+                    </div>
+
+                    {movementsLoading ? (
+                      <div style={{ fontSize: '12px', color: '#64748B' }}>이력 불러오는 중...</div>
+                    ) : movements.length === 0 ? (
+                      <div style={{ fontSize: '12px', color: '#64748B' }}>
+                        등록된 이동 이력이 없습니다.
+                      </div>
+                    ) : (
+                      <div
+                        style={{
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: '8px',
+                          maxHeight: '240px',
+                          overflowY: 'auto',
+                        }}
+                      >
+                        {movements.map((m) => (
+                          <div
+                            key={m.id}
+                            style={{
+                              padding: '10px 12px',
+                              borderRadius: '10px',
+                              backgroundColor: '#F8FAFC',
+                              border: '1px solid #E2E8F0',
+                              fontSize: '12px',
+                            }}
+                          >
+                            <div
+                              style={{
+                                display: 'flex',
+                                justifyContent: 'space-between',
+                                fontWeight: '700',
+                              }}
+                            >
+                              <span>
+                                {MOVEMENT_TYPE_META[m.movement_type] || m.movement_type} ·{' '}
+                                {STATUS_META[m.to_status]?.label || m.to_status}
+                              </span>
+                              <span style={{ color: '#64748B', fontWeight: '500' }}>
+                                {m.moved_at ? m.moved_at.slice(0, 16).replace('T', ' ') : ''}
+                              </span>
+                            </div>
+                            <div style={{ color: '#334155', marginTop: '4px' }}>
+                              {m.from_location || '-'} → <strong>{m.to_location || '-'}</strong>
+                            </div>
+                            {m.unit_cost !== null && m.unit_cost !== undefined && (
+                              <div style={{ color: '#475569', marginTop: '2px' }}>
+                                단가: {formatCurrency(m.unit_cost)}
+                              </div>
+                            )}
+                            {m.note && (
+                              <div style={{ color: '#64748B', marginTop: '2px' }}>메모: {m.note}</div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  )
+}

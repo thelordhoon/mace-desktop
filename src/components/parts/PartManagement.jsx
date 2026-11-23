@@ -32,16 +32,6 @@ export default function PartManagement() {
             {activeTab === '이력관리' && '📋 발행된 모든 입고 및 출고 이력을 시간순으로 확인합니다.'}
           </p>
         </div>
-        {/* 이력관리 탭에서는 신규 등록 버튼 숨김 */}
-        {activeTab !== '이력관리' && (
-          <button 
-            type="button" 
-            onClick={() => setShowAddPartForm(!showAddPartForm)} 
-            style={{ padding: '10px 18px', background: '#2563EB', color: 'white', border: 'none', borderRadius: '10px', fontWeight: '700', cursor: 'pointer', fontSize: '14px' }}
-          >
-            {showAddPartForm ? '✕ 닫기' : `+ 신규 ${activeTab} 품목 등록`}
-          </button>
-        )}
       </div>
 
       {/* 📌 상단 탭 메뉴 */}
