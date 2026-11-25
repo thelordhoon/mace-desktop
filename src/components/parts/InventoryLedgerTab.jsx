@@ -21,6 +21,15 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
   const [selectedItemHistory, setSelectedItemHistory] = useState(null)
   const [historyList, setHistoryList] = useState([])
 
+  // 12월 마감 결산 확인 모달 및 재확정/잠금 방어 상태
+  const [showYearEndModal, setShowYearEndModal] = useState(false)
+  const [closingYear, setClosingYear] = useState('2026')
+  const [closingConfirmedNote, setClosingConfirmedNote] = useState('')
+  const [closedRecordsByYear, setClosedRecordsByYear] = useState({})
+  const [reopenMode, setReopenMode] = useState(false)
+  const [reopenReason, setReopenReason] = useState('')
+  const [reopenConfirmedCheck, setReopenConfirmedCheck] = useState(false)
+
   const cleanNoteText = (rawNote) => {
     if (!rawNote) return ''
     const str = String(rawNote)
@@ -108,15 +117,11 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
         return sum + (Number.isNaN(cost) ? 0 : cost)
       }, 0)
 
-      // 입고 이력 구성 (printer_movements INBOUND 우선 + 이력 누락 개체는 printer_units 기준으로 보완)
-      const inboundMovementRows = []
-      const recordedInboundUnitIds = new Set()
-
-      grp.movements
+      // 당기 입고 이력: 실제 printer_movements의 INBOUND 이동만 집계 (기초/이력 누락 S/N과 분리)
+      const inboundMovementRows = grp.movements
         .filter((mv) => mv.movement_type === 'INBOUND')
-        .forEach((mv) => {
+        .map((mv) => {
           const u = mv._unit
-          recordedInboundUnitIds.add(String(u.id))
           const modelName = u.printer_models?.model_name || '프린터'
           const sn = u.serial_number || '-'
           const dateStr = mv.moved_at
@@ -131,35 +136,16 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
                 ? Number(u.unit_cost)
                 : null
 
-          inboundMovementRows.push({
+          return {
             date: dateStr,
             badge: `S/N ${sn}`,
             summary: `[${modelName}] S/N: ${sn} (1대)`,
             note: mv.note || u.memo || '',
             author: '프린터 관리',
             unitPrice: rawPrice !== null && !Number.isNaN(rawPrice) ? rawPrice : null,
-          })
+          }
         })
-
-      grp.units.forEach((u) => {
-        if (recordedInboundUnitIds.has(String(u.id))) return
-        const modelName = u.printer_models?.model_name || '프린터'
-        const sn = u.serial_number || '-'
-        const dateStr = u.inbound_date ? String(u.inbound_date).slice(0, 10) : '-'
-        const rawPrice =
-          u.unit_cost !== null && u.unit_cost !== undefined ? Number(u.unit_cost) : null
-
-        inboundMovementRows.push({
-          date: dateStr,
-          badge: `S/N ${sn}`,
-          summary: `[${modelName}] S/N: ${sn} (1대)`,
-          note: u.memo || '기초 등록 장비',
-          author: '프린터 관리',
-          unitPrice: rawPrice !== null && !Number.isNaN(rawPrice) ? rawPrice : null,
-        })
-      })
-
-      inboundMovementRows.sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0))
+        .sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0))
 
       // 출고/데모/폐기 이력 구성
       const outboundMovementRows = grp.movements
@@ -185,9 +171,14 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
         })
         .sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0))
 
+      const returnDemoCount = grp.movements.filter(
+        (mv) => mv.movement_type === 'RETURN_DEMO'
+      ).length
+
       const inboundQty = inboundMovementRows.length
-      const outboundQty = outboundMovementRows.length
-      const carryOverQty = Math.max(0, currentQty + outboundQty - inboundQty)
+      const outboundQty = Math.max(0, outboundMovementRows.length - returnDemoCount)
+      // 수식(이월재고 + 당기입고 - 출고 = 현재고) 정합성 유지
+      const carryOverQty = currentQty + outboundQty - inboundQty
 
       rows.push({
         id: `printer-group-${grp.categoryLabel}`,
@@ -505,6 +496,81 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
 
   const totalSumAssetValue = filteredLedger.reduce((acc, cur) => acc + (cur.assetValue || 0), 0)
 
+  // 이월재고 + 당기입고 - 출고 = 현재고 정합성 확인용 집계
+  const closingCheckRows = filteredLedger.map((item) => {
+    const carryOver = Number(item.carryOver) || 0
+    const inbound = Number(item.inbound) || 0
+    const outbound = Number(item.outbound) || 0
+    const current = Number(item.current) || 0
+    const formulaCurrent = carryOver + inbound - outbound
+    const diff = current - formulaCurrent
+    return {
+      ...item,
+      formulaCurrent,
+      diff,
+      isBalanced: diff === 0,
+    }
+  })
+
+  const unbalancedCount = closingCheckRows.filter((r) => !r.isBalanced).length
+
+  const currentYearRecord = closedRecordsByYear[closingYear] || null
+  const isYearClosed = Boolean(currentYearRecord && currentYearRecord.status === 'CLOSED')
+  const hasPostCloseChange =
+    isYearClosed &&
+    (currentYearRecord.totalAssetValue !== totalSumAssetValue ||
+      currentYearRecord.itemCount !== closingCheckRows.length ||
+      currentYearRecord.unbalancedCount !== unbalancedCount)
+
+  const handleOpenYearEndModal = () => {
+    setReopenMode(false)
+    setReopenReason('')
+    setReopenConfirmedCheck(false)
+    setShowYearEndModal(true)
+  }
+
+  const handleChangeClosingYear = (nextYear) => {
+    setClosingYear(nextYear)
+    setReopenMode(false)
+    setReopenReason('')
+    setReopenConfirmedCheck(false)
+  }
+
+  const canConfirmClosing =
+    !isYearClosed || (reopenMode && reopenReason.trim().length >= 4 && reopenConfirmedCheck)
+
+  const handleConfirmYearEnd = () => {
+    if (!canConfirmClosing) return
+
+    const targetNextYear = String(Number(closingYear) + 1)
+    const nowLabel = new Date().toLocaleString('ko-KR')
+
+    setClosedRecordsByYear((prev) => ({
+      ...prev,
+      [closingYear]: {
+        status: 'CLOSED',
+        closingYear,
+        targetYear: targetNextYear,
+        closedAt: nowLabel,
+        note: closingConfirmedNote.trim(),
+        reopenReason: reopenMode ? reopenReason.trim() : '',
+        itemCount: closingCheckRows.length,
+        unbalancedCount,
+        totalAssetValue: totalSumAssetValue,
+      },
+    }))
+
+    alert(
+      `${closingYear}년 12월 마감 검토가 기록되었습니다.\n` +
+        `차기 이월 대상: ${targetNextYear}년 | 불일치 항목: ${unbalancedCount}건 | 총 재고금액: ${totalSumAssetValue.toLocaleString()}원` +
+        (reopenMode ? `\n재확정 사유: ${reopenReason.trim()}` : '')
+    )
+
+    setReopenMode(false)
+    setReopenReason('')
+    setReopenConfirmedCheck(false)
+  }
+
   const inputStyle = {
     width: '100%',
     padding: '9px 12px',
@@ -601,6 +667,40 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
           >
             💰 자산 평가액 합계: {totalSumAssetValue.toLocaleString()} 원
           </div>
+
+          <button
+            type="button"
+            onClick={handleOpenYearEndModal}
+            style={{
+              background: '#1E293B',
+              color: '#fff',
+              border: 'none',
+              padding: '10px 14px',
+              borderRadius: '8px',
+              fontSize: '13px',
+              fontWeight: '800',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+            }}
+          >
+            📅 12월 마감 결산 확인
+            {unbalancedCount > 0 && (
+              <span
+                style={{
+                  backgroundColor: '#EF4444',
+                  color: '#fff',
+                  fontSize: '11px',
+                  padding: '2px 6px',
+                  borderRadius: '999px',
+                }}
+              >
+                차이 {unbalancedCount}
+              </span>
+            )}
+          </button>
+
           <button
             type="button"
             onClick={handleRefreshAll}
@@ -842,6 +942,452 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
           </tbody>
         </table>
       </div>
+
+      {/* 12월 마감 결산 확인 모달 */}
+      {showYearEndModal && (
+        <div
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: 'rgba(0,0,0,0.6)',
+            display: 'flex',
+            justifyContent: 'center',
+            alignItems: 'center',
+            zIndex: 1100,
+            padding: '20px',
+          }}
+        >
+          <div
+            style={{
+              backgroundColor: '#ffffff',
+              borderRadius: '16px',
+              padding: '24px',
+              width: '1290px',
+              maxWidth: '96vw',
+              maxHeight: '88vh',
+              overflowY: 'auto',
+              boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)',
+            }}
+          >
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                marginBottom: '16px',
+                borderBottom: '1px solid #E2E8F0',
+                paddingBottom: '12px',
+                gap: '12px',
+                flexWrap: 'wrap',
+              }}
+            >
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                  <h3 style={{ margin: 0, fontSize: '18px', fontWeight: '900', color: '#0F172A' }}>
+                    📅 12월 마감 결산 및 차기 이월 확인
+                  </h3>
+                  {isYearClosed ? (
+                    <span
+                      style={{
+                        backgroundColor: '#FEF3C7',
+                        color: '#92400E',
+                        border: '1px solid #F59E0B',
+                        padding: '3px 10px',
+                        borderRadius: '999px',
+                        fontSize: '12px',
+                        fontWeight: '800',
+                      }}
+                    >
+                      🔒 {closingYear}년 마감 완료 (잠금)
+                    </span>
+                  ) : (
+                    <span
+                      style={{
+                        backgroundColor: '#E0F2FE',
+                        color: '#0369A1',
+                        border: '1px solid #7DD3FC',
+                        padding: '3px 10px',
+                        borderRadius: '999px',
+                        fontSize: '12px',
+                        fontWeight: '800',
+                      }}
+                    >
+                      검토 진행 중
+                    </span>
+                  )}
+                </div>
+                <p style={{ margin: '4px 0 0 0', fontSize: '12px', color: '#64748B' }}>
+                  공식: <strong>이월재고 + 당기입고 - 출고 = 현재고</strong> 기준으로 마감 수치를
+                  점검합니다.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowYearEndModal(false)}
+                style={{
+                  border: 'none',
+                  background: 'none',
+                  fontSize: '18px',
+                  color: '#64748B',
+                  cursor: 'pointer',
+                  fontWeight: 'bold',
+                }}
+              >
+                ✕
+              </button>
+            </div>
+
+            <div
+              style={{
+                display: 'flex',
+                gap: '14px',
+                alignItems: 'center',
+                flexWrap: 'wrap',
+                backgroundColor: '#F8FAFC',
+                padding: '12px 16px',
+                borderRadius: '12px',
+                border: '1px solid #E2E8F0',
+                marginBottom: '14px',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span style={{ fontSize: '13px', fontWeight: '800', color: '#1E293B' }}>
+                  결산 연도:
+                </span>
+                <select
+                  value={closingYear}
+                  onChange={(e) => handleChangeClosingYear(e.target.value)}
+                  style={{ ...inputStyle, width: '200px', fontWeight: '800', backgroundColor: '#fff' }}
+                >
+                  <option value="2026">2026년 결산 (→ 2027년 이월)</option>
+                  <option value="2027">2027년 결산 (→ 2028년 이월)</option>
+                </select>
+              </div>
+
+              <div style={{ fontSize: '13px', fontWeight: '700', color: '#0F172A' }}>
+                검토 품목: <strong>{closingCheckRows.length}</strong>건
+              </div>
+
+              <div
+                style={{
+                  fontSize: '13px',
+                  fontWeight: '800',
+                  color: unbalancedCount === 0 ? '#059669' : '#DC2626',
+                }}
+              >
+                수식 불일치: <strong>{unbalancedCount}</strong>건
+              </div>
+
+              <div style={{ marginLeft: 'auto', fontSize: '13px', fontWeight: '800', color: '#1E40AF' }}>
+                총 재고금액: {totalSumAssetValue.toLocaleString()} 원
+              </div>
+            </div>
+
+            {isYearClosed && (
+              <div
+                style={{
+                  backgroundColor: hasPostCloseChange ? '#FEF2F2' : '#FFFBEB',
+                  border: `1px solid ${hasPostCloseChange ? '#FCA5A5' : '#FCD34D'}`,
+                  borderRadius: '12px',
+                  padding: '12px 16px',
+                  marginBottom: '14px',
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  gap: '12px',
+                  flexWrap: 'wrap',
+                }}
+              >
+                <div style={{ fontSize: '12px', color: '#1E293B', lineHeight: '1.5' }}>
+                  <strong>마감 기록 ({currentYearRecord.closedAt}):</strong>{' '}
+                  {currentYearRecord.closingYear}년 → {currentYearRecord.targetYear}년 이월 기준
+                  (기록 당시 총액 {Number(currentYearRecord.totalAssetValue || 0).toLocaleString()}원,
+                  불일치 {currentYearRecord.unbalancedCount}건)
+                  {currentYearRecord.reopenReason && (
+                    <div>
+                      <strong>직전 재확정 사유:</strong> {currentYearRecord.reopenReason}
+                    </div>
+                  )}
+                  {hasPostCloseChange && (
+                    <div style={{ color: '#DC2626', fontWeight: '800', marginTop: '4px' }}>
+                      ⚠️ 마감 확정 이후 현재 집계 수치(총액 {totalSumAssetValue.toLocaleString()}원 /
+                      불일치 {unbalancedCount}건)가 변경되었습니다.
+                    </div>
+                  )}
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setReopenMode((prev) => !prev)
+                    setReopenReason('')
+                    setReopenConfirmedCheck(false)
+                  }}
+                  style={{
+                    backgroundColor: reopenMode ? '#E2E8F0' : '#DC2626',
+                    color: reopenMode ? '#1E293B' : '#fff',
+                    border: 'none',
+                    padding: '8px 12px',
+                    borderRadius: '8px',
+                    fontSize: '12px',
+                    fontWeight: '800',
+                    cursor: 'pointer',
+                  }}
+                >
+                  {reopenMode ? '재확정 해제 취소' : '🔓 재확정 모드 열기'}
+                </button>
+              </div>
+            )}
+
+            {isYearClosed && reopenMode && (
+              <div
+                style={{
+                  backgroundColor: '#FFF1F2',
+                  border: '1px solid #FDA4AF',
+                  borderRadius: '12px',
+                  padding: '14px 16px',
+                  marginBottom: '14px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '10px',
+                }}
+              >
+                <div style={{ fontSize: '13px', fontWeight: '800', color: '#9F1239' }}>
+                  재확정(수정) 방어 절차: 이미 마감된 연도의 수치를 다시 확정하려면 사유를
+                  입력하고 최종 확인에 체크해 주세요.
+                </div>
+                <input
+                  type="text"
+                  placeholder="재확정 사유를 4자 이상 입력해 주세요 (예: 출고 누락 정정 후 재마감)"
+                  value={reopenReason}
+                  onChange={(e) => setReopenReason(e.target.value)}
+                  style={{ ...inputStyle, backgroundColor: '#fff' }}
+                />
+                <label
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    fontSize: '12px',
+                    fontWeight: '700',
+                    color: '#881337',
+                    cursor: 'pointer',
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={reopenConfirmedCheck}
+                    onChange={(e) => setReopenConfirmedCheck(e.target.checked)}
+                  />
+                  마감 수치를 다시 확정하는 것이 맞으며, 변동 내역을 검토했음을 확인합니다.
+                </label>
+              </div>
+            )}
+
+            <div
+              style={{
+                border: '1px solid #E2E8F0',
+                borderRadius: '12px',
+                overflow: 'hidden',
+                maxHeight: '440px',
+                overflowY: 'auto',
+                marginBottom: '14px',
+              }}
+            >
+              <table
+                style={{
+                  width: '100%',
+                  borderCollapse: 'collapse',
+                  fontSize: '13px',
+                  textAlign: 'left',
+                }}
+              >
+                <thead>
+                  <tr
+                    style={{
+                      backgroundColor: '#F1F5F9',
+                      borderBottom: '1px solid #CBD5E1',
+                      color: '#334155',
+                    }}
+                  >
+                    <th style={{ padding: '10px 12px' }}>품번/구분</th>
+                    <th style={{ padding: '10px 12px' }}>품명</th>
+                    <th style={{ padding: '10px 12px', textAlign: 'center' }}>이월</th>
+                    <th style={{ padding: '10px 12px', textAlign: 'center' }}>입고</th>
+                    <th style={{ padding: '10px 12px', textAlign: 'center' }}>출고</th>
+                    <th style={{ padding: '10px 12px', textAlign: 'center' }}>계산재고</th>
+                    <th style={{ padding: '10px 12px', textAlign: 'center' }}>현재고</th>
+                    <th style={{ padding: '10px 12px', textAlign: 'center' }}>판정</th>
+                    <th style={{ padding: '10px 12px', textAlign: 'right' }}>재고금액</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {closingCheckRows.map((row) => {
+                    const suffix = row.isPrinterGroup ? '대' : '개'
+                    return (
+                      <tr key={row.id} style={{ borderBottom: '1px solid #F1F5F9' }}>
+                        <td style={{ padding: '9px 12px' }}>
+                          <div style={{ fontWeight: '700', color: '#2563EB' }}>{row.code}</div>
+                          <div style={{ fontSize: '11px', color: '#64748B' }}>{row.category}</div>
+                        </td>
+                        <td style={{ padding: '9px 12px', fontWeight: '700', color: '#0F172A' }}>
+                          {row.name}
+                        </td>
+                        <td style={{ padding: '9px 12px', textAlign: 'center' }}>{row.carryOver}</td>
+                        <td style={{ padding: '9px 12px', textAlign: 'center', color: '#059669' }}>
+                          +{row.inbound}
+                        </td>
+                        <td style={{ padding: '9px 12px', textAlign: 'center', color: '#2563EB' }}>
+                          -{row.outbound}
+                        </td>
+                        <td style={{ padding: '9px 12px', textAlign: 'center', fontWeight: '700' }}>
+                          {row.formulaCurrent} {suffix}
+                        </td>
+                        <td style={{ padding: '9px 12px', textAlign: 'center', fontWeight: '800' }}>
+                          {row.current} {suffix}
+                        </td>
+                        <td style={{ padding: '9px 12px', textAlign: 'center' }}>
+                          {row.isBalanced ? (
+                            <span
+                              style={{
+                                backgroundColor: '#DCFCE7',
+                                color: '#15803D',
+                                padding: '2px 8px',
+                                borderRadius: '6px',
+                                fontSize: '11px',
+                                fontWeight: '800',
+                              }}
+                            >
+                              일치
+                            </span>
+                          ) : (
+                            <span
+                              style={{
+                                backgroundColor: '#FEE2E2',
+                                color: '#DC2626',
+                                padding: '2px 8px',
+                                borderRadius: '6px',
+                                fontSize: '11px',
+                                fontWeight: '800',
+                              }}
+                            >
+                              차이 {row.diff > 0 ? `+${row.diff}` : row.diff}
+                            </span>
+                          )}
+                        </td>
+                        <td
+                          style={{
+                            padding: '9px 12px',
+                            textAlign: 'right',
+                            fontWeight: '700',
+                            color: '#059669',
+                          }}
+                        >
+                          {(row.assetValue || 0).toLocaleString()}원
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            <div style={{ marginBottom: '14px' }}>
+              <label
+                style={{
+                  fontSize: '12px',
+                  fontWeight: '700',
+                  color: '#475569',
+                  display: 'block',
+                  marginBottom: '6px',
+                }}
+              >
+                마감 검토 메모 (선택)
+              </label>
+              <input
+                type="text"
+                placeholder="예: 12월 실물 재고 및 단가 확인 완료"
+                value={closingConfirmedNote}
+                onChange={(e) => setClosingConfirmedNote(e.target.value)}
+                disabled={isYearClosed && !reopenMode}
+                style={{
+                  ...inputStyle,
+                  backgroundColor: isYearClosed && !reopenMode ? '#F1F5F9' : '#F8FAFC',
+                }}
+              />
+            </div>
+
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                borderTop: '1px solid #E2E8F0',
+                paddingTop: '14px',
+                gap: '10px',
+                flexWrap: 'wrap',
+              }}
+            >
+              <button
+                type="button"
+                onClick={handleExportExcel}
+                style={{
+                  background: '#059669',
+                  color: '#fff',
+                  border: 'none',
+                  padding: '9px 16px',
+                  borderRadius: '8px',
+                  fontSize: '13px',
+                  fontWeight: '700',
+                  cursor: 'pointer',
+                }}
+              >
+                📊 결산 시트 CSV 다운로드
+              </button>
+
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                <button
+                  type="button"
+                  onClick={() => setShowYearEndModal(false)}
+                  style={{
+                    padding: '9px 16px',
+                    background: '#F1F5F9',
+                    border: '1px solid #CBD5E1',
+                    borderRadius: '8px',
+                    fontWeight: '700',
+                    cursor: 'pointer',
+                  }}
+                >
+                  닫기
+                </button>
+                <button
+                  type="button"
+                  disabled={!canConfirmClosing}
+                  onClick={handleConfirmYearEnd}
+                  style={{
+                    padding: '9px 18px',
+                    background: canConfirmClosing ? '#2563EB' : '#94A3B8',
+                    color: '#fff',
+                    border: 'none',
+                    borderRadius: '8px',
+                    fontWeight: '800',
+                    cursor: canConfirmClosing ? 'pointer' : 'not-allowed',
+                  }}
+                >
+                  {isYearClosed
+                    ? reopenMode
+                      ? '재확정 저장'
+                      : '마감 잠금됨'
+                    : '검토 확인 완료'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {selectedItemHistory && (
         <div

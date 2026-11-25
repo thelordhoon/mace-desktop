@@ -5,8 +5,8 @@ const PAGE_SIZE = 15
 
 const STATUS_META = {
   IN_STOCK: { label: '재고 보유', bg: '#DCFCE7', color: '#166534' },
-  DEMO: { label: '데모/임대', bg: '#FEF3C7', color: '#92400E' },
   SOLD: { label: '납품 완료', bg: '#DBEAFE', color: '#1E40AF' },
+  DEMO: { label: '대여 중', bg: '#FEF3C7', color: '#92400E' },
   REPAIR: { label: '수리 중', bg: '#F3E8FF', color: '#6B21A8' },
   SCRAPPED: { label: '폐기', bg: '#FEE2E2', color: '#991B1B' },
 }
@@ -20,8 +20,8 @@ const CONDITION_META = {
 const MOVEMENT_TYPE_META = {
   INBOUND: '입고',
   OUTBOUND_SALE: '판매 출고',
-  OUTBOUND_DEMO: '데모 출고',
-  RETURN_DEMO: '데모 회수',
+  OUTBOUND_DEMO: '대여 출고',
+  RETURN_DEMO: '대여 반납(재입고)',
   TRANSFER: '위치 이동',
   AS_SWAP: '대체 투입',
   SCRAP: '폐기 처리',
@@ -40,6 +40,7 @@ const formatCurrency = (amount, currency = 'KRW') => {
 export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm }) {
   const [models, setModels] = useState([])
   const [units, setUnits] = useState([])
+  const [allMovements, setAllMovements] = useState([])
   const [selectedUnitId, setSelectedUnitId] = useState(null)
   const [movements, setMovements] = useState([])
 
@@ -53,7 +54,7 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
   const [searchTerm, setSearchTerm] = useState('')
   const [statusFilter, setStatusFilter] = useState('ALL')
 
-  // 신규 프린터 입고 폼
+  // 신규 프린터 입고 폼 (단순 입력: 모델/시리즈, S/N, 입고일, 입고단가, 창고, 메모)
   const [isAddOpen, setIsAddOpen] = useState(false)
   const [newForm, setNewForm] = useState({
     model_id: '',
@@ -66,23 +67,41 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
     memo: '',
   })
 
-  // 선택 장비 입고일자 / 입고단가 별도 수정 모드 상태
-  const [isEditingInboundSpec, setIsEditingInboundSpec] = useState(false)
-  const [specForm, setSpecForm] = useState({
-    inbound_date: '',
-    unit_cost: '',
-  })
-  const [savingSpec, setSavingSpec] = useState(false)
-
-  // 상태/위치 변경 및 폐기 폼 (선택된 장비 기준)
-  const [moveForm, setMoveForm] = useState({
-    movement_type: 'OUTBOUND_SALE',
-    to_status: 'SOLD',
-    location_or_customer: '',
-    scrap_reason: '',
+  // 다중 S/N 출고증 팝업 상태
+  const [isVoucherOpen, setIsVoucherOpen] = useState(false)
+  const [voucherSearch, setVoucherSearch] = useState('')
+  const [selectedVoucherUnitIds, setSelectedVoucherUnitIds] = useState([])
+  const [voucherForm, setVoucherForm] = useState({
+    movement_type: 'OUTBOUND_SALE', // OUTBOUND_SALE | OUTBOUND_DEMO
+    outbound_date: new Date().toISOString().slice(0, 10),
+    customer_name: '',
     unit_cost: '',
     note: '',
   })
+
+  // 대여 반납(재입고) 폼 상태
+  const [isReturnOpen, setIsReturnOpen] = useState(false)
+  const [returnForm, setReturnForm] = useState({
+    return_date: new Date().toISOString().slice(0, 10),
+    warehouse_location: '본사 창고',
+    note: '',
+  })
+
+  // 선택 장비 정보 수정 모드 상태
+  const [isEditingUnit, setIsEditingUnit] = useState(false)
+  const [editForm, setEditForm] = useState({
+    model_id: '',
+    condition: 'NEW',
+    inbound_date: '',
+    unit_cost: '',
+    status: 'IN_STOCK',
+    location_or_customer: '',
+    memo: '',
+  })
+  const [savingEdit, setSavingEdit] = useState(false)
+
+  // [임시 정리용] 이력 삭제 처리 상태 (정리 완료 후 삭제 가능)
+  const [deletingMovementId, setDeletingMovementId] = useState(null)
 
   const openAddModal = () => {
     setErrorMsg('')
@@ -101,39 +120,44 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
     }
   }, [showAddForm])
 
-  // 모델 및 프린터 개체 목록 조회
   const fetchPrinterData = async () => {
     setLoading(true)
     setErrorMsg('')
     try {
-      const [{ data: modelRows, error: modelErr }, { data: unitRows, error: unitErr }] =
-        await Promise.all([
-          supabase
-            .from('printer_models')
-            .select('*')
-            .order('manufacturer', { ascending: true })
-            .order('model_name', { ascending: true }),
-          supabase
-            .from('printer_units')
-            .select(`
-              *,
-              printer_models (
-                id,
-                manufacturer,
-                category,
-                series,
-                model_name,
-                track_serial
-              )
-            `)
-            .order('updated_at', { ascending: false }),
-        ])
+      const [
+        { data: modelRows, error: modelErr },
+        { data: unitRows, error: unitErr },
+        { data: allMoveRows, error: allMoveErr },
+      ] = await Promise.all([
+        supabase
+          .from('printer_models')
+          .select('*')
+          .order('manufacturer', { ascending: true })
+          .order('model_name', { ascending: true }),
+        supabase
+          .from('printer_units')
+          .select(`
+            *,
+            printer_models (
+              id,
+              manufacturer,
+              category,
+              series,
+              model_name,
+              track_serial
+            )
+          `)
+          .order('updated_at', { ascending: false }),
+        supabase.from('printer_movements').select('id, printer_unit_id, movement_type, moved_at'),
+      ])
 
       if (modelErr) throw modelErr
       if (unitErr) throw unitErr
+      if (allMoveErr) throw allMoveErr
 
       setModels(modelRows || [])
       setUnits(unitRows || [])
+      setAllMovements(allMoveRows || [])
 
       if (!newForm.model_id && modelRows?.length) {
         setNewForm((prev) => ({ ...prev, model_id: modelRows[0].id }))
@@ -151,7 +175,6 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
     }
   }
 
-  // 선택된 프린터의 이동 이력 조회
   const fetchMovements = async (unitId) => {
     if (!unitId) {
       setMovements([])
@@ -180,16 +203,33 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
 
   useEffect(() => {
     fetchMovements(selectedUnitId)
-    setMoveForm((prev) => ({
-      ...prev,
-      location_or_customer: '',
-      scrap_reason: '',
-      unit_cost: '',
+    setIsReturnOpen(false)
+    setReturnForm({
+      return_date: new Date().toISOString().slice(0, 10),
+      warehouse_location: '본사 창고',
       note: '',
-    }))
+    })
   }, [selectedUnitId])
 
-  // S/N, 모델명, 거래처명, 창고위치 통합 검색 + 상태 필터
+  // 개체별 대여 반납(재입고) 이력 여부 맵
+  const returnedUnitIdSet = useMemo(() => {
+    const set = new Set()
+    ;(allMovements || []).forEach((m) => {
+      if (m.movement_type === 'RETURN_DEMO' && m.printer_unit_id) {
+        set.add(String(m.printer_unit_id))
+      }
+    })
+    return set
+  }, [allMovements])
+
+  const getReinboundLabel = (unit) => {
+    if (!unit) return null
+    const hasReturnDemo = returnedUnitIdSet.has(String(unit.id))
+    if (hasReturnDemo) return '대여 반납 재입고'
+    if (unit.condition === 'REFURB') return '리퍼 재입고'
+    return null
+  }
+
   const filteredUnits = useMemo(() => {
     const q = searchTerm.trim().toLowerCase()
     const normQ = normalizeSerial(searchTerm).toLowerCase()
@@ -203,16 +243,16 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
       const snMatch =
         u.serial_number?.toLowerCase().includes(q) ||
         normalizeSerial(u.serial_number).toLowerCase().includes(normQ)
-      const modelMatch = model?.model_name?.toLowerCase().includes(q)
+      const modelMatch =
+        model?.model_name?.toLowerCase().includes(q) ||
+        model?.series?.toLowerCase().includes(q)
       const custMatch = u.customer_name?.toLowerCase().includes(q)
       const locMatch = u.warehouse_location?.toLowerCase().includes(q)
-      const scrapMatch = u.scrap_reason?.toLowerCase().includes(q)
 
-      return snMatch || modelMatch || custMatch || locMatch || scrapMatch
+      return snMatch || modelMatch || custMatch || locMatch
     })
   }, [units, searchTerm, statusFilter])
 
-  // 검색어 또는 상태 필터 변경 시 1페이지로 초기화
   useEffect(() => {
     setCurrentPage(1)
   }, [searchTerm, statusFilter])
@@ -240,7 +280,6 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
     return list
   }, [currentPage, totalPages])
 
-  // S/N 검색어와 정확히 일치하는 장비가 있으면 자동 선택 및 해당 페이지로 이동
   useEffect(() => {
     const normQ = normalizeSerial(searchTerm)
     if (!normQ) return
@@ -257,77 +296,307 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
     [units, selectedUnitId]
   )
 
-  // 선택 장비 변경 시 입고정보 수정 모드 초기화
   useEffect(() => {
-    setIsEditingInboundSpec(false)
+    setIsEditingUnit(false)
     if (selectedUnit) {
-      setSpecForm({
+      setEditForm({
+        model_id: selectedUnit.model_id || selectedUnit.printer_models?.id || '',
+        condition: selectedUnit.condition || 'NEW',
         inbound_date: selectedUnit.inbound_date ? String(selectedUnit.inbound_date).slice(0, 10) : '',
         unit_cost:
           selectedUnit.unit_cost !== null && selectedUnit.unit_cost !== undefined
             ? String(selectedUnit.unit_cost)
             : '',
+        status: selectedUnit.status || 'IN_STOCK',
+        location_or_customer:
+          selectedUnit.status === 'SOLD' || selectedUnit.status === 'DEMO'
+            ? selectedUnit.customer_name || ''
+            : selectedUnit.warehouse_location || selectedUnit.customer_name || '',
+        memo: selectedUnit.memo || '',
       })
-    } else {
-      setSpecForm({ inbound_date: '', unit_cost: '' })
     }
   }, [selectedUnit])
 
-  const handleStartEditInboundSpec = () => {
+  // 출고증 팝업 열기 (현재 재고 보유 IN_STOCK 장비 대상)
+  const handleOpenVoucherModal = () => {
+    const inStockList = units.filter((u) => u.status === 'IN_STOCK')
+    const defaultIds =
+      selectedUnit && selectedUnit.status === 'IN_STOCK'
+        ? [selectedUnit.id]
+        : inStockList.length === 1
+          ? [inStockList[0].id]
+          : []
+
+    setVoucherSearch('')
+    setSelectedVoucherUnitIds(defaultIds)
+    setVoucherForm({
+      movement_type: 'OUTBOUND_SALE',
+      outbound_date: new Date().toISOString().slice(0, 10),
+      customer_name: '',
+      unit_cost: '',
+      note: '',
+    })
+    setErrorMsg('')
+    setIsVoucherOpen(true)
+  }
+
+  const availableVoucherUnits = useMemo(() => {
+    const q = voucherSearch.trim().toLowerCase()
+    const normQ = normalizeSerial(voucherSearch).toLowerCase()
+    return units
+      .filter((u) => u.status === 'IN_STOCK')
+      .filter((u) => {
+        if (!q) return true
+        const snMatch =
+          u.serial_number?.toLowerCase().includes(q) ||
+          normalizeSerial(u.serial_number).toLowerCase().includes(normQ)
+        const modelMatch =
+          u.printer_models?.model_name?.toLowerCase().includes(q) ||
+          u.printer_models?.series?.toLowerCase().includes(q)
+        const inboundMatch = String(u.inbound_date || '').includes(q)
+        return snMatch || modelMatch || inboundMatch
+      })
+  }, [units, voucherSearch])
+
+  const toggleVoucherUnit = (unitId) => {
+    setSelectedVoucherUnitIds((prev) =>
+      prev.includes(unitId) ? prev.filter((id) => id !== unitId) : [...prev, unitId]
+    )
+  }
+
+  const handleToggleAllVisibleVoucherUnits = () => {
+    const visibleIds = availableVoucherUnits.map((u) => u.id)
+    const allSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedVoucherUnitIds.includes(id))
+    if (allSelected) {
+      setSelectedVoucherUnitIds((prev) => prev.filter((id) => !visibleIds.includes(id)))
+    } else {
+      setSelectedVoucherUnitIds((prev) => Array.from(new Set([...prev, ...visibleIds])))
+    }
+  }
+
+  // 다중 S/N 출고증 저장 (판매 출고 OUTBOUND_SALE / 대여 출고 OUTBOUND_DEMO)
+  const handleVoucherSubmit = async (e) => {
+    e.preventDefault()
+    const targetName = voucherForm.customer_name.trim()
+    if (selectedVoucherUnitIds.length === 0) {
+      setErrorMsg('출고할 프린터(S/N)를 1대 이상 선택해 주세요.')
+      return
+    }
+    if (!targetName) {
+      setErrorMsg(
+        voucherForm.movement_type === 'OUTBOUND_DEMO'
+          ? '대여처를 입력해 주세요.'
+          : '납품처를 입력해 주세요.'
+      )
+      return
+    }
+
+    setSaving(true)
+    setErrorMsg('')
+    try {
+      const isDemo = voucherForm.movement_type === 'OUTBOUND_DEMO'
+      const nextStatus = isDemo ? 'DEMO' : 'SOLD'
+      const parsedCost =
+        voucherForm.unit_cost === '' || voucherForm.unit_cost === null
+          ? null
+          : Number(voucherForm.unit_cost)
+      const movedAtIso = voucherForm.outbound_date
+        ? `${voucherForm.outbound_date}T09:00:00.000Z`
+        : new Date().toISOString()
+
+      const selectedTargets = units.filter((u) => selectedVoucherUnitIds.includes(u.id))
+
+      const movementPayloads = selectedTargets.map((u) => ({
+        printer_unit_id: u.id,
+        movement_type: voucherForm.movement_type,
+        from_status: u.status,
+        to_status: nextStatus,
+        from_location: u.warehouse_location || '본사 창고',
+        to_location: targetName,
+        customer_name: targetName,
+        unit_cost: parsedCost,
+        reference_type: 'MANUAL',
+        moved_at: movedAtIso,
+        note: voucherForm.note.trim() || null,
+      }))
+
+      const { error: moveErr } = await supabase
+        .from('printer_movements')
+        .insert(movementPayloads)
+
+      if (moveErr) throw moveErr
+
+      const nowIso = new Date().toISOString()
+      for (const u of selectedTargets) {
+        const { error: unitErr } = await supabase
+          .from('printer_units')
+          .update({
+            status: nextStatus,
+            customer_name: targetName,
+            updated_at: nowIso,
+          })
+          .eq('id', u.id)
+
+        if (unitErr) throw unitErr
+      }
+
+      const firstId = selectedTargets[0]?.id || selectedUnitId
+      setIsVoucherOpen(false)
+      setSelectedVoucherUnitIds([])
+      setVoucherForm({
+        movement_type: 'OUTBOUND_SALE',
+        outbound_date: new Date().toISOString().slice(0, 10),
+        customer_name: '',
+        unit_cost: '',
+        note: '',
+      })
+
+      if (firstId) setSelectedUnitId(firstId)
+      await fetchPrinterData()
+      if (firstId) await fetchMovements(firstId)
+      refreshParts?.()
+    } catch (err) {
+      setErrorMsg(err.message || '출고증 처리 중 오류가 발생했습니다.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  // 대여 반납(재입고) 처리 -> RETURN_DEMO 이력 기록 및 IN_STOCK 복귀
+  const handleReturnDemoSubmit = async (e) => {
+    e.preventDefault()
     if (!selectedUnit) return
-    setSpecForm({
+
+    setSaving(true)
+    setErrorMsg('')
+    try {
+      const returnLoc = returnForm.warehouse_location.trim() || '본사 창고'
+      const movedAtIso = returnForm.return_date
+        ? `${returnForm.return_date}T09:00:00.000Z`
+        : new Date().toISOString()
+
+      const { error: moveErr } = await supabase.from('printer_movements').insert([
+        {
+          printer_unit_id: selectedUnit.id,
+          movement_type: 'RETURN_DEMO',
+          from_status: selectedUnit.status,
+          to_status: 'IN_STOCK',
+          from_location: selectedUnit.customer_name || selectedUnit.warehouse_location || '대여처',
+          to_location: returnLoc,
+          customer_name: null,
+          reference_type: 'MANUAL',
+          moved_at: movedAtIso,
+          note: returnForm.note.trim() || '대여 반납(재입고)',
+        },
+      ])
+
+      if (moveErr) throw moveErr
+
+      const { error: unitErr } = await supabase
+        .from('printer_units')
+        .update({
+          status: 'IN_STOCK',
+          customer_name: null,
+          warehouse_location: returnLoc,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', selectedUnit.id)
+
+      if (unitErr) throw unitErr
+
+      setIsReturnOpen(false)
+      setReturnForm({
+        return_date: new Date().toISOString().slice(0, 10),
+        warehouse_location: '본사 창고',
+        note: '',
+      })
+
+      await fetchPrinterData()
+      await fetchMovements(selectedUnit.id)
+      refreshParts?.()
+    } catch (err) {
+      setErrorMsg(err.message || '대여 반납(재입고) 처리 중 오류가 발생했습니다.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleStartEditUnit = () => {
+    if (!selectedUnit) return
+    setEditForm({
+      model_id: selectedUnit.model_id || selectedUnit.printer_models?.id || '',
+      condition: selectedUnit.condition || 'NEW',
       inbound_date: selectedUnit.inbound_date ? String(selectedUnit.inbound_date).slice(0, 10) : '',
       unit_cost:
         selectedUnit.unit_cost !== null && selectedUnit.unit_cost !== undefined
           ? String(selectedUnit.unit_cost)
           : '',
+      status: selectedUnit.status || 'IN_STOCK',
+      location_or_customer:
+        selectedUnit.status === 'SOLD' || selectedUnit.status === 'DEMO'
+          ? selectedUnit.customer_name || ''
+          : selectedUnit.warehouse_location || selectedUnit.customer_name || '',
+      memo: selectedUnit.memo || '',
     })
     setErrorMsg('')
-    setIsEditingInboundSpec(true)
+    setIsEditingUnit(true)
   }
 
-  const handleSaveInboundSpec = async () => {
+  const handleSaveUnitEdit = async () => {
     if (!selectedUnit) return
+    if (!editForm.model_id) {
+      setErrorMsg('시리즈/모델을 선택해 주세요.')
+      return
+    }
 
-    const trimmedDate = specForm.inbound_date.trim()
-    const cleanedCost = String(specForm.unit_cost ?? '').replace(/,/g, '').trim()
+    const cleanedCost = String(editForm.unit_cost ?? '').replace(/,/g, '').trim()
     const parsedCost = cleanedCost === '' ? null : Number(cleanedCost)
-
     if (parsedCost !== null && (Number.isNaN(parsedCost) || parsedCost < 0)) {
       setErrorMsg('입고단가는 0 이상의 숫자로 입력해 주세요.')
       return
     }
 
-    setSavingSpec(true)
+    const locVal = editForm.location_or_customer.trim()
+    const isExternal = editForm.status === 'SOLD' || editForm.status === 'DEMO'
+
+    setSavingEdit(true)
     setErrorMsg('')
     try {
       const { error } = await supabase
         .from('printer_units')
         .update({
-          inbound_date: trimmedDate || null,
+          model_id: editForm.model_id,
+          condition: editForm.condition,
+          inbound_date: editForm.inbound_date.trim() || null,
           unit_cost: parsedCost,
+          status: editForm.status,
+          customer_name: isExternal ? locVal || null : null,
+          warehouse_location: isExternal
+            ? selectedUnit.warehouse_location || '본사 창고'
+            : locVal || '본사 창고',
+          memo: editForm.memo.trim() || null,
           updated_at: new Date().toISOString(),
         })
         .eq('id', selectedUnit.id)
 
       if (error) throw error
 
-      setIsEditingInboundSpec(false)
+      setIsEditingUnit(false)
       await fetchPrinterData()
       refreshParts?.()
     } catch (err) {
-      setErrorMsg(err.message || '입고일자 및 입고단가 저장 중 오류가 발생했습니다.')
+      setErrorMsg(err.message || '장비 정보 수정 중 오류가 발생했습니다.')
     } finally {
-      setSavingSpec(false)
+      setSavingEdit(false)
     }
   }
 
-  // 신규 입고 등록 (printer_units INSERT + printer_movements INBOUND INSERT)
+  // 신규 입고 등록 (단순 입력: 모델/시리즈, S/N, 입고일, 입고단가, 창고, 메모)
   const handleCreateUnit = async (e) => {
     e.preventDefault()
     const cleanSerial = onlyDigits(newForm.serial_number)
     if (!newForm.model_id || !cleanSerial) {
-      setErrorMsg('모델과 숫자 시리얼 번호(S/N)는 필수입니다.')
+      setErrorMsg('시리즈/모델과 숫자 시리얼 번호(S/N)는 필수입니다.')
       return
     }
 
@@ -335,9 +604,8 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
     setErrorMsg('')
     try {
       const parsedCost =
-        newForm.unit_cost === '' || newForm.unit_cost === null
-          ? null
-          : Number(newForm.unit_cost)
+        newForm.unit_cost === '' || newForm.unit_cost === null ? null : Number(newForm.unit_cost)
+      const loc = newForm.warehouse_location.trim() || '본사 창고'
 
       const { data: createdUnit, error: unitErr } = await supabase
         .from('printer_units')
@@ -350,7 +618,7 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
             inbound_date: newForm.inbound_date || null,
             unit_cost: parsedCost,
             currency: newForm.currency || 'KRW',
-            warehouse_location: newForm.warehouse_location.trim() || '본사 창고',
+            warehouse_location: loc,
             memo: newForm.memo.trim() || null,
           },
         ])
@@ -359,6 +627,10 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
 
       if (unitErr) throw unitErr
 
+      const movedAtIso = newForm.inbound_date
+        ? `${newForm.inbound_date}T09:00:00.000Z`
+        : new Date().toISOString()
+
       const { error: moveErr } = await supabase.from('printer_movements').insert([
         {
           printer_unit_id: createdUnit.id,
@@ -366,9 +638,10 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
           from_status: null,
           to_status: 'IN_STOCK',
           from_location: '외부 입고',
-          to_location: newForm.warehouse_location.trim() || '본사 창고',
+          to_location: loc,
           unit_cost: parsedCost,
           reference_type: 'MANUAL',
+          moved_at: movedAtIso,
           note: newForm.memo.trim() || '신규 프린터 입고',
         },
       ])
@@ -394,84 +667,29 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
     }
   }
 
-  // 상태/위치 변경 및 폐기 처리 (printer_movements INSERT -> 트리거로 printer_units 동기화)
-  const handleMovementSubmit = async (e) => {
-    e.preventDefault()
-    if (!selectedUnit) return
-
-    const targetLoc = moveForm.location_or_customer.trim()
-    if (['SOLD', 'DEMO', 'REPAIR'].includes(moveForm.to_status) && !targetLoc) {
-      setErrorMsg('납품/데모/수리 상태 변경 시 거래처명 또는 위치를 입력하세요.')
-      return
-    }
-
-    setSaving(true)
+  // [임시 정리용] 이력 삭제 핸들러 (정리 후 해당 함수와 버튼만 제거하면 됨)
+  const handleDeleteMovement = async (movementId) => {
+    if (!selectedUnit || !movementId) return
+    setDeletingMovementId(movementId)
     setErrorMsg('')
     try {
-      const prevLoc =
-        selectedUnit.customer_name || selectedUnit.warehouse_location || '-'
+      const { error } = await supabase
+        .from('printer_movements')
+        .delete()
+        .eq('id', movementId)
 
-      const { error: moveErr } = await supabase.from('printer_movements').insert([
-        {
-          printer_unit_id: selectedUnit.id,
-          movement_type: moveForm.movement_type,
-          from_status: selectedUnit.status,
-          to_status: moveForm.to_status,
-          from_location: prevLoc,
-          to_location:
-            moveForm.to_status === 'SCRAPPED'
-              ? `폐기 (${moveForm.scrap_reason.trim() || '사유 미기재'})`
-              : moveForm.to_status === 'IN_STOCK'
-                ? targetLoc || '본사 창고'
-                : targetLoc,
-          customer_name: ['SOLD', 'DEMO', 'REPAIR'].includes(moveForm.to_status)
-            ? targetLoc
-            : null,
-          unit_cost: moveForm.unit_cost === '' ? null : Number(moveForm.unit_cost),
-          reference_type: 'MANUAL',
-          note: moveForm.note.trim() || moveForm.scrap_reason.trim() || null,
-        },
-      ])
+      if (error) throw error
 
-      if (moveErr) throw moveErr
-
-      // 폐기 상태일 때 폐기일시 및 폐기 사유 추가 기록
-      if (moveForm.to_status === 'SCRAPPED') {
-        const { error: scrapErr } = await supabase
-          .from('printer_units')
-          .update({
-            scrapped_at: new Date().toISOString(),
-            scrap_reason: moveForm.scrap_reason.trim() || '사유 미기재',
-          })
-          .eq('id', selectedUnit.id)
-
-        if (scrapErr) throw scrapErr
-      } else if (selectedUnit.status === 'SCRAPPED') {
-        await supabase
-          .from('printer_units')
-          .update({ scrapped_at: null, scrap_reason: null })
-          .eq('id', selectedUnit.id)
-      }
-
-      setMoveForm((prev) => ({
-        ...prev,
-        location_or_customer: '',
-        scrap_reason: '',
-        unit_cost: '',
-        note: '',
-      }))
-
-      await fetchPrinterData()
       await fetchMovements(selectedUnit.id)
+      await fetchPrinterData()
       refreshParts?.()
     } catch (err) {
-      setErrorMsg(err.message || '상태 변경 처리 중 오류가 발생했습니다.')
+      setErrorMsg(err.message || '이력 삭제 중 오류가 발생했습니다.')
     } finally {
-      setSaving(false)
+      setDeletingMovementId(null)
     }
   }
 
-  // 상태 요약 카운트
   const summaryCounts = useMemo(() => {
     return units.reduce(
       (acc, u) => {
@@ -479,7 +697,7 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
         acc[u.status] = (acc[u.status] || 0) + 1
         return acc
       },
-      { total: 0, IN_STOCK: 0, DEMO: 0, SOLD: 0, REPAIR: 0, SCRAPPED: 0 }
+      { total: 0, IN_STOCK: 0, SOLD: 0, DEMO: 0, REPAIR: 0, SCRAPPED: 0 }
     )
   }, [units])
 
@@ -526,9 +744,31 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
     )
   }
 
+  const renderReinboundBadge = (unit) => {
+    const label = getReinboundLabel(unit)
+    if (!label) return null
+    return (
+      <span
+        style={{
+          display: 'inline-block',
+          padding: '2px 7px',
+          borderRadius: '6px',
+          fontSize: '11px',
+          fontWeight: '800',
+          backgroundColor: '#FEF3C7',
+          color: '#92400E',
+          border: '1px solid #F59E0B',
+          whiteSpace: 'nowrap',
+        }}
+      >
+        {label}
+      </span>
+    )
+  }
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-      {/* 상단 요약 바 & 신규 입고 버튼 */}
+      {/* 상단 요약 바 & 출고증 팝업 / 신규 입고 버튼 */}
       <div
         style={{
           display: 'flex',
@@ -564,6 +804,23 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
         </div>
 
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center' }}>
+          <button
+            type="button"
+            onClick={handleOpenVoucherModal}
+            style={{
+              padding: '10px 16px',
+              borderRadius: '10px',
+              border: 'none',
+              backgroundColor: '#0F172A',
+              color: '#FFFFFF',
+              fontWeight: '700',
+              fontSize: '13px',
+              cursor: 'pointer',
+            }}
+          >
+            📄 출고증 작성 (다중 S/N)
+          </button>
+
           <button
             type="button"
             onClick={() => (isAddOpen ? closeAddModal() : openAddModal())}
@@ -614,7 +871,7 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
           }}
         >
           <div>
-            <label style={labelStyle}>프린터 모델 *</label>
+            <label style={labelStyle}>시리즈 / 모델 *</label>
             <select
               value={newForm.model_id}
               onChange={(e) => setNewForm((prev) => ({ ...prev, model_id: e.target.value }))}
@@ -623,7 +880,8 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
             >
               {models.map((m) => (
                 <option key={m.id} value={m.id}>
-                  [{m.manufacturer}] {m.model_name}
+                  [{m.manufacturer}] {m.series ? `${m.series} · ` : ''}
+                  {m.model_name}
                 </option>
               ))}
             </select>
@@ -668,20 +926,7 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
           </div>
 
           <div>
-            <label style={labelStyle}>장비 상태 구분</label>
-            <select
-              value={newForm.condition}
-              onChange={(e) => setNewForm((prev) => ({ ...prev, condition: e.target.value }))}
-              style={inputStyle}
-            >
-              <option value="NEW">신품 (NEW)</option>
-              <option value="DEMO_USED">데모기 (DEMO_USED)</option>
-              <option value="REFURB">리퍼 (REFURB)</option>
-            </select>
-          </div>
-
-          <div>
-            <label style={labelStyle}>보관 창고 위치</label>
+            <label style={labelStyle}>보관 위치</label>
             <input
               type="text"
               value={newForm.warehouse_location}
@@ -696,7 +941,7 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
             <label style={labelStyle}>메모</label>
             <input
               type="text"
-              placeholder="옵션, 펌웨어 등"
+              placeholder="비고"
               value={newForm.memo}
               onChange={(e) => setNewForm((prev) => ({ ...prev, memo: e.target.value }))}
               style={inputStyle}
@@ -740,7 +985,7 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
                 cursor: 'pointer',
               }}
             >
-              {saving ? '저장 중...' : '입고 완료'}
+              {saving ? '저장 중...' : '입고 등록'}
             </button>
           </div>
         </form>
@@ -750,14 +995,14 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
       <div>
         <input
           type="text"
-          placeholder="🔍 S/N, 모델, 납품업체, 창고 검색..."
+          placeholder="🔍 S/N, 시리즈/모델(JET2Neo, JET3up), 납품처/대여처, 창고 검색..."
           value={searchTerm}
           onChange={(e) => setSearchTerm(e.target.value)}
           style={{ ...inputStyle, padding: '11px 12px' }}
         />
       </div>
 
-      {/* 본문 2단 레이아웃: 좌측 목록(15개 단위 페이지네이션) / 우측 S/N 상세 & 이동 이력 */}
+      {/* 본문 2단 레이아웃 */}
       <div
         style={{
           display: 'grid',
@@ -766,7 +1011,7 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
           alignItems: 'start',
         }}
       >
-        {/* 좌측: 프린터 개체 목록 (페이지당 15개, 열 너비 고정 및 말줄임표 처리) */}
+        {/* 좌측 목록 (S/N, 시리즈/모델, 입고일자, 재입고 여부, 상태) */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', minWidth: 0 }}>
           <div
             style={{
@@ -779,7 +1024,7 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
             <table
               style={{
                 width: '100%',
-                minWidth: '540px',
+                minWidth: '580px',
                 tableLayout: 'fixed',
                 borderCollapse: 'collapse',
                 textAlign: 'left',
@@ -787,11 +1032,11 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
               }}
             >
               <colgroup>
-                <col style={{ width: '92px' }} />
-                <col style={{ width: '124px' }} />
                 <col style={{ width: '96px' }} />
-                <col style={{ width: '138px' }} />
-                <col style={{ width: '90px' }} />
+                <col style={{ width: '136px' }} />
+                <col style={{ width: '98px' }} />
+                <col style={{ width: '146px' }} />
+                <col style={{ width: '104px' }} />
               </colgroup>
               <thead>
                 <tr
@@ -802,10 +1047,10 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
                   }}
                 >
                   <th style={{ padding: '12px' }}>S/N</th>
-                  <th style={{ padding: '12px' }}>제조사 / 모델</th>
+                  <th style={{ padding: '12px' }}>시리즈 / 모델</th>
+                  <th style={{ padding: '12px' }}>입고일자</th>
+                  <th style={{ padding: '12px' }}>재입고 여부</th>
                   <th style={{ padding: '12px' }}>상태</th>
-                  <th style={{ padding: '12px' }}>현재 위치 / 거래처</th>
-                  <th style={{ padding: '12px' }}>입고일</th>
                 </tr>
               </thead>
               <tbody>
@@ -830,10 +1075,10 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
                 ) : (
                   paginatedUnits.map((u) => {
                     const isSelected = u.id === selectedUnitId
-                    const locationText =
-                      u.status === 'SCRAPPED'
-                        ? `폐기 (${u.scrap_reason || '사유 미기재'})`
-                        : u.customer_name || u.warehouse_location || '-'
+                    const seriesOrModel = u.printer_models?.series
+                      ? `${u.printer_models.series} · ${u.printer_models.model_name || ''}`
+                      : u.printer_models?.model_name || '-'
+                    const reinboundLabel = getReinboundLabel(u)
 
                     return (
                       <tr
@@ -861,58 +1106,36 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
                         <td
                           style={{
                             padding: '11px 12px',
-                            overflow: 'hidden',
-                          }}
-                        >
-                          <div
-                            style={{
-                              fontSize: '11px',
-                              color: '#64748B',
-                              whiteSpace: 'nowrap',
-                              overflow: 'hidden',
-                              textOverflow: 'ellipsis',
-                            }}
-                          >
-                            {u.printer_models?.manufacturer || '-'}
-                          </div>
-                          <div
-                            style={{
-                              fontWeight: '700',
-                              whiteSpace: 'nowrap',
-                              overflow: 'hidden',
-                              textOverflow: 'ellipsis',
-                            }}
-                            title={u.printer_models?.model_name || '-'}
-                          >
-                            {u.printer_models?.model_name || '-'}
-                          </div>
-                        </td>
-                        <td style={{ padding: '11px 12px', overflow: 'hidden' }}>
-                          {renderStatusBadge(u.status)}
-                        </td>
-                        <td
-                          style={{
-                            padding: '11px 12px',
-                            fontWeight: '600',
-                            color: '#1E293B',
+                            fontWeight: '700',
                             whiteSpace: 'nowrap',
                             overflow: 'hidden',
                             textOverflow: 'ellipsis',
                           }}
-                          title={locationText}
+                          title={seriesOrModel}
                         >
-                          {locationText}
+                          {seriesOrModel}
                         </td>
                         <td
                           style={{
                             padding: '11px 12px',
-                            color: '#475569',
+                            color: '#334155',
+                            fontWeight: '600',
                             whiteSpace: 'nowrap',
                             overflow: 'hidden',
                             textOverflow: 'ellipsis',
                           }}
                         >
                           {u.inbound_date || '-'}
+                        </td>
+                        <td style={{ padding: '11px 12px', overflow: 'hidden' }}>
+                          {reinboundLabel ? (
+                            renderReinboundBadge(u)
+                          ) : (
+                            <span style={{ fontSize: '12px', color: '#94A3B8' }}>일반 입고</span>
+                          )}
+                        </td>
+                        <td style={{ padding: '11px 12px', overflow: 'hidden' }}>
+                          {renderStatusBadge(u.status)}
                         </td>
                       </tr>
                     )
@@ -922,7 +1145,6 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
             </table>
           </div>
 
-          {/* 하단 페이지네이션 바 (페이지당 15개 기준) */}
           {filteredUnits.length > 0 && (
             <div
               style={{
@@ -1000,7 +1222,7 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
           )}
         </div>
 
-        {/* 우측: 선택된 S/N 상세 스냅샷 + 출고/데모/폐기 처리 + 이동 이력 */}
+        {/* 우측: 선택 S/N 상세 & 정보 수정 + 대여 반납 + 이력 */}
         <div
           style={{
             backgroundColor: '#FFFFFF',
@@ -1026,7 +1248,6 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
             </div>
           ) : (
             <>
-              {/* S/N 핵심 요약 헤더 */}
               <div
                 style={{
                   display: 'flex',
@@ -1038,17 +1259,19 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
                 }}
               >
                 <div>
-                  <div style={{ fontSize: '12px', color: '#64748B', fontWeight: '700' }}>
-                    {selectedUnit.printer_models?.manufacturer} ·{' '}
-                    {selectedUnit.printer_models?.series} ·{' '}
-                    {CONDITION_META[selectedUnit.condition] || selectedUnit.condition}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: '12px', color: '#64748B', fontWeight: '700' }}>
+                      {selectedUnit.printer_models?.manufacturer || '-'} ·{' '}
+                      {selectedUnit.printer_models?.series || '시리즈 미지정'}
+                    </span>
+                    {renderReinboundBadge(selectedUnit)}
                   </div>
                   <div
                     style={{
                       fontSize: '20px',
                       fontWeight: '900',
                       color: '#0F172A',
-                      marginTop: '2px',
+                      marginTop: '4px',
                     }}
                   >
                     {selectedUnit.serial_number}
@@ -1064,10 +1287,129 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
                     {selectedUnit.printer_models?.model_name || '-'}
                   </div>
                 </div>
-                {renderStatusBadge(selectedUnit.status)}
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                  {renderStatusBadge(selectedUnit.status)}
+                  {selectedUnit.status === 'DEMO' && (
+                    <button
+                      type="button"
+                      onClick={() => setIsReturnOpen((prev) => !prev)}
+                      style={{
+                        padding: '6px 12px',
+                        borderRadius: '8px',
+                        border: 'none',
+                        backgroundColor: '#059669',
+                        color: '#FFFFFF',
+                        fontSize: '12px',
+                        fontWeight: '700',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      {isReturnOpen ? '반납 닫기' : '대여 반납(재입고)'}
+                    </button>
+                  )}
+                </div>
               </div>
 
-              {/* 입고일 · 입고단가 · 현재 위치/납품업체 · 폐기 여부 요약 (별도 수정 모드) */}
+              {/* 대여 반납(재입고) 폼 */}
+              {selectedUnit.status === 'DEMO' && isReturnOpen && (
+                <form
+                  onSubmit={handleReturnDemoSubmit}
+                  style={{
+                    backgroundColor: '#ECFDF5',
+                    border: '1px solid #A7F3D0',
+                    borderRadius: '12px',
+                    padding: '14px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '10px',
+                  }}
+                >
+                  <div style={{ fontSize: '13px', fontWeight: '800', color: '#065F46' }}>
+                    대여 반납 (재입고 처리)
+                  </div>
+
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                    <div>
+                      <label style={labelStyle}>반납일자 *</label>
+                      <input
+                        type="date"
+                        value={returnForm.return_date}
+                        onChange={(e) =>
+                          setReturnForm((prev) => ({ ...prev, return_date: e.target.value }))
+                        }
+                        style={{ ...inputStyle, backgroundColor: '#FFFFFF' }}
+                        required
+                      />
+                    </div>
+
+                    <div>
+                      <label style={labelStyle}>재입고 보관 위치</label>
+                      <input
+                        type="text"
+                        placeholder="예: 본사 창고"
+                        value={returnForm.warehouse_location}
+                        onChange={(e) =>
+                          setReturnForm((prev) => ({
+                            ...prev,
+                            warehouse_location: e.target.value,
+                          }))
+                        }
+                        style={{ ...inputStyle, backgroundColor: '#FFFFFF' }}
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label style={labelStyle}>반납 메모</label>
+                    <input
+                      type="text"
+                      placeholder="점검/상태 메모"
+                      value={returnForm.note}
+                      onChange={(e) =>
+                        setReturnForm((prev) => ({ ...prev, note: e.target.value }))
+                      }
+                      style={{ ...inputStyle, backgroundColor: '#FFFFFF' }}
+                    />
+                  </div>
+
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
+                    <button
+                      type="button"
+                      onClick={() => setIsReturnOpen(false)}
+                      style={{
+                        padding: '8px 12px',
+                        borderRadius: '8px',
+                        border: '1px solid #CBD5E1',
+                        backgroundColor: '#FFFFFF',
+                        fontSize: '12px',
+                        fontWeight: '700',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      취소
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={saving}
+                      style={{
+                        padding: '8px 14px',
+                        borderRadius: '8px',
+                        border: 'none',
+                        backgroundColor: '#059669',
+                        color: '#FFFFFF',
+                        fontSize: '12px',
+                        fontWeight: '700',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      {saving ? '처리 중...' : '재입고 완료'}
+                    </button>
+                  </div>
+                </form>
+              )}
+
+              {/* 개체 정보 요약 및 정보 수정 */}
               <div
                 style={{
                   backgroundColor: '#F8FAFC',
@@ -1085,13 +1427,13 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
                   }}
                 >
                   <span style={{ fontSize: '12px', fontWeight: '800', color: '#334155' }}>
-                    입고 및 개체 요약
+                    개체 정보 (시리즈 · 입고 · 납품/대여처)
                   </span>
 
-                  {!isEditingInboundSpec ? (
+                  {!isEditingUnit ? (
                     <button
                       type="button"
-                      onClick={handleStartEditInboundSpec}
+                      onClick={handleStartEditUnit}
                       style={{
                         padding: '5px 10px',
                         borderRadius: '8px',
@@ -1103,14 +1445,14 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
                         cursor: 'pointer',
                       }}
                     >
-                      입고정보 수정
+                      정보 수정
                     </button>
                   ) : (
                     <div style={{ display: 'flex', gap: '6px' }}>
                       <button
                         type="button"
-                        onClick={() => setIsEditingInboundSpec(false)}
-                        disabled={savingSpec}
+                        onClick={() => setIsEditingUnit(false)}
+                        disabled={savingEdit}
                         style={{
                           padding: '5px 10px',
                           borderRadius: '8px',
@@ -1126,8 +1468,8 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
                       </button>
                       <button
                         type="button"
-                        onClick={handleSaveInboundSpec}
-                        disabled={savingSpec}
+                        onClick={handleSaveUnitEdit}
+                        disabled={savingEdit}
                         style={{
                           padding: '5px 10px',
                           borderRadius: '8px',
@@ -1139,237 +1481,167 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
                           cursor: 'pointer',
                         }}
                       >
-                        {savingSpec ? '저장 중...' : '저장'}
+                        {savingEdit ? '저장 중...' : '수정 저장'}
                       </button>
                     </div>
                   )}
                 </div>
 
-                <div
-                  style={{
-                    display: 'grid',
-                    gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
-                    gap: '10px',
-                  }}
-                >
-                  <div>
-                    <div style={{ fontSize: '11px', color: '#64748B' }}>입고일자</div>
-                    {isEditingInboundSpec ? (
-                      <input
-                        type="date"
-                        value={specForm.inbound_date}
-                        onChange={(e) =>
-                          setSpecForm((prev) => ({ ...prev, inbound_date: e.target.value }))
-                        }
-                        style={{ ...inputStyle, padding: '7px 10px', marginTop: '4px' }}
-                      />
-                    ) : (
+                {!isEditingUnit ? (
+                  <div
+                    style={{
+                      display: 'grid',
+                      gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+                      gap: '10px',
+                    }}
+                  >
+                    <div>
+                      <div style={{ fontSize: '11px', color: '#64748B' }}>시리즈 / 모델</div>
+                      <div style={{ fontSize: '14px', fontWeight: '800', color: '#0F172A' }}>
+                        {selectedUnit.printer_models?.series
+                          ? `${selectedUnit.printer_models.series} (${selectedUnit.printer_models.model_name || '-'})`
+                          : selectedUnit.printer_models?.model_name || '-'}
+                      </div>
+                    </div>
+
+                    <div>
+                      <div style={{ fontSize: '11px', color: '#64748B' }}>입고일자</div>
                       <div style={{ fontSize: '14px', fontWeight: '800', color: '#0F172A' }}>
                         {selectedUnit.inbound_date || '-'}
                       </div>
-                    )}
-                  </div>
+                    </div>
 
-                  <div>
-                    <div style={{ fontSize: '11px', color: '#64748B' }}>입고단가</div>
-                    {isEditingInboundSpec ? (
+                    <div>
+                      <div style={{ fontSize: '11px', color: '#64748B' }}>입고단가</div>
+                      <div style={{ fontSize: '14px', fontWeight: '800', color: '#0F172A' }}>
+                        {formatCurrency(selectedUnit.unit_cost, selectedUnit.currency)}
+                      </div>
+                    </div>
+
+                    <div>
+                      <div style={{ fontSize: '11px', color: '#64748B' }}>재입고 이력 여부</div>
+                      <div style={{ fontSize: '13px', fontWeight: '800', color: '#334155', marginTop: '2px' }}>
+                        {getReinboundLabel(selectedUnit) || '일반 입고 (재입고 이력 없음)'}
+                      </div>
+                    </div>
+
+                    <div>
+                      <div style={{ fontSize: '11px', color: '#64748B' }}>납품/대여처 · 위치</div>
+                      <div style={{ fontSize: '14px', fontWeight: '800', color: '#0F172A' }}>
+                        {selectedUnit.customer_name || selectedUnit.warehouse_location || '-'}
+                      </div>
+                    </div>
+
+                    <div>
+                      <div style={{ fontSize: '11px', color: '#64748B' }}>메모</div>
+                      <div style={{ fontSize: '13px', fontWeight: '700', color: '#334155' }}>
+                        {selectedUnit.memo || '-'}
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                    <div style={{ gridColumn: '1 / -1' }}>
+                      <label style={labelStyle}>시리즈 / 모델</label>
+                      <select
+                        value={editForm.model_id}
+                        onChange={(e) =>
+                          setEditForm((prev) => ({ ...prev, model_id: e.target.value }))
+                        }
+                        style={{ ...inputStyle, backgroundColor: '#FFFFFF' }}
+                      >
+                        {models.map((m) => (
+                          <option key={m.id} value={m.id}>
+                            [{m.manufacturer}] {m.series ? `${m.series} · ` : ''}
+                            {m.model_name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label style={labelStyle}>입고일자</label>
+                      <input
+                        type="date"
+                        value={editForm.inbound_date}
+                        onChange={(e) =>
+                          setEditForm((prev) => ({ ...prev, inbound_date: e.target.value }))
+                        }
+                        style={{ ...inputStyle, backgroundColor: '#FFFFFF' }}
+                      />
+                    </div>
+
+                    <div>
+                      <label style={labelStyle}>입고단가</label>
                       <input
                         type="number"
                         step="0.01"
                         placeholder="예: 12000000"
-                        value={specForm.unit_cost}
+                        value={editForm.unit_cost}
                         onChange={(e) =>
-                          setSpecForm((prev) => ({ ...prev, unit_cost: e.target.value }))
+                          setEditForm((prev) => ({ ...prev, unit_cost: e.target.value }))
                         }
-                        style={{ ...inputStyle, padding: '7px 10px', marginTop: '4px' }}
+                        style={{ ...inputStyle, backgroundColor: '#FFFFFF' }}
                       />
-                    ) : (
-                      <div style={{ fontSize: '14px', fontWeight: '800', color: '#0F172A' }}>
-                        {formatCurrency(selectedUnit.unit_cost, selectedUnit.currency)}
-                      </div>
-                    )}
-                  </div>
-
-                  <div>
-                    <div style={{ fontSize: '11px', color: '#64748B' }}>
-                      현재 납품업체 / 보관위치
                     </div>
-                    <div style={{ fontSize: '14px', fontWeight: '800', color: '#0F172A' }}>
-                      {selectedUnit.customer_name || selectedUnit.warehouse_location || '-'}
-                    </div>
-                  </div>
 
-                  <div>
-                    <div style={{ fontSize: '11px', color: '#64748B' }}>폐기 여부</div>
-                    <div
-                      style={{
-                        fontSize: '14px',
-                        fontWeight: '800',
-                        color: selectedUnit.status === 'SCRAPPED' ? '#991B1B' : '#166534',
-                      }}
-                    >
-                      {selectedUnit.status === 'SCRAPPED'
-                        ? `폐기됨 (${selectedUnit.scrapped_at ? selectedUnit.scrapped_at.slice(0, 10) : ''})`
-                        : '정상 (미폐기)'}
-                    </div>
-                  </div>
-
-                  {selectedUnit.status === 'SCRAPPED' && (
-                    <div style={{ gridColumn: '1 / -1' }}>
-                      <div style={{ fontSize: '11px', color: '#991B1B' }}>폐기 사유</div>
-                      <div style={{ fontSize: '13px', fontWeight: '700', color: '#991B1B' }}>
-                        {selectedUnit.scrap_reason || '폐기 사유 미기재'}
-                      </div>
-                    </div>
-                  )}
-
-                  <div>
-                    <div style={{ fontSize: '11px', color: '#64748B' }}>누적 A/S 횟수</div>
-                    <div style={{ fontSize: '13px', fontWeight: '700', color: '#334155' }}>
-                      {selectedUnit.service_count ?? 0} 회
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* 상태/위치 변경 및 폐기 처리 */}
-              <form
-                onSubmit={handleMovementSubmit}
-                style={{
-                  border: '1px solid #E2E8F0',
-                  borderRadius: '12px',
-                  padding: '14px',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: '10px',
-                }}
-              >
-                <div style={{ fontSize: '13px', fontWeight: '800', color: '#0F172A' }}>
-                  출고 / 데모 / 위치이동 / 폐기 처리
-                </div>
-
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-                  <div>
-                    <label style={labelStyle}>처리 유형</label>
-                    <select
-                      value={moveForm.movement_type}
-                      onChange={(e) => {
-                        const val = e.target.value
-                        const nextStatusMap = {
-                          OUTBOUND_SALE: 'SOLD',
-                          OUTBOUND_DEMO: 'DEMO',
-                          RETURN_DEMO: 'IN_STOCK',
-                          TRANSFER: 'IN_STOCK',
-                          AS_SWAP: 'DEMO',
-                          SCRAP: 'SCRAPPED',
+                    <div>
+                      <label style={labelStyle}>상태</label>
+                      <select
+                        value={editForm.status}
+                        onChange={(e) =>
+                          setEditForm((prev) => ({ ...prev, status: e.target.value }))
                         }
-                        setMoveForm((prev) => ({
-                          ...prev,
-                          movement_type: val,
-                          to_status: nextStatusMap[val] || prev.to_status,
-                        }))
-                      }}
-                      style={inputStyle}
-                    >
-                      <option value="OUTBOUND_SALE">판매 출고 (납품)</option>
-                      <option value="OUTBOUND_DEMO">데모 출고</option>
-                      <option value="RETURN_DEMO">데모 회수 (재고복귀)</option>
-                      <option value="TRANSFER">창고 위치 이동</option>
-                      <option value="AS_SWAP">대체 장비 투입</option>
-                      <option value="SCRAP">폐기 처리</option>
-                    </select>
-                  </div>
+                        style={{ ...inputStyle, backgroundColor: '#FFFFFF' }}
+                      >
+                        {Object.entries(STATUS_META).map(([k, v]) => (
+                          <option key={k} value={k}>
+                            {v.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
 
-                  <div>
-                    <label style={labelStyle}>변경 후 상태</label>
-                    <select
-                      value={moveForm.to_status}
-                      onChange={(e) =>
-                        setMoveForm((prev) => ({ ...prev, to_status: e.target.value }))
-                      }
-                      style={inputStyle}
-                    >
-                      {Object.entries(STATUS_META).map(([k, v]) => (
-                        <option key={k} value={k}>
-                          {v.label} ({k})
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
+                    <div>
+                      <label style={labelStyle}>
+                        {editForm.status === 'SOLD' || editForm.status === 'DEMO'
+                          ? '납품/대여처'
+                          : '보관 위치'}
+                      </label>
+                      <input
+                        type="text"
+                        placeholder={
+                          editForm.status === 'SOLD' || editForm.status === 'DEMO'
+                            ? '업체명 입력'
+                            : '예: 본사 창고'
+                        }
+                        value={editForm.location_or_customer}
+                        onChange={(e) =>
+                          setEditForm((prev) => ({
+                            ...prev,
+                            location_or_customer: e.target.value,
+                          }))
+                        }
+                        style={{ ...inputStyle, backgroundColor: '#FFFFFF' }}
+                      />
+                    </div>
 
-                {moveForm.to_status === 'SCRAPPED' ? (
-                  <div>
-                    <label style={labelStyle}>폐기 사유 *</label>
-                    <input
-                      type="text"
-                      placeholder="예: 메인보드/헤드 노후 수리불가, 데모기 폐기"
-                      value={moveForm.scrap_reason}
-                      onChange={(e) =>
-                        setMoveForm((prev) => ({ ...prev, scrap_reason: e.target.value }))
-                      }
-                      style={inputStyle}
-                      required
-                    />
-                  </div>
-                ) : (
-                  <div>
-                    <label style={labelStyle}>
-                      {moveForm.to_status === 'IN_STOCK'
-                        ? '보관 창고 위치 (미입력 시 본사 창고)'
-                        : '납품/설치 업체명 *'}
-                    </label>
-                    <input
-                      type="text"
-                      placeholder={
-                        moveForm.to_status === 'IN_STOCK'
-                          ? '예: 본사 창고, 안산 사무실'
-                          : '예: (주)대한패키징'
-                      }
-                      value={moveForm.location_or_customer}
-                      onChange={(e) =>
-                        setMoveForm((prev) => ({
-                          ...prev,
-                          location_or_customer: e.target.value,
-                        }))
-                      }
-                      style={inputStyle}
-                      required={moveForm.to_status !== 'IN_STOCK'}
-                    />
+                    <div style={{ gridColumn: '1 / -1' }}>
+                      <label style={labelStyle}>메모</label>
+                      <input
+                        type="text"
+                        value={editForm.memo}
+                        onChange={(e) =>
+                          setEditForm((prev) => ({ ...prev, memo: e.target.value }))
+                        }
+                        style={{ ...inputStyle, backgroundColor: '#FFFFFF' }}
+                      />
+                    </div>
                   </div>
                 )}
+              </div>
 
-                <div>
-                  <label style={labelStyle}>비고 / 메모</label>
-                  <input
-                    type="text"
-                    placeholder="견적번호, 리포트 번호, 특이사항 등"
-                    value={moveForm.note}
-                    onChange={(e) => setMoveForm((prev) => ({ ...prev, note: e.target.value }))}
-                    style={inputStyle}
-                  />
-                </div>
-
-                <button
-                  type="submit"
-                  disabled={saving}
-                  style={{
-                    padding: '10px 14px',
-                    borderRadius: '10px',
-                    border: 'none',
-                    backgroundColor:
-                      moveForm.to_status === 'SCRAPPED' ? '#DC2626' : '#2563EB',
-                    color: '#FFFFFF',
-                    fontWeight: '700',
-                    fontSize: '13px',
-                    cursor: 'pointer',
-                  }}
-                >
-                  {saving ? '처리 중...' : '이력 기록 및 상태 반영'}
-                </button>
-              </form>
-
-              {/* 이동/입출고/폐기 이력 타임라인 */}
+              {/* 입출고 · 대여/반납 이력 목록 ([임시 정리용] 삭제 버튼 포함) */}
               <div>
                 <div
                   style={{
@@ -1379,14 +1651,14 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
                     marginBottom: '8px',
                   }}
                 >
-                  입출고 · 이동 · 폐기 이력 ({movements.length})
+                  입출고 · 대여/반납 이력 ({movements.length})
                 </div>
 
                 {movementsLoading ? (
                   <div style={{ fontSize: '12px', color: '#64748B' }}>이력 불러오는 중...</div>
                 ) : movements.length === 0 ? (
                   <div style={{ fontSize: '12px', color: '#64748B' }}>
-                    등록된 이동 이력이 없습니다.
+                    등록된 이력이 없습니다.
                   </div>
                 ) : (
                   <div
@@ -1413,17 +1685,36 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
                           style={{
                             display: 'flex',
                             justifyContent: 'space-between',
+                            alignItems: 'center',
+                            gap: '8px',
                             fontWeight: '700',
                           }}
                         >
                           <span>
                             {MOVEMENT_TYPE_META[m.movement_type] || m.movement_type} ·{' '}
-                            {STATUS_META[m.to_status]?.label || m.to_status}
+                            {m.moved_at ? m.moved_at.slice(0, 10) : ''}
                           </span>
-                          <span style={{ color: '#64748B', fontWeight: '500' }}>
-                            {m.moved_at ? m.moved_at.slice(0, 16).replace('T', ' ') : ''}
-                          </span>
+
+                          {/* [임시 정리용] 이력 삭제 버튼: 정리 후 이 버튼 블록과 handleDeleteMovement만 지우면 됩니다 */}
+                          <button
+                            type="button"
+                            disabled={deletingMovementId === m.id}
+                            onClick={() => handleDeleteMovement(m.id)}
+                            style={{
+                              padding: '3px 8px',
+                              borderRadius: '6px',
+                              border: '1px solid #FCA5A5',
+                              backgroundColor: '#FEF2F2',
+                              color: '#DC2626',
+                              fontSize: '11px',
+                              fontWeight: '700',
+                              cursor: 'pointer',
+                            }}
+                          >
+                            {deletingMovementId === m.id ? '삭제 중...' : '삭제'}
+                          </button>
                         </div>
+
                         <div style={{ color: '#334155', marginTop: '4px' }}>
                           {m.from_location || '-'} → <strong>{m.to_location || '-'}</strong>
                         </div>
@@ -1444,6 +1735,309 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
           )}
         </div>
       </div>
+
+      {/* 다중 S/N 출고증 팝업 (판매 출고 / 대여 출고) */}
+      {isVoucherOpen && (
+        <div
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: 'rgba(15, 23, 42, 0.55)',
+            display: 'flex',
+            justifyContent: 'center',
+            alignItems: 'center',
+            zIndex: 1200,
+            padding: '16px',
+          }}
+        >
+          <form
+            onSubmit={handleVoucherSubmit}
+            style={{
+              backgroundColor: '#FFFFFF',
+              borderRadius: '16px',
+              width: '820px',
+              maxWidth: '96vw',
+              maxHeight: '90vh',
+              overflowY: 'auto',
+              padding: '22px',
+              boxShadow: '0 25px 50px -12px rgba(0,0,0,0.3)',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '16px',
+            }}
+          >
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                borderBottom: '1px solid #E2E8F0',
+                paddingBottom: '12px',
+              }}
+            >
+              <div>
+                <h3 style={{ margin: 0, fontSize: '18px', fontWeight: '900', color: '#0F172A' }}>
+                  📄 프린터 출고증 작성 (다중 S/N 선택)
+                </h3>
+                <p style={{ margin: '4px 0 0 0', fontSize: '12px', color: '#64748B' }}>
+                  출고할 S/N들을 선택하고 입고일자 및 재입고 이력 여부를 확인한 뒤 출고증을 저장합니다.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsVoucherOpen(false)}
+                style={{
+                  border: 'none',
+                  background: 'none',
+                  fontSize: '18px',
+                  color: '#64748B',
+                  cursor: 'pointer',
+                  fontWeight: '700',
+                }}
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* 출고증 기본 정보 */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px' }}>
+              <div>
+                <label style={labelStyle}>출고 구분 *</label>
+                <select
+                  value={voucherForm.movement_type}
+                  onChange={(e) =>
+                    setVoucherForm((prev) => ({ ...prev, movement_type: e.target.value }))
+                  }
+                  style={inputStyle}
+                >
+                  <option value="OUTBOUND_SALE">판매 출고 (납품)</option>
+                  <option value="OUTBOUND_DEMO">대여 출고 (임대/데모)</option>
+                </select>
+              </div>
+
+              <div>
+                <label style={labelStyle}>출고일자 *</label>
+                <input
+                  type="date"
+                  value={voucherForm.outbound_date}
+                  onChange={(e) =>
+                    setVoucherForm((prev) => ({ ...prev, outbound_date: e.target.value }))
+                  }
+                  style={inputStyle}
+                  required
+                />
+              </div>
+
+              <div>
+                <label style={labelStyle}>
+                  {voucherForm.movement_type === 'OUTBOUND_DEMO' ? '대여처 *' : '납품처 *'}
+                </label>
+                <input
+                  type="text"
+                  placeholder={
+                    voucherForm.movement_type === 'OUTBOUND_DEMO'
+                      ? '예: (주)OOO 대여현장'
+                      : '예: (주)대한패키징'
+                  }
+                  value={voucherForm.customer_name}
+                  onChange={(e) =>
+                    setVoucherForm((prev) => ({ ...prev, customer_name: e.target.value }))
+                  }
+                  style={inputStyle}
+                  required
+                />
+              </div>
+
+              <div>
+                <label style={labelStyle}>단가 (선택)</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  placeholder="예: 15000000"
+                  value={voucherForm.unit_cost}
+                  onChange={(e) =>
+                    setVoucherForm((prev) => ({ ...prev, unit_cost: e.target.value }))
+                  }
+                  style={inputStyle}
+                />
+              </div>
+            </div>
+
+            <div>
+              <label style={labelStyle}>출고증 메모</label>
+              <input
+                type="text"
+                placeholder="견적번호, 대여기간, 납품 특이사항 등"
+                value={voucherForm.note}
+                onChange={(e) => setVoucherForm((prev) => ({ ...prev, note: e.target.value }))}
+                style={inputStyle}
+              />
+            </div>
+
+            {/* 출고 대상 S/N 선택 테이블 (S/N, 시리즈/모델, 입고일자, 재입고 프린터 여부) */}
+            <div
+              style={{
+                border: '1px solid #E2E8F0',
+                borderRadius: '12px',
+                overflow: 'hidden',
+              }}
+            >
+              <div
+                style={{
+                  backgroundColor: '#F8FAFC',
+                  padding: '10px 12px',
+                  borderBottom: '1px solid #E2E8F0',
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  gap: '10px',
+                  flexWrap: 'wrap',
+                }}
+              >
+                <span style={{ fontSize: '13px', fontWeight: '800', color: '#0F172A' }}>
+                  출고 대상 선택 (선택됨: {selectedVoucherUnitIds.length}대 / 재고 보유{' '}
+                  {units.filter((u) => u.status === 'IN_STOCK').length}대)
+                </span>
+                <input
+                  type="text"
+                  placeholder="S/N, 시리즈/모델, 입고일 필터..."
+                  value={voucherSearch}
+                  onChange={(e) => setVoucherSearch(e.target.value)}
+                  style={{ ...inputStyle, width: '230px', padding: '7px 10px', backgroundColor: '#FFFFFF' }}
+                />
+              </div>
+
+              <div style={{ maxHeight: '280px', overflowY: 'auto' }}>
+                <table
+                  style={{
+                    width: '100%',
+                    borderCollapse: 'collapse',
+                    fontSize: '12px',
+                    textAlign: 'left',
+                  }}
+                >
+                  <thead>
+                    <tr style={{ backgroundColor: '#F1F5F9', borderBottom: '1px solid #CBD5E1' }}>
+                      <th style={{ padding: '9px 10px', width: '40px', textAlign: 'center' }}>
+                        <input
+                          type="checkbox"
+                          checked={
+                            availableVoucherUnits.length > 0 &&
+                            availableVoucherUnits.every((u) => selectedVoucherUnitIds.includes(u.id))
+                          }
+                          onChange={handleToggleAllVisibleVoucherUnits}
+                        />
+                      </th>
+                      <th style={{ padding: '9px 10px' }}>S/N</th>
+                      <th style={{ padding: '9px 10px' }}>시리즈 / 모델</th>
+                      <th style={{ padding: '9px 10px' }}>입고일자</th>
+                      <th style={{ padding: '9px 10px' }}>재입고 이력 여부</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {availableVoucherUnits.length === 0 ? (
+                      <tr>
+                        <td colSpan={5} style={{ padding: '20px', textAlign: 'center', color: '#64748B' }}>
+                          출고 가능한 재고 보유(IN_STOCK) 프린터가 없습니다.
+                        </td>
+                      </tr>
+                    ) : (
+                      availableVoucherUnits.map((u) => {
+                        const checked = selectedVoucherUnitIds.includes(u.id)
+                        const reinboundLabel = getReinboundLabel(u)
+                        return (
+                          <tr
+                            key={u.id}
+                            onClick={() => toggleVoucherUnit(u.id)}
+                            style={{
+                              borderBottom: '1px solid #F1F5F9',
+                              backgroundColor: checked ? '#EFF6FF' : '#FFFFFF',
+                              cursor: 'pointer',
+                            }}
+                          >
+                            <td style={{ padding: '9px 10px', textAlign: 'center' }}>
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                onChange={() => {}}
+                                onClick={(e) => e.stopPropagation()}
+                              />
+                            </td>
+                            <td style={{ padding: '9px 10px', fontWeight: '800', color: '#0F172A' }}>
+                              {u.serial_number}
+                            </td>
+                            <td style={{ padding: '9px 10px', fontWeight: '700', color: '#334155' }}>
+                              {u.printer_models?.series ? `${u.printer_models.series} · ` : ''}
+                              {u.printer_models?.model_name || '-'}
+                            </td>
+                            <td style={{ padding: '9px 10px', fontWeight: '600', color: '#334155' }}>
+                              {u.inbound_date || '-'}
+                            </td>
+                            <td style={{ padding: '9px 10px' }}>
+                              {reinboundLabel ? (
+                                renderReinboundBadge(u)
+                              ) : (
+                                <span style={{ color: '#94A3B8' }}>일반 입고</span>
+                              )}
+                            </td>
+                          </tr>
+                        )
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'flex-end',
+                gap: '8px',
+                borderTop: '1px solid #E2E8F0',
+                paddingTop: '12px',
+              }}
+            >
+              <button
+                type="button"
+                onClick={() => setIsVoucherOpen(false)}
+                style={{
+                  padding: '9px 14px',
+                  borderRadius: '10px',
+                  border: '1px solid #CBD5E1',
+                  backgroundColor: '#FFFFFF',
+                  fontSize: '13px',
+                  fontWeight: '700',
+                  cursor: 'pointer',
+                }}
+              >
+                취소
+              </button>
+              <button
+                type="submit"
+                disabled={saving || selectedVoucherUnitIds.length === 0}
+                style={{
+                  padding: '9px 18px',
+                  borderRadius: '10px',
+                  border: 'none',
+                  backgroundColor: selectedVoucherUnitIds.length === 0 ? '#94A3B8' : '#2563EB',
+                  color: '#FFFFFF',
+                  fontSize: '13px',
+                  fontWeight: '800',
+                  cursor: selectedVoucherUnitIds.length === 0 ? 'not-allowed' : 'pointer',
+                }}
+              >
+                {saving
+                  ? '출고 처리 중...'
+                  : `${selectedVoucherUnitIds.length}대 출고증 완료`}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
     </div>
   )
 }
