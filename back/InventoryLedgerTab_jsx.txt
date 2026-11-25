@@ -117,15 +117,11 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
         return sum + (Number.isNaN(cost) ? 0 : cost)
       }, 0)
 
-      // 입고 이력 구성 (printer_movements INBOUND 우선 + 이력 누락 개체는 printer_units 기준으로 보완)
-      const inboundMovementRows = []
-      const recordedInboundUnitIds = new Set()
-
-      grp.movements
+      // 당기 입고 이력: 실제 printer_movements의 INBOUND 이동만 집계 (기초/이력 누락 S/N과 분리)
+      const inboundMovementRows = grp.movements
         .filter((mv) => mv.movement_type === 'INBOUND')
-        .forEach((mv) => {
+        .map((mv) => {
           const u = mv._unit
-          recordedInboundUnitIds.add(String(u.id))
           const modelName = u.printer_models?.model_name || '프린터'
           const sn = u.serial_number || '-'
           const dateStr = mv.moved_at
@@ -140,35 +136,16 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
                 ? Number(u.unit_cost)
                 : null
 
-          inboundMovementRows.push({
+          return {
             date: dateStr,
             badge: `S/N ${sn}`,
             summary: `[${modelName}] S/N: ${sn} (1대)`,
             note: mv.note || u.memo || '',
             author: '프린터 관리',
             unitPrice: rawPrice !== null && !Number.isNaN(rawPrice) ? rawPrice : null,
-          })
+          }
         })
-
-      grp.units.forEach((u) => {
-        if (recordedInboundUnitIds.has(String(u.id))) return
-        const modelName = u.printer_models?.model_name || '프린터'
-        const sn = u.serial_number || '-'
-        const dateStr = u.inbound_date ? String(u.inbound_date).slice(0, 10) : '-'
-        const rawPrice =
-          u.unit_cost !== null && u.unit_cost !== undefined ? Number(u.unit_cost) : null
-
-        inboundMovementRows.push({
-          date: dateStr,
-          badge: `S/N ${sn}`,
-          summary: `[${modelName}] S/N: ${sn} (1대)`,
-          note: u.memo || '기초 등록 장비',
-          author: '프린터 관리',
-          unitPrice: rawPrice !== null && !Number.isNaN(rawPrice) ? rawPrice : null,
-        })
-      })
-
-      inboundMovementRows.sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0))
+        .sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0))
 
       // 출고/데모/폐기 이력 구성
       const outboundMovementRows = grp.movements
@@ -194,9 +171,14 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
         })
         .sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0))
 
+      const returnDemoCount = grp.movements.filter(
+        (mv) => mv.movement_type === 'RETURN_DEMO'
+      ).length
+
       const inboundQty = inboundMovementRows.length
-      const outboundQty = outboundMovementRows.length
-      const carryOverQty = Math.max(0, currentQty + outboundQty - inboundQty)
+      const outboundQty = Math.max(0, outboundMovementRows.length - returnDemoCount)
+      // 수식(이월재고 + 당기입고 - 출고 = 현재고) 정합성 유지
+      const carryOverQty = currentQty + outboundQty - inboundQty
 
       rows.push({
         id: `printer-group-${grp.categoryLabel}`,

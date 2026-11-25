@@ -38,15 +38,56 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
     return baseText.trim()
   }
 
-  const extractQtyFromSummary = (summary, partName) => {
-    if (!summary) return 0
-    if (partName) {
-      const escapedName = String(partName).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-      const namedMatch = summary.match(new RegExp(`${escapedName}[^\\n(]*\\((\\d+)개\\)`))
-      if (namedMatch) return parseInt(namedMatch[1], 10)
+  const parseDeliveryDetailsItems = (rawNote) => {
+    if (!rawNote) return []
+    const str = String(rawNote)
+    const tag = '[DELIVERY_DETAILS:'
+    const startIndex = str.indexOf(tag)
+    if (startIndex === -1) return []
+
+    const jsonPart = str.slice(startIndex + tag.length).trim()
+    const endIndex = jsonPart.lastIndexOf(']')
+    const jsonString = endIndex >= 0 ? jsonPart.slice(0, endIndex).trim() : jsonPart
+
+    try {
+      const parsed = JSON.parse(jsonString)
+      return Array.isArray(parsed?.items) ? parsed.items : []
+    } catch (e) {
+      return []
     }
-    const genericMatch = summary.match(/\((\d+)개\)/)
-    return genericMatch ? parseInt(genericMatch[1], 10) : 0
+  }
+
+  const extractQtyFromSummary = (summary, partName, rawNote = '', partCode = '') => {
+    if (summary) {
+      if (partName) {
+        const escapedName = String(partName).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+        const namedMatch = summary.match(new RegExp(`${escapedName}[^\\n(]*\\((\\d+)개\\)`))
+        if (namedMatch) return parseInt(namedMatch[1], 10)
+      }
+      const genericMatch = summary.match(/\((\d+)개\)/)
+      if (genericMatch) return parseInt(genericMatch[1], 10)
+    }
+
+    if (rawNote) {
+      const detailItems = parseDeliveryDetailsItems(rawNote)
+      const matchedItem = detailItems.find((it) => {
+        const codeMatch =
+          partCode &&
+          it?.code &&
+          String(it.code).trim().toLowerCase() === String(partCode).trim().toLowerCase()
+        const nameMatch =
+          partName &&
+          it?.name &&
+          String(it.name).trim().toLowerCase() === String(partName).trim().toLowerCase()
+        return codeMatch || nameMatch
+      })
+      if (matchedItem && matchedItem.quantity !== undefined && matchedItem.quantity !== null) {
+        const parsedQty = Number(matchedItem.quantity)
+        if (!Number.isNaN(parsedQty) && parsedQty > 0) return parsedQty
+      }
+    }
+
+    return 0
   }
 
   const extractUnitPriceFromText = (text) => {
@@ -117,7 +158,6 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
         return sum + (Number.isNaN(cost) ? 0 : cost)
       }, 0)
 
-      // 당기 입고 이력: 실제 printer_movements의 INBOUND 이동만 집계 (기초/이력 누락 S/N과 분리)
       const inboundMovementRows = grp.movements
         .filter((mv) => mv.movement_type === 'INBOUND')
         .map((mv) => {
@@ -147,7 +187,6 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
         })
         .sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0))
 
-      // 출고/데모/폐기 이력 구성
       const outboundMovementRows = grp.movements
         .filter((mv) =>
           ['OUTBOUND_SALE', 'OUTBOUND_DEMO', 'AS_SWAP', 'SCRAP'].includes(mv.movement_type)
@@ -177,7 +216,6 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
 
       const inboundQty = inboundMovementRows.length
       const outboundQty = Math.max(0, outboundMovementRows.length - returnDemoCount)
-      // 수식(이월재고 + 당기입고 - 출고 = 현재고) 정합성 유지
       const carryOverQty = currentQty + outboundQty - inboundQty
 
       rows.push({
@@ -230,7 +268,6 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
       if (printerUnitsErr) throw printerUnitsErr
       if (printerMovementsErr) throw printerMovementsErr
 
-      // 프린터 전용 테이블(printer_units)이 존재할 때 partsList 내 중복 프린터 행 제외
       const hasPrinterUnits = Array.isArray(printerUnitsData) && printerUnitsData.length > 0
       const filteredPartsList = (partsList || []).filter((part) => {
         if (!hasPrinterUnits) return true
@@ -276,17 +313,37 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
           }
         }
 
+        const partCodeNorm = part.code ? String(part.code).trim().toLowerCase() : ''
+        const partNameNorm = part.name ? String(part.name).trim().toLowerCase() : ''
+
         const partHistories = (historyData || []).filter((h) => {
           if (h.part_id !== undefined && h.part_id !== null && String(h.part_id).trim() !== '') {
             return String(h.part_id) === String(part.id)
           }
-          if (!h.summary) return false
-          if (part.code && String(part.code).trim() !== '') {
-            return h.summary.includes(`[${part.code}]`)
+
+          if (h.summary) {
+            const summaryLower = String(h.summary).toLowerCase()
+            if (partCodeNorm && summaryLower.includes(`[${partCodeNorm}]`)) {
+              return true
+            }
+            if (partNameNorm && summaryLower.includes(partNameNorm)) {
+              return true
+            }
           }
-          if (part.name && String(part.name).trim() !== '') {
-            return h.summary.includes(part.name)
+
+          const detailItems = parseDeliveryDetailsItems(h.note)
+          if (detailItems.length > 0) {
+            const matchedInDetails = detailItems.some((it) => {
+              const itemCodeNorm = it?.code ? String(it.code).trim().toLowerCase() : ''
+              const itemNameNorm = it?.name ? String(it.name).trim().toLowerCase() : ''
+              return (
+                (partCodeNorm && itemCodeNorm && itemCodeNorm === partCodeNorm) ||
+                (partNameNorm && itemNameNorm && itemNameNorm === partNameNorm)
+              )
+            })
+            if (matchedInDetails) return true
           }
+
           return false
         })
 
@@ -301,7 +358,7 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
         const inboundHistorySum = partHistories.reduce((sum, h) => {
           const isInbound = h.type === 'INBOUND' || h.company_name?.includes('입고')
           if (!isInbound) return sum
-          const qty = extractQtyFromSummary(h.summary, part.name)
+          const qty = extractQtyFromSummary(h.summary, part.name, h.note, part.code)
           return sum + (qty > 0 ? qty : 1)
         }, 0)
 
@@ -309,7 +366,7 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
 
         partHistories.forEach((h) => {
           if (h.type === 'OUTBOUND' || h.company_name?.includes('출고')) {
-            const qty = extractQtyFromSummary(h.summary, part.name)
+            const qty = extractQtyFromSummary(h.summary, part.name, h.note, part.code)
             outboundQty += qty > 0 ? qty : 1
           }
         })
@@ -354,7 +411,6 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
   const handleOpenDetailHistory = (item, type) => {
     setSelectedItemHistory({ name: item.name, code: item.code, type })
 
-    // 프린터 그룹 행 클릭 시 printer_movements 기반 입·출고 내역 표시
     if (item.isPrinterGroup) {
       if (type === 'INBOUND') {
         setHistoryList(item.printerInboundRows || [])
@@ -496,7 +552,6 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
 
   const totalSumAssetValue = filteredLedger.reduce((acc, cur) => acc + (cur.assetValue || 0), 0)
 
-  // 이월재고 + 당기입고 - 출고 = 현재고 정합성 확인용 집계
   const closingCheckRows = filteredLedger.map((item) => {
     const carryOver = Number(item.carryOver) || 0
     const inbound = Number(item.inbound) || 0
