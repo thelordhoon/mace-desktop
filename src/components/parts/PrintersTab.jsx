@@ -11,17 +11,17 @@ const STATUS_META = {
   SCRAPPED: { label: '폐기', bg: '#FEE2E2', color: '#991B1B' },
 }
 
-const CONDITION_META = {
-  NEW: '신품',
-  DEMO_USED: '데모기',
-  REFURB: '리퍼',
+const REINBOUND_META = {
+  NONE: { label: '일반 입고', badge: null },
+  RETURN_DEMO: { label: '대여반납 재입고', badge: '대여반납 재입고' },
+  RETURN_SALE: { label: '반품 재입고', badge: '반품 재입고' },
 }
 
 const MOVEMENT_TYPE_META = {
   INBOUND: '입고',
   OUTBOUND_SALE: '판매 출고',
   OUTBOUND_DEMO: '대여 출고',
-  RETURN_DEMO: '대여 반납(재입고)',
+  RETURN_DEMO: '대여반납 재입고',
   TRANSFER: '위치 이동',
   AS_SWAP: '대체 투입',
   SCRAP: '폐기 처리',
@@ -35,6 +35,29 @@ const formatCurrency = (amount, currency = 'KRW') => {
   const num = Number(amount)
   if (Number.isNaN(num)) return '-'
   return `${num.toLocaleString('ko-KR')} ${currency || 'KRW'}`
+}
+
+const parseReinboundFromMemo = (memoText) => {
+  if (!memoText || typeof memoText !== 'string') return null
+  const match = memoText.match(/\[REINBOUND_TYPE:(NONE|RETURN_DEMO|RETURN_SALE)\]/)
+  return match ? match[1] : null
+}
+
+const stripSystemTags = (text) => {
+  if (!text || typeof text !== 'string') return ''
+  return text
+    .replace(/\[REINBOUND_TYPE:(NONE|RETURN_DEMO|RETURN_SALE)\]/g, '')
+    .replace(/\[DELIVERY_DETAILS:[\s\S]*$/, '')
+    .trim()
+}
+
+const buildMemoWithReinboundTag = (cleanMemo, reinboundType) => {
+  const base = stripSystemTags(cleanMemo)
+  if (!reinboundType || reinboundType === 'NONE') {
+    return base || null
+  }
+  const tag = `[REINBOUND_TYPE:${reinboundType}]`
+  return base ? `${base} ${tag}` : tag
 }
 
 export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm }) {
@@ -54,7 +77,7 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
   const [searchTerm, setSearchTerm] = useState('')
   const [statusFilter, setStatusFilter] = useState('ALL')
 
-  // 신규 프린터 입고 폼 (단순 입력: 모델/시리즈, S/N, 입고일, 입고단가, 창고, 메모)
+  // 신규 프린터 입고 폼
   const [isAddOpen, setIsAddOpen] = useState(false)
   const [newForm, setNewForm] = useState({
     model_id: '',
@@ -95,6 +118,9 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
     inbound_date: '',
     unit_cost: '',
     status: 'IN_STOCK',
+    reinbound_type: 'NONE', // NONE | RETURN_DEMO | RETURN_SALE
+    reinbound_date: new Date().toISOString().slice(0, 10),
+    reinbound_note: '',
     location_or_customer: '',
     memo: '',
   })
@@ -148,7 +174,9 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
             )
           `)
           .order('updated_at', { ascending: false }),
-        supabase.from('printer_movements').select('id, printer_unit_id, movement_type, moved_at'),
+        supabase
+          .from('printer_movements')
+          .select('id, printer_unit_id, movement_type, moved_at, note'),
       ])
 
       if (modelErr) throw modelErr
@@ -211,23 +239,39 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
     })
   }, [selectedUnitId])
 
-  // 개체별 대여 반납(재입고) 이력 여부 맵
-  const returnedUnitIdSet = useMemo(() => {
-    const set = new Set()
+  // 개체별 이력 기반 재입고 구분 맵
+  const movementReinboundMap = useMemo(() => {
+    const map = new Map()
     ;(allMovements || []).forEach((m) => {
-      if (m.movement_type === 'RETURN_DEMO' && m.printer_unit_id) {
-        set.add(String(m.printer_unit_id))
+      if (!m.printer_unit_id) return
+      const key = String(m.printer_unit_id)
+      if (m.movement_type === 'RETURN_DEMO') {
+        map.set(key, 'RETURN_DEMO')
+      } else if (
+        m.movement_type === 'INBOUND' &&
+        typeof m.note === 'string' &&
+        m.note.includes('반품 재입고') &&
+        !map.has(key)
+      ) {
+        map.set(key, 'RETURN_SALE')
       }
     })
-    return set
+    return map
   }, [allMovements])
 
+  const getReinboundType = (unit) => {
+    if (!unit) return 'NONE'
+    const tagged = parseReinboundFromMemo(unit.memo)
+    if (tagged) return tagged
+    const fromMove = movementReinboundMap.get(String(unit.id))
+    if (fromMove) return fromMove
+    if (unit.condition === 'REFURB') return 'RETURN_SALE'
+    return 'NONE'
+  }
+
   const getReinboundLabel = (unit) => {
-    if (!unit) return null
-    const hasReturnDemo = returnedUnitIdSet.has(String(unit.id))
-    if (hasReturnDemo) return '대여 반납 재입고'
-    if (unit.condition === 'REFURB') return '리퍼 재입고'
-    return null
+    const rType = getReinboundType(unit)
+    return REINBOUND_META[rType]?.badge || null
   }
 
   const filteredUnits = useMemo(() => {
@@ -308,11 +352,14 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
             ? String(selectedUnit.unit_cost)
             : '',
         status: selectedUnit.status || 'IN_STOCK',
+        reinbound_type: getReinboundType(selectedUnit),
+        reinbound_date: new Date().toISOString().slice(0, 10),
+        reinbound_note: '',
         location_or_customer:
           selectedUnit.status === 'SOLD' || selectedUnit.status === 'DEMO'
             ? selectedUnit.customer_name || ''
             : selectedUnit.warehouse_location || selectedUnit.customer_name || '',
-        memo: selectedUnit.memo || '',
+        memo: stripSystemTags(selectedUnit.memo || ''),
       })
     }
   }, [selectedUnit])
@@ -366,7 +413,8 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
 
   const handleToggleAllVisibleVoucherUnits = () => {
     const visibleIds = availableVoucherUnits.map((u) => u.id)
-    const allSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedVoucherUnitIds.includes(id))
+    const allSelected =
+      visibleIds.length > 0 && visibleIds.every((id) => selectedVoucherUnitIds.includes(id))
     if (allSelected) {
       setSelectedVoucherUnitIds((prev) => prev.filter((id) => !visibleIds.includes(id)))
     } else {
@@ -374,7 +422,7 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
     }
   }
 
-  // 다중 S/N 출고증 저장 (판매 출고 OUTBOUND_SALE / 대여 출고 OUTBOUND_DEMO)
+  // 다중 S/N 출고증 저장 (판매 출고 OUTBOUND_SALE / 대여 출고 OUTBOUND_DEMO + DeliveryHistoryTab 연동 태그)
   const handleVoucherSubmit = async (e) => {
     e.preventDefault()
     const targetName = voucherForm.customer_name.trim()
@@ -406,6 +454,29 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
 
       const selectedTargets = units.filter((u) => selectedVoucherUnitIds.includes(u.id))
 
+      const printerItemsMeta = selectedTargets.map((u) => {
+        const model = u.printer_models
+        const modelName = [model?.manufacturer, model?.series, model?.model_name]
+          .filter(Boolean)
+          .join(' ')
+        return {
+          serialNumber: u.serial_number,
+          modelName: modelName || '프린터',
+          inboundDate: u.inbound_date || '-',
+          reinboundLabel: getReinboundLabel(u) || '일반 입고',
+        }
+      })
+
+      const detailsPayload = {
+        kind: 'PRINTER',
+        movementType: voucherForm.movement_type,
+        equipmentSns: selectedTargets.map((u) => u.serial_number),
+        printerItems: printerItemsMeta,
+      }
+
+      const cleanUserNote = voucherForm.note.trim()
+      const formattedNote = `${cleanUserNote ? `${cleanUserNote}\n` : ''}[DELIVERY_DETAILS:${JSON.stringify(detailsPayload)}]`
+
       const movementPayloads = selectedTargets.map((u) => ({
         printer_unit_id: u.id,
         movement_type: voucherForm.movement_type,
@@ -417,13 +488,10 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
         unit_cost: parsedCost,
         reference_type: 'MANUAL',
         moved_at: movedAtIso,
-        note: voucherForm.note.trim() || null,
+        note: formattedNote,
       }))
 
-      const { error: moveErr } = await supabase
-        .from('printer_movements')
-        .insert(movementPayloads)
-
+      const { error: moveErr } = await supabase.from('printer_movements').insert(movementPayloads)
       if (moveErr) throw moveErr
 
       const nowIso = new Date().toISOString()
@@ -486,11 +554,13 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
           customer_name: null,
           reference_type: 'MANUAL',
           moved_at: movedAtIso,
-          note: returnForm.note.trim() || '대여 반납(재입고)',
+          note: returnForm.note.trim() || '대여반납 재입고',
         },
       ])
 
       if (moveErr) throw moveErr
+
+      const updatedMemo = buildMemoWithReinboundTag(selectedUnit.memo, 'RETURN_DEMO')
 
       const { error: unitErr } = await supabase
         .from('printer_units')
@@ -498,6 +568,7 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
           status: 'IN_STOCK',
           customer_name: null,
           warehouse_location: returnLoc,
+          memo: updatedMemo,
           updated_at: new Date().toISOString(),
         })
         .eq('id', selectedUnit.id)
@@ -532,11 +603,14 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
           ? String(selectedUnit.unit_cost)
           : '',
       status: selectedUnit.status || 'IN_STOCK',
+      reinbound_type: getReinboundType(selectedUnit),
+      reinbound_date: new Date().toISOString().slice(0, 10),
+      reinbound_note: '',
       location_or_customer:
         selectedUnit.status === 'SOLD' || selectedUnit.status === 'DEMO'
           ? selectedUnit.customer_name || ''
           : selectedUnit.warehouse_location || selectedUnit.customer_name || '',
-      memo: selectedUnit.memo || '',
+      memo: stripSystemTags(selectedUnit.memo || ''),
     })
     setErrorMsg('')
     setIsEditingUnit(true)
@@ -556,8 +630,23 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
       return
     }
 
+    const prevReinboundType = getReinboundType(selectedUnit)
+    const nextReinboundType = editForm.reinbound_type || 'NONE'
+    const cleanReinboundNote = editForm.reinbound_note.trim()
+
+    if (nextReinboundType !== 'NONE' && nextReinboundType !== prevReinboundType && !cleanReinboundNote) {
+      setErrorMsg(
+        `${REINBOUND_META[nextReinboundType]?.label} 이력을 생성할 반납/반품 내용을 입력해 주세요.`
+      )
+      return
+    }
+
     const locVal = editForm.location_or_customer.trim()
     const isExternal = editForm.status === 'SOLD' || editForm.status === 'DEMO'
+    const nextWarehouseLoc = isExternal
+      ? selectedUnit.warehouse_location || '본사 창고'
+      : locVal || '본사 창고'
+    const mergedMemo = buildMemoWithReinboundTag(editForm.memo, nextReinboundType)
 
     setSavingEdit(true)
     setErrorMsg('')
@@ -566,23 +655,49 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
         .from('printer_units')
         .update({
           model_id: editForm.model_id,
-          condition: editForm.condition,
+          condition: nextReinboundType === 'RETURN_SALE' ? 'REFURB' : editForm.condition,
           inbound_date: editForm.inbound_date.trim() || null,
           unit_cost: parsedCost,
           status: editForm.status,
           customer_name: isExternal ? locVal || null : null,
-          warehouse_location: isExternal
-            ? selectedUnit.warehouse_location || '본사 창고'
-            : locVal || '본사 창고',
-          memo: editForm.memo.trim() || null,
+          warehouse_location: nextWarehouseLoc,
+          memo: mergedMemo,
           updated_at: new Date().toISOString(),
         })
         .eq('id', selectedUnit.id)
 
       if (error) throw error
 
+      // 재입고 구분이 새로 선택된 경우 이력 1건 생성
+      if (nextReinboundType !== 'NONE' && nextReinboundType !== prevReinboundType) {
+        const movedAtIso = editForm.reinbound_date
+          ? `${editForm.reinbound_date}T09:00:00.000Z`
+          : new Date().toISOString()
+
+        const isDemoReturn = nextReinboundType === 'RETURN_DEMO'
+        const { error: moveErr } = await supabase.from('printer_movements').insert([
+          {
+            printer_unit_id: selectedUnit.id,
+            movement_type: isDemoReturn ? 'RETURN_DEMO' : 'INBOUND',
+            from_status: selectedUnit.status,
+            to_status: editForm.status,
+            from_location: selectedUnit.customer_name || (isDemoReturn ? '대여처' : '외부 반품처'),
+            to_location: nextWarehouseLoc,
+            customer_name: null,
+            reference_type: 'MANUAL',
+            moved_at: movedAtIso,
+            note: isDemoReturn
+              ? `[대여반납 재입고] ${cleanReinboundNote}`
+              : `[반품 재입고] ${cleanReinboundNote}`,
+          },
+        ])
+
+        if (moveErr) throw moveErr
+      }
+
       setIsEditingUnit(false)
       await fetchPrinterData()
+      await fetchMovements(selectedUnit.id)
       refreshParts?.()
     } catch (err) {
       setErrorMsg(err.message || '장비 정보 수정 중 오류가 발생했습니다.')
@@ -673,11 +788,7 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
     setDeletingMovementId(movementId)
     setErrorMsg('')
     try {
-      const { error } = await supabase
-        .from('printer_movements')
-        .delete()
-        .eq('id', movementId)
-
+      const { error } = await supabase.from('printer_movements').delete().eq('id', movementId)
       if (error) throw error
 
       await fetchMovements(selectedUnit.id)
@@ -765,6 +876,10 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
       </span>
     )
   }
+
+  const prevReinboundInEdit = selectedUnit ? getReinboundType(selectedUnit) : 'NONE'
+  const isNewReinboundSelected =
+    editForm.reinbound_type !== 'NONE' && editForm.reinbound_type !== prevReinboundInEdit
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
@@ -1011,7 +1126,7 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
           alignItems: 'start',
         }}
       >
-        {/* 좌측 목록 (S/N, 시리즈/모델, 입고일자, 재입고 여부, 상태) */}
+        {/* 좌측 목록 */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', minWidth: 0 }}>
           <div
             style={{
@@ -1427,7 +1542,7 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
                   }}
                 >
                   <span style={{ fontSize: '12px', fontWeight: '800', color: '#334155' }}>
-                    개체 정보 (시리즈 · 입고 · 납품/대여처)
+                    개체 정보 (시리즈 · 입고 · 재입고 · 납품/대여처)
                   </span>
 
                   {!isEditingUnit ? (
@@ -1519,9 +1634,16 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
                     </div>
 
                     <div>
-                      <div style={{ fontSize: '11px', color: '#64748B' }}>재입고 이력 여부</div>
-                      <div style={{ fontSize: '13px', fontWeight: '800', color: '#334155', marginTop: '2px' }}>
-                        {getReinboundLabel(selectedUnit) || '일반 입고 (재입고 이력 없음)'}
+                      <div style={{ fontSize: '11px', color: '#64748B' }}>재입고 구분</div>
+                      <div
+                        style={{
+                          fontSize: '13px',
+                          fontWeight: '800',
+                          color: '#334155',
+                          marginTop: '2px',
+                        }}
+                      >
+                        {REINBOUND_META[getReinboundType(selectedUnit)]?.label || '일반 입고'}
                       </div>
                     </div>
 
@@ -1535,7 +1657,7 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
                     <div>
                       <div style={{ fontSize: '11px', color: '#64748B' }}>메모</div>
                       <div style={{ fontSize: '13px', fontWeight: '700', color: '#334155' }}>
-                        {selectedUnit.memo || '-'}
+                        {stripSystemTags(selectedUnit.memo) || '-'}
                       </div>
                     </div>
                   </div>
@@ -1603,6 +1725,78 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
                     </div>
 
                     <div>
+                      <label style={labelStyle}>재입고 여부</label>
+                      <select
+                        value={editForm.reinbound_type}
+                        onChange={(e) =>
+                          setEditForm((prev) => ({ ...prev, reinbound_type: e.target.value }))
+                        }
+                        style={{ ...inputStyle, backgroundColor: '#FFFFFF' }}
+                      >
+                        {Object.entries(REINBOUND_META).map(([k, v]) => (
+                          <option key={k} value={k}>
+                            {v.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* 재입고 구분을 새로 선택한 경우 반납일 및 내용 입력 */}
+                    {isNewReinboundSelected && (
+                      <div
+                        style={{
+                          gridColumn: '1 / -1',
+                          backgroundColor: '#FEF3C7',
+                          border: '1px solid #F59E0B',
+                          borderRadius: '10px',
+                          padding: '12px',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: '8px',
+                        }}
+                      >
+                        <div style={{ fontSize: '12px', fontWeight: '800', color: '#92400E' }}>
+                          {REINBOUND_META[editForm.reinbound_type]?.label} 이력 생성 정보
+                        </div>
+
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: '8px' }}>
+                          <div>
+                            <label style={labelStyle}>재입고일 *</label>
+                            <input
+                              type="date"
+                              value={editForm.reinbound_date}
+                              onChange={(e) =>
+                                setEditForm((prev) => ({
+                                  ...prev,
+                                  reinbound_date: e.target.value,
+                                }))
+                              }
+                              style={{ ...inputStyle, backgroundColor: '#FFFFFF' }}
+                              required
+                            />
+                          </div>
+
+                          <div>
+                            <label style={labelStyle}>반납/반품 내용 (이력 메모) *</label>
+                            <input
+                              type="text"
+                              placeholder="예: OO업체 대여 종료 반납, 현장 반품 등"
+                              value={editForm.reinbound_note}
+                              onChange={(e) =>
+                                setEditForm((prev) => ({
+                                  ...prev,
+                                  reinbound_note: e.target.value,
+                                }))
+                              }
+                              style={{ ...inputStyle, backgroundColor: '#FFFFFF' }}
+                              required
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    <div style={{ gridColumn: '1 / -1' }}>
                       <label style={labelStyle}>
                         {editForm.status === 'SOLD' || editForm.status === 'DEMO'
                           ? '납품/대여처'
@@ -1724,7 +1918,9 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
                           </div>
                         )}
                         {m.note && (
-                          <div style={{ color: '#64748B', marginTop: '2px' }}>메모: {m.note}</div>
+                          <div style={{ color: '#64748B', marginTop: '2px' }}>
+                            메모: {stripSystemTags(m.note)}
+                          </div>
                         )}
                       </div>
                     ))}
@@ -1803,7 +1999,13 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
             </div>
 
             {/* 출고증 기본 정보 */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px' }}>
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+                gap: '12px',
+              }}
+            >
               <div>
                 <label style={labelStyle}>출고 구분 *</label>
                 <select
@@ -1877,7 +2079,7 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
               />
             </div>
 
-            {/* 출고 대상 S/N 선택 테이블 (S/N, 시리즈/모델, 입고일자, 재입고 프린터 여부) */}
+            {/* 출고 대상 S/N 선택 테이블 */}
             <div
               style={{
                 border: '1px solid #E2E8F0',
@@ -1906,7 +2108,12 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
                   placeholder="S/N, 시리즈/모델, 입고일 필터..."
                   value={voucherSearch}
                   onChange={(e) => setVoucherSearch(e.target.value)}
-                  style={{ ...inputStyle, width: '230px', padding: '7px 10px', backgroundColor: '#FFFFFF' }}
+                  style={{
+                    ...inputStyle,
+                    width: '230px',
+                    padding: '7px 10px',
+                    backgroundColor: '#FFFFFF',
+                  }}
                 />
               </div>
 
@@ -1926,7 +2133,9 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
                           type="checkbox"
                           checked={
                             availableVoucherUnits.length > 0 &&
-                            availableVoucherUnits.every((u) => selectedVoucherUnitIds.includes(u.id))
+                            availableVoucherUnits.every((u) =>
+                              selectedVoucherUnitIds.includes(u.id)
+                            )
                           }
                           onChange={handleToggleAllVisibleVoucherUnits}
                         />
@@ -1940,7 +2149,10 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
                   <tbody>
                     {availableVoucherUnits.length === 0 ? (
                       <tr>
-                        <td colSpan={5} style={{ padding: '20px', textAlign: 'center', color: '#64748B' }}>
+                        <td
+                          colSpan={5}
+                          style={{ padding: '20px', textAlign: 'center', color: '#64748B' }}
+                        >
                           출고 가능한 재고 보유(IN_STOCK) 프린터가 없습니다.
                         </td>
                       </tr>
