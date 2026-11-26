@@ -3,7 +3,26 @@ import { supabase } from '../../supabaseClient'
 
 const PAGE_SIZE = 15
 
-const NOZZLE_SIZE_OPTIONS = ['35µm', '40µm', '50µm', '60µm', '70µm']
+const NOZZLE_SIZE_OPTIONS = ['35µm', '40µm', '50µm', '55µm', '60µm', '70µm']
+
+const EXTRA_MODELS = [
+  {
+    id: '__VIRTUAL_JET3_ECO__',
+    manufacturer: 'LEIBINGER',
+    category: 'PRINTER',
+    series: 'JET3',
+    model_name: 'JET3 Eco',
+    track_serial: true,
+  },
+  {
+    id: '__VIRTUAL_JET3_ECO_PI__',
+    manufacturer: 'LEIBINGER',
+    category: 'PRINTER',
+    series: 'JET3',
+    model_name: 'JET3 Eco Pi',
+    track_serial: true,
+  },
+]
 
 const STATUS_META = {
   IN_STOCK: { label: '재고 보유', bg: '#DCFCE7', color: '#166534' },
@@ -196,19 +215,14 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
       if (allMoveErr) throw allMoveErr
 
       const normalizedModels = [...(modelRows || [])]
-      const hasJet3upEco = normalizedModels.some(
-        (m) => String(m.model_name || '').toLowerCase() === 'jet3up eco'
-      )
-      if (!hasJet3upEco) {
-        normalizedModels.push({
-          id: '__VIRTUAL_JET3UP_ECO__',
-          manufacturer: 'LEIBINGER',
-          category: 'PRINTER',
-          series: 'JET3up',
-          model_name: 'JET3up Eco',
-          track_serial: true,
-        })
-      }
+      EXTRA_MODELS.forEach((extra) => {
+        const exists = normalizedModels.some(
+          (m) => String(m.model_name || '').toLowerCase() === extra.model_name.toLowerCase()
+        )
+        if (!exists) {
+          normalizedModels.push(extra)
+        }
+      })
 
       setModels(normalizedModels)
       setUnits(unitRows || [])
@@ -231,13 +245,15 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
   }
 
   const resolveModelId = async (selectedModelId) => {
-    if (selectedModelId !== '__VIRTUAL_JET3UP_ECO__') {
+    const virtualModel = EXTRA_MODELS.find((m) => m.id === selectedModelId)
+    if (!virtualModel) {
       return selectedModelId
     }
+
     const { data: existing, error: findErr } = await supabase
       .from('printer_models')
       .select('id')
-      .eq('model_name', 'JET3up Eco')
+      .eq('model_name', virtualModel.model_name)
       .maybeSingle()
 
     if (findErr) throw findErr
@@ -247,11 +263,11 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
       .from('printer_models')
       .insert([
         {
-          manufacturer: 'LEIBINGER',
-          category: 'PRINTER',
-          series: 'JET3up',
-          model_name: 'JET3up Eco',
-          track_serial: true,
+          manufacturer: virtualModel.manufacturer,
+          category: virtualModel.category,
+          series: virtualModel.series,
+          model_name: virtualModel.model_name,
+          track_serial: virtualModel.track_serial,
         },
       ])
       .select('id')
@@ -1223,7 +1239,7 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
       <div>
         <input
           type="text"
-          placeholder="🔍 S/N, 모델(JET2Neo, JET3up Eco), 납품처/대여처, 창고 검색..."
+          placeholder="🔍 S/N, 모델(JET2Neo, JET3 Eco, JET3 Eco Pi), 납품처/대여처, 창고 검색..."
           value={searchTerm}
           onChange={(e) => setSearchTerm(e.target.value)}
           style={{ ...inputStyle, padding: '11px 12px' }}
