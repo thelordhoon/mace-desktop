@@ -82,6 +82,7 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
   const [newForm, setNewForm] = useState({
     model_id: '',
     serial_number: '',
+    nozzle_size: '',
     condition: 'NEW',
     inbound_date: new Date().toISOString().slice(0, 10),
     unit_cost: '',
@@ -114,8 +115,10 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
   const [isEditingUnit, setIsEditingUnit] = useState(false)
   const [editForm, setEditForm] = useState({
     model_id: '',
+    nozzle_size: '',
     condition: 'NEW',
     inbound_date: '',
+    delivery_date: '',
     unit_cost: '',
     status: 'IN_STOCK',
     reinbound_type: 'NONE', // NONE | RETURN_DEMO | RETURN_SALE
@@ -183,12 +186,27 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
       if (unitErr) throw unitErr
       if (allMoveErr) throw allMoveErr
 
-      setModels(modelRows || [])
+      const normalizedModels = modelRows || []
+      const hasJet3upEco = normalizedModels.some(
+        (m) => String(m.model_name || '').toLowerCase() === 'jet3up eco'
+      )
+      if (!hasJet3upEco) {
+        normalizedModels.push({
+          id: '__VIRTUAL_JET3UP_ECO__',
+          manufacturer: 'LEIBINGER',
+          category: 'PRINTER',
+          series: 'JET3up',
+          model_name: 'JET3up Eco',
+          track_serial: true,
+        })
+      }
+
+      setModels(normalizedModels)
       setUnits(unitRows || [])
       setAllMovements(allMoveRows || [])
 
-      if (!newForm.model_id && modelRows?.length) {
-        setNewForm((prev) => ({ ...prev, model_id: modelRows[0].id }))
+      if (!newForm.model_id && normalizedModels.length) {
+        setNewForm((prev) => ({ ...prev, model_id: normalizedModels[0].id }))
       }
 
       if (unitRows?.length) {
@@ -201,6 +219,37 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
     } finally {
       setLoading(false)
     }
+  }
+
+  const resolveModelId = async (selectedModelId) => {
+    if (selectedModelId !== '__VIRTUAL_JET3UP_ECO__') {
+      return selectedModelId
+    }
+    const { data: existing, error: findErr } = await supabase
+      .from('printer_models')
+      .select('id')
+      .eq('model_name', 'JET3up Eco')
+      .maybeSingle()
+
+    if (findErr) throw findErr
+    if (existing?.id) return existing.id
+
+    const { data: inserted, error: insertErr } = await supabase
+      .from('printer_models')
+      .insert([
+        {
+          manufacturer: 'LEIBINGER',
+          category: 'PRINTER',
+          series: 'JET3up',
+          model_name: 'JET3up Eco',
+          track_serial: true,
+        },
+      ])
+      .select('id')
+      .single()
+
+    if (insertErr) throw insertErr
+    return inserted.id
   }
 
   const fetchMovements = async (unitId) => {
@@ -259,6 +308,27 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
     return map
   }, [allMovements])
 
+  // 개체별 이력 기반 최근 판매 출고(납품)일 맵
+  const movementDeliveryDateMap = useMemo(() => {
+    const map = new Map()
+    ;(allMovements || []).forEach((m) => {
+      if (!m.printer_unit_id || m.movement_type !== 'OUTBOUND_SALE' || !m.moved_at) return
+      const key = String(m.printer_unit_id)
+      const dateStr = String(m.moved_at).slice(0, 10)
+      const prev = map.get(key)
+      if (!prev || dateStr > prev) {
+        map.set(key, dateStr)
+      }
+    })
+    return map
+  }, [allMovements])
+
+  const getDeliveryDate = (unit) => {
+    if (!unit) return null
+    if (unit.delivery_date) return String(unit.delivery_date).slice(0, 10)
+    return movementDeliveryDateMap.get(String(unit.id)) || null
+  }
+
   const getReinboundType = (unit) => {
     if (!unit) return 'NONE'
     const tagged = parseReinboundFromMemo(unit.memo)
@@ -292,8 +362,9 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
         model?.series?.toLowerCase().includes(q)
       const custMatch = u.customer_name?.toLowerCase().includes(q)
       const locMatch = u.warehouse_location?.toLowerCase().includes(q)
+      const nozzleMatch = u.nozzle_size?.toLowerCase().includes(q)
 
-      return snMatch || modelMatch || custMatch || locMatch
+      return snMatch || modelMatch || custMatch || locMatch || nozzleMatch
     })
   }, [units, searchTerm, statusFilter])
 
@@ -345,8 +416,10 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
     if (selectedUnit) {
       setEditForm({
         model_id: selectedUnit.model_id || selectedUnit.printer_models?.id || '',
+        nozzle_size: selectedUnit.nozzle_size || '',
         condition: selectedUnit.condition || 'NEW',
         inbound_date: selectedUnit.inbound_date ? String(selectedUnit.inbound_date).slice(0, 10) : '',
+        delivery_date: getDeliveryDate(selectedUnit) || '',
         unit_cost:
           selectedUnit.unit_cost !== null && selectedUnit.unit_cost !== undefined
             ? String(selectedUnit.unit_cost)
@@ -496,13 +569,18 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
 
       const nowIso = new Date().toISOString()
       for (const u of selectedTargets) {
+        const unitUpdatePayload = {
+          status: nextStatus,
+          customer_name: targetName,
+          updated_at: nowIso,
+        }
+        if (!isDemo && voucherForm.outbound_date) {
+          unitUpdatePayload.delivery_date = voucherForm.outbound_date
+        }
+
         const { error: unitErr } = await supabase
           .from('printer_units')
-          .update({
-            status: nextStatus,
-            customer_name: targetName,
-            updated_at: nowIso,
-          })
+          .update(unitUpdatePayload)
           .eq('id', u.id)
 
         if (unitErr) throw unitErr
@@ -596,8 +674,10 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
     if (!selectedUnit) return
     setEditForm({
       model_id: selectedUnit.model_id || selectedUnit.printer_models?.id || '',
+      nozzle_size: selectedUnit.nozzle_size || '',
       condition: selectedUnit.condition || 'NEW',
       inbound_date: selectedUnit.inbound_date ? String(selectedUnit.inbound_date).slice(0, 10) : '',
+      delivery_date: getDeliveryDate(selectedUnit) || '',
       unit_cost:
         selectedUnit.unit_cost !== null && selectedUnit.unit_cost !== undefined
           ? String(selectedUnit.unit_cost)
@@ -651,12 +731,16 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
     setSavingEdit(true)
     setErrorMsg('')
     try {
+      const resolvedModelId = await resolveModelId(editForm.model_id)
+
       const { error } = await supabase
         .from('printer_units')
         .update({
-          model_id: editForm.model_id,
+          model_id: resolvedModelId,
+          nozzle_size: editForm.nozzle_size.trim() || null,
           condition: nextReinboundType === 'RETURN_SALE' ? 'REFURB' : editForm.condition,
           inbound_date: editForm.inbound_date.trim() || null,
+          delivery_date: editForm.delivery_date.trim() || null,
           unit_cost: parsedCost,
           status: editForm.status,
           customer_name: isExternal ? locVal || null : null,
@@ -706,7 +790,7 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
     }
   }
 
-  // 신규 입고 등록 (단순 입력: 모델/시리즈, S/N, 입고일, 입고단가, 창고, 메모)
+  // 신규 입고 등록 (단순 입력: 모델/시리즈, S/N, 노즐 사이즈, 입고일, 입고단가, 창고, 메모)
   const handleCreateUnit = async (e) => {
     e.preventDefault()
     const cleanSerial = onlyDigits(newForm.serial_number)
@@ -718,6 +802,7 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
     setSaving(true)
     setErrorMsg('')
     try {
+      const resolvedModelId = await resolveModelId(newForm.model_id)
       const parsedCost =
         newForm.unit_cost === '' || newForm.unit_cost === null ? null : Number(newForm.unit_cost)
       const loc = newForm.warehouse_location.trim() || '본사 창고'
@@ -726,8 +811,9 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
         .from('printer_units')
         .insert([
           {
-            model_id: newForm.model_id,
+            model_id: resolvedModelId,
             serial_number: cleanSerial,
+            nozzle_size: newForm.nozzle_size.trim() || null,
             status: 'IN_STOCK',
             condition: newForm.condition,
             inbound_date: newForm.inbound_date || null,
@@ -766,6 +852,7 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
       setNewForm((prev) => ({
         ...prev,
         serial_number: '',
+        nozzle_size: '',
         unit_cost: '',
         memo: '',
       }))
@@ -1015,6 +1102,19 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
               }
               style={inputStyle}
               required
+            />
+          </div>
+
+          <div>
+            <label style={labelStyle}>노즐 사이즈</label>
+            <input
+              type="text"
+              placeholder="예: 60µm"
+              value={newForm.nozzle_size}
+              onChange={(e) =>
+                setNewForm((prev) => ({ ...prev, nozzle_size: e.target.value }))
+              }
+              style={inputStyle}
             />
           </div>
 
@@ -1542,7 +1642,7 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
                   }}
                 >
                   <span style={{ fontSize: '12px', fontWeight: '800', color: '#334155' }}>
-                    개체 정보 (시리즈 · 입고 · 재입고 · 납품/대여처)
+                    개체 정보 (시리즈 · 노즐 · 입고/납품 · 재입고 · 납품/대여처)
                   </span>
 
                   {!isEditingUnit ? (
@@ -1620,9 +1720,23 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
                     </div>
 
                     <div>
+                      <div style={{ fontSize: '11px', color: '#64748B' }}>노즐 사이즈</div>
+                      <div style={{ fontSize: '14px', fontWeight: '800', color: '#0F172A' }}>
+                        {selectedUnit.nozzle_size || '-'}
+                      </div>
+                    </div>
+
+                    <div>
                       <div style={{ fontSize: '11px', color: '#64748B' }}>입고일자</div>
                       <div style={{ fontSize: '14px', fontWeight: '800', color: '#0F172A' }}>
                         {selectedUnit.inbound_date || '-'}
+                      </div>
+                    </div>
+
+                    <div>
+                      <div style={{ fontSize: '11px', color: '#64748B' }}>납품일</div>
+                      <div style={{ fontSize: '14px', fontWeight: '800', color: '#0F172A' }}>
+                        {getDeliveryDate(selectedUnit) || '-'}
                       </div>
                     </div>
 
@@ -1663,7 +1777,7 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
                   </div>
                 ) : (
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-                    <div style={{ gridColumn: '1 / -1' }}>
+                    <div>
                       <label style={labelStyle}>시리즈 / 모델</label>
                       <select
                         value={editForm.model_id}
@@ -1682,12 +1796,37 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
                     </div>
 
                     <div>
+                      <label style={labelStyle}>노즐 사이즈</label>
+                      <input
+                        type="text"
+                        placeholder="예: 60µm"
+                        value={editForm.nozzle_size}
+                        onChange={(e) =>
+                          setEditForm((prev) => ({ ...prev, nozzle_size: e.target.value }))
+                        }
+                        style={{ ...inputStyle, backgroundColor: '#FFFFFF' }}
+                      />
+                    </div>
+
+                    <div>
                       <label style={labelStyle}>입고일자</label>
                       <input
                         type="date"
                         value={editForm.inbound_date}
                         onChange={(e) =>
                           setEditForm((prev) => ({ ...prev, inbound_date: e.target.value }))
+                        }
+                        style={{ ...inputStyle, backgroundColor: '#FFFFFF' }}
+                      />
+                    </div>
+
+                    <div>
+                      <label style={labelStyle}>납품일</label>
+                      <input
+                        type="date"
+                        value={editForm.delivery_date}
+                        onChange={(e) =>
+                          setEditForm((prev) => ({ ...prev, delivery_date: e.target.value }))
                         }
                         style={{ ...inputStyle, backgroundColor: '#FFFFFF' }}
                       />
@@ -1724,7 +1863,7 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
                       </select>
                     </div>
 
-                    <div>
+                    <div style={{ gridColumn: '1 / -1' }}>
                       <label style={labelStyle}>재입고 여부</label>
                       <select
                         value={editForm.reinbound_type}
