@@ -3,6 +3,8 @@ import { supabase } from '../../supabaseClient'
 
 const PAGE_SIZE = 15
 
+const NOZZLE_SIZE_OPTIONS = ['35µm', '40µm', '50µm', '60µm', '70µm']
+
 const STATUS_META = {
   IN_STOCK: { label: '재고 보유', bg: '#DCFCE7', color: '#166534' },
   SOLD: { label: '납품 완료', bg: '#DBEAFE', color: '#1E40AF' },
@@ -29,6 +31,13 @@ const MOVEMENT_TYPE_META = {
 
 const normalizeSerial = (val = '') => val.trim().replace(/\s+/g, '').toUpperCase()
 const onlyDigits = (val = '') => String(val ?? '').replace(/[^0-9]/g, '')
+
+const formatModelLabel = (model) => {
+  if (!model) return '-'
+  const name = String(model.model_name || '').trim()
+  const series = String(model.series || '').trim()
+  return name || series || '-'
+}
 
 const formatCurrency = (amount, currency = 'KRW') => {
   if (amount === null || amount === undefined || amount === '') return '-'
@@ -186,7 +195,7 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
       if (unitErr) throw unitErr
       if (allMoveErr) throw allMoveErr
 
-      const normalizedModels = modelRows || []
+      const normalizedModels = [...(modelRows || [])]
       const hasJet3upEco = normalizedModels.some(
         (m) => String(m.model_name || '').toLowerCase() === 'jet3up eco'
       )
@@ -529,8 +538,8 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
 
       const printerItemsMeta = selectedTargets.map((u) => {
         const model = u.printer_models
-        const modelName = [model?.manufacturer, model?.series, model?.model_name]
-          .filter(Boolean)
+        const modelName = [model?.manufacturer, formatModelLabel(model)]
+          .filter((v) => v && v !== '-')
           .join(' ')
         return {
           serialNumber: u.serial_number,
@@ -699,7 +708,7 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
   const handleSaveUnitEdit = async () => {
     if (!selectedUnit) return
     if (!editForm.model_id) {
-      setErrorMsg('시리즈/모델을 선택해 주세요.')
+      setErrorMsg('모델을 선택해 주세요.')
       return
     }
 
@@ -790,12 +799,12 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
     }
   }
 
-  // 신규 입고 등록 (단순 입력: 모델/시리즈, S/N, 노즐 사이즈, 입고일, 입고단가, 창고, 메모)
+  // 신규 입고 등록 (모델, S/N, 노즐 사이즈, 입고일, 입고단가, 창고, 메모)
   const handleCreateUnit = async (e) => {
     e.preventDefault()
     const cleanSerial = onlyDigits(newForm.serial_number)
     if (!newForm.model_id || !cleanSerial) {
-      setErrorMsg('시리즈/모델과 숫자 시리얼 번호(S/N)는 필수입니다.')
+      setErrorMsg('모델과 숫자 시리얼 번호(S/N)는 필수입니다.')
       return
     }
 
@@ -1073,7 +1082,7 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
           }}
         >
           <div>
-            <label style={labelStyle}>시리즈 / 모델 *</label>
+            <label style={labelStyle}>모델 *</label>
             <select
               value={newForm.model_id}
               onChange={(e) => setNewForm((prev) => ({ ...prev, model_id: e.target.value }))}
@@ -1082,8 +1091,7 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
             >
               {models.map((m) => (
                 <option key={m.id} value={m.id}>
-                  [{m.manufacturer}] {m.series ? `${m.series} · ` : ''}
-                  {m.model_name}
+                  [{m.manufacturer}] {formatModelLabel(m)}
                 </option>
               ))}
             </select>
@@ -1107,15 +1115,20 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
 
           <div>
             <label style={labelStyle}>노즐 사이즈</label>
-            <input
-              type="text"
-              placeholder="예: 60µm"
+            <select
               value={newForm.nozzle_size}
               onChange={(e) =>
                 setNewForm((prev) => ({ ...prev, nozzle_size: e.target.value }))
               }
               style={inputStyle}
-            />
+            >
+              <option value="">선택</option>
+              {NOZZLE_SIZE_OPTIONS.map((size) => (
+                <option key={size} value={size}>
+                  {size}
+                </option>
+              ))}
+            </select>
           </div>
 
           <div>
@@ -1210,7 +1223,7 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
       <div>
         <input
           type="text"
-          placeholder="🔍 S/N, 시리즈/모델(JET2Neo, JET3up), 납품처/대여처, 창고 검색..."
+          placeholder="🔍 S/N, 모델(JET2Neo, JET3up Eco), 납품처/대여처, 창고 검색..."
           value={searchTerm}
           onChange={(e) => setSearchTerm(e.target.value)}
           style={{ ...inputStyle, padding: '11px 12px' }}
@@ -1262,7 +1275,7 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
                   }}
                 >
                   <th style={{ padding: '12px' }}>S/N</th>
-                  <th style={{ padding: '12px' }}>시리즈 / 모델</th>
+                  <th style={{ padding: '12px' }}>모델</th>
                   <th style={{ padding: '12px' }}>입고일자</th>
                   <th style={{ padding: '12px' }}>재입고 여부</th>
                   <th style={{ padding: '12px' }}>상태</th>
@@ -1290,9 +1303,7 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
                 ) : (
                   paginatedUnits.map((u) => {
                     const isSelected = u.id === selectedUnitId
-                    const seriesOrModel = u.printer_models?.series
-                      ? `${u.printer_models.series} · ${u.printer_models.model_name || ''}`
-                      : u.printer_models?.model_name || '-'
+                    const modelLabel = formatModelLabel(u.printer_models)
                     const reinboundLabel = getReinboundLabel(u)
 
                     return (
@@ -1326,9 +1337,9 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
                             overflow: 'hidden',
                             textOverflow: 'ellipsis',
                           }}
-                          title={seriesOrModel}
+                          title={modelLabel}
                         >
-                          {seriesOrModel}
+                          {modelLabel}
                         </td>
                         <td
                           style={{
@@ -1476,8 +1487,7 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
                 <div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                     <span style={{ fontSize: '12px', color: '#64748B', fontWeight: '700' }}>
-                      {selectedUnit.printer_models?.manufacturer || '-'} ·{' '}
-                      {selectedUnit.printer_models?.series || '시리즈 미지정'}
+                      {selectedUnit.printer_models?.manufacturer || '-'}
                     </span>
                     {renderReinboundBadge(selectedUnit)}
                   </div>
@@ -1499,7 +1509,7 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
                       marginTop: '2px',
                     }}
                   >
-                    {selectedUnit.printer_models?.model_name || '-'}
+                    {formatModelLabel(selectedUnit.printer_models)}
                   </div>
                 </div>
 
@@ -1642,7 +1652,7 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
                   }}
                 >
                   <span style={{ fontSize: '12px', fontWeight: '800', color: '#334155' }}>
-                    개체 정보 (시리즈 · 노즐 · 입고/납품 · 재입고 · 납품/대여처)
+                    개체 정보 (모델 · 노즐 · 입고/납품 · 재입고 · 납품/대여처)
                   </span>
 
                   {!isEditingUnit ? (
@@ -1711,11 +1721,9 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
                     }}
                   >
                     <div>
-                      <div style={{ fontSize: '11px', color: '#64748B' }}>시리즈 / 모델</div>
+                      <div style={{ fontSize: '11px', color: '#64748B' }}>모델</div>
                       <div style={{ fontSize: '14px', fontWeight: '800', color: '#0F172A' }}>
-                        {selectedUnit.printer_models?.series
-                          ? `${selectedUnit.printer_models.series} (${selectedUnit.printer_models.model_name || '-'})`
-                          : selectedUnit.printer_models?.model_name || '-'}
+                        {formatModelLabel(selectedUnit.printer_models)}
                       </div>
                     </div>
 
@@ -1778,7 +1786,7 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
                 ) : (
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
                     <div>
-                      <label style={labelStyle}>시리즈 / 모델</label>
+                      <label style={labelStyle}>모델</label>
                       <select
                         value={editForm.model_id}
                         onChange={(e) =>
@@ -1788,8 +1796,7 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
                       >
                         {models.map((m) => (
                           <option key={m.id} value={m.id}>
-                            [{m.manufacturer}] {m.series ? `${m.series} · ` : ''}
-                            {m.model_name}
+                            [{m.manufacturer}] {formatModelLabel(m)}
                           </option>
                         ))}
                       </select>
@@ -1797,15 +1804,24 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
 
                     <div>
                       <label style={labelStyle}>노즐 사이즈</label>
-                      <input
-                        type="text"
-                        placeholder="예: 60µm"
+                      <select
                         value={editForm.nozzle_size}
                         onChange={(e) =>
                           setEditForm((prev) => ({ ...prev, nozzle_size: e.target.value }))
                         }
                         style={{ ...inputStyle, backgroundColor: '#FFFFFF' }}
-                      />
+                      >
+                        <option value="">선택</option>
+                        {editForm.nozzle_size &&
+                          !NOZZLE_SIZE_OPTIONS.includes(editForm.nozzle_size) && (
+                            <option value={editForm.nozzle_size}>{editForm.nozzle_size}</option>
+                          )}
+                        {NOZZLE_SIZE_OPTIONS.map((size) => (
+                          <option key={size} value={size}>
+                            {size}
+                          </option>
+                        ))}
+                      </select>
                     </div>
 
                     <div>
@@ -2244,7 +2260,7 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
                 </span>
                 <input
                   type="text"
-                  placeholder="S/N, 시리즈/모델, 입고일 필터..."
+                  placeholder="S/N, 모델, 입고일 필터..."
                   value={voucherSearch}
                   onChange={(e) => setVoucherSearch(e.target.value)}
                   style={{
@@ -2280,7 +2296,7 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
                         />
                       </th>
                       <th style={{ padding: '9px 10px' }}>S/N</th>
-                      <th style={{ padding: '9px 10px' }}>시리즈 / 모델</th>
+                      <th style={{ padding: '9px 10px' }}>모델</th>
                       <th style={{ padding: '9px 10px' }}>입고일자</th>
                       <th style={{ padding: '9px 10px' }}>재입고 이력 여부</th>
                     </tr>
@@ -2321,8 +2337,7 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
                               {u.serial_number}
                             </td>
                             <td style={{ padding: '9px 10px', fontWeight: '700', color: '#334155' }}>
-                              {u.printer_models?.series ? `${u.printer_models.series} · ` : ''}
-                              {u.printer_models?.model_name || '-'}
+                              {formatModelLabel(u.printer_models)}
                             </td>
                             <td style={{ padding: '9px 10px', fontWeight: '600', color: '#334155' }}>
                               {u.inbound_date || '-'}
