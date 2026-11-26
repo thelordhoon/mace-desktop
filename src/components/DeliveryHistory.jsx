@@ -1,419 +1,908 @@
 import React, { useState, useEffect } from 'react'
 import { supabase } from '../supabaseClient'
 
-export default function DeliveryHistory({ partsList }) {
-  const [companies, setCompanies] = useState([])
-  const [allHistories, setAllHistories] = useState([])
-  const [deliveryHistorySearch, setDeliveryHistorySearch] = useState('')
-  const [selectedReportImage, setSelectedReportImage] = useState(null)
+const PRINTER_MOVEMENT_BADGE = {
+  INBOUND: { type: 'INBOUND', label: '입고', tag: '프린터 입고' },
+  OUTBOUND_SALE: { type: 'OUTBOUND', label: '출고', tag: '판매 출고' },
+  OUTBOUND_DEMO: { type: 'OUTBOUND', label: '출고', tag: '대여 출고' },
+  RETURN_DEMO: { type: 'INBOUND', label: '입고', tag: '대여 반납' },
+  TRANSFER: { type: 'INBOUND', label: '이동', tag: '위치 이동' },
+  AS_SWAP: { type: 'OUTBOUND', label: '출고', tag: '대체 투입' },
+  SCRAP: { type: 'OUTBOUND', label: '출고', tag: '폐기 처리' },
+}
 
-  // 출고증 작성/조회 모달 상태
-  const [isDeliveryModalOpen, setIsDeliveryModalOpen] = useState(false)
-  const [deliveryTargetHistory, setDeliveryTargetHistory] = useState(null)
-  const [selectedCompany, setSelectedCompany] = useState(null)
-  
-  // 출고증 Form 상태
-  const [deliveryIssuer, setDeliveryIssuer] = useState('배진철')
-  const [customIssuer, setCustomIssuer] = useState('')
-  const [deliveryDate, setDeliveryDate] = useState('')
-  const [deliverySnList, setDeliverySnList] = useState([''])
-  const [deliveryItems, setDeliveryItems] = useState([{ partId: '', partSn: '', name: '', qty: 1 }])
-  const [deliveryNote, setDeliveryNote] = useState('')
-  const [issuerOptions, setIssuerOptions] = useState(['배진철', '직접 입력'])
+export default function DeliveryHistoryTab({ refreshParts, user }) {
+  const [historyList, setHistoryList] = useState([])
+  const [searchTerm, setSearchTerm] = useState('')
+  const [filterType, setFilterType] = useState('ALL')
+  const [loading, setLoading] = useState(true)
+
+  const [viewingDeliveryItem, setViewingDeliveryItem] = useState(null)
+
+  const currentAuthorName = user?.author || user?.full_name || user?.username || '사용자'
 
   useEffect(() => {
-    fetchCompanies()
-    fetchAllServiceHistories()
-    fetchProfiles()
-  }, [])
+    fetchHistory()
+  }, [currentAuthorName])
 
-  const fetchProfiles = async () => {
-    const { data, error } = await supabase.from('profiles').select('full_name')
-    if (!error && data) {
-      const names = data.map(p => p.full_name).filter(Boolean)
-      if (names.length > 0) {
-        const uniqueNames = Array.from(new Set(['배진철', ...names]))
-        setIssuerOptions([...uniqueNames, '직접 입력'])
-      }
-    }
-  }
-
-  const fetchCompanies = async () => {
-    const { data } = await supabase.from('companies').select('*')
-    setCompanies(data || [])
-  }
-
-  const fetchAllServiceHistories = async () => {
-    const { data } = await supabase.from('service_history').select('*').order('created_at', { ascending: false })
-    setAllHistories(data || [])
-  }
-
-  const parseManagers = (managerData, phoneData, defaultEmail) => {
-    if (!managerData) return [{ name: '', phone: '', role: '', email: defaultEmail || '' }]
+  const fetchHistory = async () => {
+    setLoading(true)
     try {
-      const parsed = typeof managerData === 'string' ? JSON.parse(managerData) : managerData
-      if (Array.isArray(parsed) && parsed.length > 0) return parsed
-    } catch (e) {}
-    return [{ name: managerData || '', phone: phoneData || '', role: '', email: defaultEmail || '' }]
-  }
+      const [{ data: deliveryData, error: delErr }, { data: moveData, error: moveErr }] =
+        await Promise.all([
+          supabase
+            .from('delivery_history')
+            .select('*')
+            .order('date', { ascending: false })
+            .order('id', { ascending: false }),
+          supabase
+            .from('printer_movements')
+            .select(`
+              *,
+              printer_units (
+                id,
+                serial_number,
+                inbound_date,
+                condition,
+                printer_models (
+                  manufacturer,
+                  series,
+                  model_name
+                )
+              )
+            `)
+            .order('moved_at', { ascending: false }),
+        ])
 
-  const parseItemList = (itemData) => {
-    if (!itemData) return ['']
-    if (Array.isArray(itemData)) return itemData.length > 0 ? itemData : ['']
-    const splitArr = String(itemData).split(',').map(s => s.trim()).filter(Boolean)
-    return splitArr.length > 0 ? splitArr : ['']
-  }
+      if (delErr) throw delErr
+      if (moveErr) throw moveErr
 
-  const handleDeleteHistoryItem = async (historyId) => {
-    if (!window.confirm('선택한 서비스 이력을 삭제하시겠습니까?')) return
+      const normalizedPartsHistory = (deliveryData || []).map((row) => ({
+        ...row,
+        source: 'PARTS',
+        sortDate: row.date || '',
+        sortOrder: Number(row.id) || 0,
+      }))
 
-    const { data: targetHistory } = await supabase
-      .from('service_history')
-      .select('report_url')
-      .eq('id', historyId)
-      .single()
-
-    if (targetHistory && targetHistory.report_url) {
-      try {
-        const urlParts = targetHistory.report_url.split('/')
-        const fileName = urlParts[urlParts.length - 1]
-        if (fileName) {
-          await supabase.storage.from('reports').remove([fileName])
+      const normalizedPrinterHistory = (moveData || []).map((mv) => {
+        const meta = PRINTER_MOVEMENT_BADGE[mv.movement_type] || {
+          type: mv.movement_type?.startsWith('OUTBOUND') ? 'OUTBOUND' : 'INBOUND',
+          label: mv.movement_type?.startsWith('OUTBOUND') ? '출고' : '입고',
+          tag: mv.movement_type || '프린터 이력',
         }
-      } catch (err) {
-        console.error('스토리지 파일 삭제 오류:', err)
-      }
-    }
+        const unit = mv.printer_units
+        const model = unit?.printer_models
+        const modelLabel = [model?.manufacturer, model?.series, model?.model_name]
+          .filter(Boolean)
+          .join(' ')
+        const sn = unit?.serial_number || '-'
+        const dateStr = mv.moved_at ? String(mv.moved_at).slice(0, 10) : '-'
+        const companyName =
+          mv.customer_name ||
+          (mv.movement_type === 'INBOUND'
+            ? mv.from_location || '외부 입고'
+            : mv.to_location || mv.from_location || '본사 창고')
 
-    const { error } = await supabase.from('service_history').delete().eq('id', historyId)
-    if (error) {
-      alert('삭제 실패: ' + error.message)
-    } else {
-      alert('서비스 이력이 삭제되었습니다.')
-      fetchAllServiceHistories()
-    }
-  }
+        const hasEmbeddedDetails =
+          typeof mv.note === 'string' && mv.note.includes('[DELIVERY_DETAILS:')
 
-  const handleOpenDeliveryModal = (history) => {
-    setDeliveryTargetHistory(history)
-    setDeliveryDate(history.work_date || new Date().toISOString().split('T')[0])
-    
-    const matchedComp = companies.find(c => c.id === history.company_id)
-    if (matchedComp) {
-      const parsedManagers = parseManagers(matchedComp.manager, matchedComp.phone, matchedComp.email)
-      setSelectedCompany({
-        ...matchedComp,
-        managersList: parsedManagers,
-        inkList: parseItemList(matchedComp.ink),
-        solventList: parseItemList(matchedComp.solvent)
+        const fallbackDetailsNote =
+          !hasEmbeddedDetails && ['OUTBOUND_SALE', 'OUTBOUND_DEMO'].includes(mv.movement_type)
+            ? `${mv.note ? `${mv.note}\n` : ''}[DELIVERY_DETAILS:${JSON.stringify({
+                kind: 'PRINTER',
+                movementType: mv.movement_type,
+                equipmentSns: [sn],
+                printerItems: [
+                  {
+                    serialNumber: sn,
+                    modelName: modelLabel || '프린터',
+                    inboundDate: unit?.inbound_date || '-',
+                  },
+                ],
+              })}]`
+            : mv.note || ''
+
+        return {
+          id: `printer-mv-${mv.id}`,
+          movementId: mv.id,
+          source: 'PRINTER',
+          movementType: mv.movement_type,
+          type: meta.type,
+          subLabel: meta.tag,
+          date: dateStr,
+          company_name: companyName,
+          summary: `[프린터 · ${meta.tag}] ${modelLabel || '프린터'} (S/N: ${sn})`,
+          equipment_sn: sn,
+          note: fallbackDetailsNote,
+          author: currentAuthorName,
+          sortDate: dateStr,
+          sortOrder: mv.moved_at ? new Date(mv.moved_at).getTime() : 0,
+        }
       })
-    }
-    
-    if (history.delivery_data) {
-      try {
-        const savedData = typeof history.delivery_data === 'string' ? JSON.parse(history.delivery_data) : history.delivery_data
-        setDeliveryIssuer(savedData.issuer || '배진철')
-        setCustomIssuer(savedData.customIssuer || '')
-        setDeliverySnList(savedData.snList || (history.sn ? history.sn.split(',').map(s => s.trim()) : ['']))
-        setDeliveryItems(savedData.items || [])
-        setDeliveryNote(savedData.note || history.work_content || '')
-        setIsDeliveryModalOpen(true)
-        return
-      } catch (e) {}
-    }
 
-    setDeliveryIssuer('배진철')
-    setCustomIssuer('')
-    setDeliverySnList(history.sn ? history.sn.split(',').map(s => s.trim()) : [''])
-    setDeliveryNote(history.work_content || '')
-
-    let parsedParts = []
-    try {
-      if (history.parts) {
-        const temp = typeof history.parts === 'string' ? JSON.parse(history.parts) : history.parts
-        if (Array.isArray(temp)) {
-          parsedParts = temp.map(p => {
-            let rawStr = typeof p === 'object' ? (p.name || p.code || p.part_id || '') : String(p).replace(/\(\d+개\)/g, '').trim()
-            let qtyVal = typeof p === 'object' ? (p.qty || 1) : 1
-            const matched = partsList?.find(pt => pt.code?.toLowerCase() === rawStr.toLowerCase() || pt.name?.toLowerCase() === rawStr.toLowerCase())
-            return matched ? { partId: matched.code || '', partSn: '', name: matched.name || '', qty: qtyVal } : { partId: '', partSn: '', name: rawStr, qty: qtyVal }
-          })
+      const merged = [...normalizedPartsHistory, ...normalizedPrinterHistory].sort((a, b) => {
+        if (a.sortDate !== b.sortDate) {
+          return String(b.sortDate).localeCompare(String(a.sortDate))
         }
+        return (b.sortOrder || 0) - (a.sortOrder || 0)
+      })
+
+      setHistoryList(merged)
+    } catch (err) {
+      console.error('입·출고 이력 조회 실패:', err)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleDeleteHistory = async (item) => {
+    if (
+      !window.confirm(
+        `[${item.summary}]\n이 내역을 삭제하시겠습니까?\n(이력만 삭제되며 재고·로트·S/N 상태는 자동 변경되지 않습니다.)`
+      )
+    )
+      return
+
+    if (item.source === 'PRINTER' && item.movementId) {
+      const { error: delMoveErr } = await supabase
+        .from('printer_movements')
+        .delete()
+        .eq('id', item.movementId)
+
+      if (!delMoveErr) {
+        alert('프린터 이력이 삭제되었습니다.')
+        fetchHistory()
+        if (typeof refreshParts === 'function') refreshParts()
+      } else {
+        alert('이력 삭제 실패: ' + delMoveErr.message)
       }
-    } catch (e) {}
-
-    setDeliveryItems(parsedParts.length > 0 ? parsedParts : [{ partId: '', partSn: '', name: '', qty: 1 }])
-    setIsDeliveryModalOpen(true)
-  }
-
-  const handleSaveDeliveryNote = async () => {
-    if (!deliveryTargetHistory) return
-    const finalIssuer = deliveryIssuer === '직접 입력' ? customIssuer : deliveryIssuer
-    if (!finalIssuer.trim()) return alert('발행자(작성자)명을 입력해주세요.')
-
-    const payload = {
-      issuer: finalIssuer,
-      customIssuer,
-      snList: deliverySnList.filter(s => s.trim() !== ''),
-      items: deliveryItems,
-      note: deliveryNote,
-      issuedAt: new Date().toISOString()
+      return
     }
 
-    const { error } = await supabase.from('service_history').update({
-      delivery_issued: true,
-      delivery_data: JSON.stringify(payload)
-    }).eq('id', deliveryTargetHistory.id)
-
-    if (error) {
-      alert('출고증 발행 상태 저장 실패: ' + error.message)
+    const { error: delError } = await supabase.from('delivery_history').delete().eq('id', item.id)
+    if (!delError) {
+      alert('이력이 삭제되었습니다.')
+      fetchHistory()
+      if (typeof refreshParts === 'function') refreshParts()
     } else {
-      alert('출고증이 성공적으로 저장 및 발행 완료 처리되었습니다!')
-      setIsDeliveryModalOpen(false)
-      fetchAllServiceHistories()
+      alert('이력 삭제 실패: ' + delError.message)
     }
   }
 
-  const handleSendOutlookMail = () => {
-    if (!selectedCompany) return
-    const primaryManager = selectedCompany.managersList[0] || {}
-    const recipientEmail = primaryManager.email || selectedCompany.email || ''
-    const subject = `[출고증] (주)메이쓰 - ${selectedCompany.name} 자재/부품 출고명세`
-    const finalIssuer = deliveryIssuer === '직접 입력' ? customIssuer : deliveryIssuer
-    
-    const bodyText = `안녕하세요, (주)메이쓰입니다.
+  const parseDeliveryDetails = (noteText) => {
+    if (!noteText) return null
+    const tag = '[DELIVERY_DETAILS:'
+    const startIndex = noteText.indexOf(tag)
+    if (startIndex === -1) return null
 
-요청하신 장비 서비스 교체 부품에 대한 출고증 정보 발송드립니다.
-
-- 업체명: ${selectedCompany.name}
-- 발행일자: ${deliveryDate}
-- 작성자: ${finalIssuer}
-- 장비 S/N: ${deliverySnList.join(', ')}
-- 출고 부품: ${deliveryItems.map(i => `${i.name || i.partId} (${i.qty}개)`).join(', ')}
-
-자세한 내용은 첨부 및 전달드린 출고 명세서를 참고해주시기 바랍니다.
-감사합니다.
-`
-    navigator.clipboard.writeText(bodyText).catch(() => {})
-    window.location.href = `mailto:${recipientEmail}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(bodyText)}`
-    alert('메일 내용이 클립보드에 복사되었으며, Outlook 메일 창을 호출합니다.')
+    const endIndex = noteText.lastIndexOf(']')
+    const jsonString =
+      endIndex > startIndex
+        ? noteText.substring(startIndex + tag.length, endIndex).trim()
+        : noteText.substring(startIndex + tag.length).trim()
+    try {
+      return JSON.parse(jsonString)
+    } catch (e) {
+      console.error('Delivery Details JSON 파싱 에러:', e)
+      return null
+    }
   }
 
-  const issuedDeliveries = allHistories.filter(h => h.delivery_issued === true).map(h => {
-    const comp = companies.find(c => c.id === h.company_id)
-    return { ...h, companyName: comp ? comp.name : '알 수 없는 업체' }
-  }).filter(h => {
-    if (!deliveryHistorySearch.trim()) return true
-    const q = deliveryHistorySearch.toLowerCase()
-    return h.companyName.toLowerCase().includes(q) || (h.sn && h.sn.toLowerCase().includes(q))
+  const getCleanNote = (noteText) => {
+    if (!noteText) return '-'
+    return (
+      noteText
+        .replace(/\[LOT_RESTORE:[\s\S]*?\](?=\s*\[|$)/g, '')
+        .replace(/\[DELIVERY_DETAILS:[\s\S]*?\](?=\s*\[|$)/g, '')
+        .replace(/\[DELIVERY_DETAILS:[\s\S]*$/, '')
+        .trim() || '-'
+    )
+  }
+
+  const filteredHistory = historyList.filter((item) => {
+    if (filterType !== 'ALL' && item.type !== filterType) return false
+    if (!searchTerm.trim()) return true
+    const q = searchTerm.toLowerCase()
+    return (
+      item.company_name?.toLowerCase().includes(q) ||
+      item.summary?.toLowerCase().includes(q) ||
+      item.equipment_sn?.toLowerCase().includes(q) ||
+      item.note?.toLowerCase().includes(q) ||
+      item.author?.toLowerCase().includes(q)
+    )
   })
 
-  const inputStyle = { width: '100%', padding: '8px 10px', fontSize: '13px', borderRadius: '6px', border: '1px solid #CBD5E1', backgroundColor: '#FFFFFF', outline: 'none', boxSizing: 'border-box' }
-
   return (
-    <div style={{ width: '100%', boxSizing: 'border-box' }}>
-      
+    <div
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') e.preventDefault()
+      }}
+    >
       <style>{`
         @media print {
-          body * { visibility: hidden; }
-          .printable-delivery-area, .printable-delivery-area * { visibility: visible; }
-          .printable-delivery-area { position: absolute; left: 0; top: 0; width: 100%; margin: 0 !important; padding: 10px !important; background: #FFFFFF !important; box-shadow: none !important; }
-          .no-print { display: none !important; }
-          @page { size: A4; margin: 10mm 15mm; }
+          body * {
+            visibility: hidden;
+          }
+          #printable-delivery-note, #printable-delivery-note * {
+            visibility: visible;
+          }
+          #printable-delivery-note {
+            position: absolute;
+            left: 0;
+            top: 0;
+            width: 100%;
+            background-color: #ffffff !important;
+            box-shadow: none !important;
+            border: none !important;
+            padding: 0 !important;
+            margin: 0 !important;
+          }
+          .no-print {
+            display: none !important;
+          }
+          div[style*="background-color"] {
+            background-color: #ffffff !important;
+            -webkit-print-color-adjust: exact;
+            print-color-adjust: exact;
+          }
         }
       `}</style>
 
-      <div style={{ backgroundColor: '#ffffff', borderRadius: '8px', border: '1px solid #CBD5E1', padding: '20px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '12px' }}>
-          <h4 style={{ margin: 0, fontSize: '16px', fontWeight: '800', color: '#0F172A' }}>
-            발행된 출고증 이력 목록 ({issuedDeliveries.length}건)
-          </h4>
-          <div style={{ position: 'relative', width: '220px' }}>
-            <input 
-              type="text"
-              placeholder="업체명 또는 S/N 검색..."
-              value={deliveryHistorySearch}
-              onChange={(e) => setDeliveryHistorySearch(e.target.value)}
-              style={inputStyle}
-            />
-          </div>
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          marginBottom: '16px',
+          flexWrap: 'wrap',
+          gap: '10px',
+        }}
+      >
+        <div style={{ display: 'flex', gap: '8px' }}>
+          {[
+            { id: 'ALL', label: '전체 보기' },
+            { id: 'OUTBOUND', label: '출고 이력' },
+            { id: 'INBOUND', label: '입고/반납 이력' },
+          ].map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => setFilterType(tab.id)}
+              style={{
+                padding: '8px 16px',
+                borderRadius: '8px',
+                border: filterType === tab.id ? '1px solid #2563EB' : '1px solid #CBD5E1',
+                backgroundColor: filterType === tab.id ? '#2563EB' : '#ffffff',
+                color: filterType === tab.id ? '#ffffff' : '#475569',
+                fontWeight: '700',
+                fontSize: '13px',
+                cursor: 'pointer',
+                boxShadow: filterType === tab.id ? '0 2px 4px rgba(37, 99, 235, 0.2)' : 'none',
+              }}
+            >
+              {tab.label}
+            </button>
+          ))}
         </div>
 
-        <div style={{ overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '13px' }}>
-            <thead>
-              <tr style={{ backgroundColor: '#64748B', color: '#FFFFFF', borderBottom: '1px solid #475569' }}>
-                <th style={{ padding: '10px 14px', width: '110px' }}>작업일자</th>
-                <th style={{ padding: '10px 14px', width: '150px' }}>공급받는 자 (업체명)</th>
-                <th style={{ padding: '10px 14px', width: '120px' }}>장비 S/N</th>
-                <th style={{ padding: '10px 14px' }}>출고 부품 요약</th>
-                <th style={{ padding: '10px 14px', width: '132px', textAlign: 'center' }}>작성자</th>
-                <th style={{ padding: '10px 14px', width: '140px', textAlign: 'center' }}>서비스 리포트 보기</th>
-                <th style={{ padding: '10px 14px', width: '180px', textAlign: 'center' }}>관리</th>
+        <input
+          type="text"
+          placeholder="업체명, 품목 요약, 작성자, S/N 검색..."
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+          style={{
+            padding: '10px 14px',
+            fontSize: '13px',
+            borderRadius: '8px',
+            border: '1px solid #CBD5E1',
+            backgroundColor: '#ffffff',
+            width: '320px',
+            outline: 'none',
+          }}
+        />
+      </div>
+
+      <div
+        style={{
+          backgroundColor: '#ffffff',
+          borderRadius: '12px',
+          border: '1px solid #E2E8F0',
+          overflow: 'hidden',
+          boxShadow: '0 1px 3px rgba(0,0,0,0.02)',
+        }}
+      >
+        <table
+          style={{
+            width: '100%',
+            borderCollapse: 'collapse',
+            textAlign: 'left',
+            fontSize: '13px',
+            tableLayout: 'fixed',
+          }}
+        >
+          <thead>
+            <tr
+              style={{
+                backgroundColor: '#F8FAFC',
+                borderBottom: '1px solid #E2E8F0',
+                color: '#475569',
+              }}
+            >
+              <th style={{ padding: '14px 16px', width: '85px', textAlign: 'center' }}>구분</th>
+              <th style={{ padding: '14px 16px', width: '105px' }}>발행일</th>
+              <th style={{ padding: '14px 16px', width: '160px' }}>거래처 / 입고처</th>
+              <th style={{ padding: '14px 16px', width: '280px' }}>품목 명세 요약</th>
+              <th style={{ padding: '14px 16px', width: '250px' }}>비고</th>
+              <th style={{ padding: '14px 16px', width: '95px', textAlign: 'center' }}>작성자</th>
+              <th style={{ padding: '14px 16px', width: '165px', textAlign: 'center' }}>
+                관리 / 보기
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {loading ? (
+              <tr>
+                <td colSpan="7" style={{ padding: '40px', textAlign: 'center', color: '#94A3B8' }}>
+                  이력을 불러오는 중입니다...
+                </td>
               </tr>
-            </thead>
-            <tbody>
-              {issuedDeliveries.length === 0 ? (
-                <tr>
-                  <td colSpan="7" style={{ padding: '40px', textAlign: 'center', color: '#94A3B8' }}>
-                    발행 완료된 출고증 이력이 없습니다.
-                  </td>
-                </tr>
-              ) : (
-                issuedDeliveries.map((h, index) => {
-                  let parsedItems = []
-                  try {
-                    const dData = typeof h.delivery_data === 'string' ? JSON.parse(h.delivery_data) : h.delivery_data
-                    if (dData && dData.items) parsedItems = dData.items
-                  } catch (e) {}
-
-                  const itemsSummary = parsedItems.map(i => `${i.name || i.partId} (${i.qty}개)`).join(', ') || h.work_content || '-'
-                  const issuerName = (() => {
-                    try {
-                      const d = typeof h.delivery_data === 'string' ? JSON.parse(h.delivery_data) : h.delivery_data
-                      return d?.issuer || '-'
-                    } catch (e) {
-                      return '-'
-                    }
-                  })()
-
-                  return (
-                    <tr key={h.id} style={{ borderBottom: '1px solid #E2E8F0', backgroundColor: index % 2 === 0 ? '#FFFFFF' : '#F8FAFC' }}>
-                      <td style={{ padding: '10px 14px', fontWeight: '700', color: '#334155' }}>{h.work_date}</td>
-                      <td style={{ padding: '10px 14px', fontWeight: '800', color: '#2563EB' }}>{h.companyName}</td>
-                      <td style={{ padding: '10px 14px', color: '#0284C7', fontFamily: 'monospace', fontWeight: '600' }}>{h.sn || '-'}</td>
-                      <td style={{ padding: '10px 14px', color: '#1E293B', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '250px' }} title={itemsSummary}>
-                        {itemsSummary}
-                      </td>
-                      <td style={{ padding: '10px 14px', textAlign: 'center', color: '#475569' }}>
-                        {issuerName}
-                      </td>
-                      <td style={{ padding: '10px 14px', textAlign: 'center' }}>
-                        {h.report_url ? (
-                          <button 
-                            onClick={() => setSelectedReportImage(h.report_url)}
-                            style={{ padding: '4px 10px', background: '#EFF6FF', color: '#2563EB', border: '1px solid #BFDBFE', borderRadius: '4px', fontWeight: '700', cursor: 'pointer', fontSize: '11px' }}
+            ) : filteredHistory.length === 0 ? (
+              <tr>
+                <td colSpan="7" style={{ padding: '40px', textAlign: 'center', color: '#94A3B8' }}>
+                  조회된 입·출고 이력이 없습니다.
+                </td>
+              </tr>
+            ) : (
+              filteredHistory.map((item) => {
+                const hasDetails = parseDeliveryDetails(item.note)
+                return (
+                  <tr
+                    key={item.id}
+                    style={{ borderBottom: '1px solid #F1F5F9', verticalAlign: 'middle' }}
+                  >
+                    <td style={{ padding: '12px 16px', textAlign: 'center' }}>
+                      <span
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          minWidth: '56px',
+                          padding: '4px 6px',
+                          borderRadius: '6px',
+                          fontSize: '11px',
+                          fontWeight: '800',
+                          backgroundColor: item.type === 'OUTBOUND' ? '#FEF3C7' : '#DEF7EC',
+                          color: item.type === 'OUTBOUND' ? '#D97706' : '#03543F',
+                        }}
+                      >
+                        {item.subLabel || (item.type === 'OUTBOUND' ? '출고' : '입고')}
+                      </span>
+                    </td>
+                    <td style={{ padding: '12px 16px', color: '#475569', fontWeight: '600' }}>
+                      {item.date}
+                    </td>
+                    <td
+                      style={{
+                        padding: '12px 16px',
+                        fontWeight: '700',
+                        color: '#0F172A',
+                        wordBreak: 'break-all',
+                      }}
+                    >
+                      {item.company_name}
+                    </td>
+                    <td
+                      style={{
+                        padding: '12px 16px',
+                        fontWeight: '700',
+                        color: '#1E293B',
+                        wordBreak: 'break-all',
+                      }}
+                    >
+                      {item.summary}
+                    </td>
+                    <td
+                      style={{
+                        padding: '12px 16px',
+                        color: '#64748B',
+                        wordBreak: 'break-all',
+                        fontSize: '12px',
+                      }}
+                    >
+                      {getCleanNote(item.note)}
+                    </td>
+                    <td
+                      style={{
+                        padding: '12px 16px',
+                        textAlign: 'center',
+                        color: '#475569',
+                        fontWeight: '600',
+                      }}
+                    >
+                      {item.author || '-'}
+                    </td>
+                    <td style={{ padding: '12px 16px' }}>
+                      <div
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          width: '100%',
+                          gap: '6px',
+                        }}
+                      >
+                        {item.type === 'OUTBOUND' && hasDetails ? (
+                          <button
+                            type="button"
+                            onClick={() => setViewingDeliveryItem(item)}
+                            style={{
+                              background: '#EFF6FF',
+                              color: '#2563EB',
+                              border: 'none',
+                              padding: '5px 10px',
+                              borderRadius: '6px',
+                              fontSize: '11px',
+                              fontWeight: '700',
+                              cursor: 'pointer',
+                              whiteSpace: 'nowrap',
+                            }}
                           >
-                            리포트 보기
+                            출고증 보기
                           </button>
                         ) : (
-                          <span style={{ color: '#94A3B8', fontSize: '12px' }}>없음</span>
+                          <span />
                         )}
-                      </td>
-                      <td style={{ padding: '10px 14px', textAlign: 'center', display: 'flex', justifyContent: 'center', gap: '6px' }}>
-                        <button 
-                          onClick={() => handleOpenDeliveryModal(h)}
-                          style={{ padding: '5px 10px', background: '#10B981', color: 'white', border: 'none', borderRadius: '4px', fontWeight: '700', cursor: 'pointer', fontSize: '12px' }}
-                        >
-                          출고증 보기
-                        </button>
-                        <button 
-                          onClick={() => handleDeleteHistoryItem(h.id)}
-                          style={{ padding: '5px 10px', background: '#FEE2E2', color: '#EF4444', border: 'none', borderRadius: '4px', fontWeight: '700', cursor: 'pointer', fontSize: '12px' }}
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteHistory(item)}
+                          style={{
+                            background: '#FEE2E2',
+                            color: '#EF4444',
+                            border: 'none',
+                            padding: '5px 10px',
+                            borderRadius: '6px',
+                            fontSize: '11px',
+                            fontWeight: '700',
+                            cursor: 'pointer',
+                            marginLeft: 'auto',
+                            whiteSpace: 'nowrap',
+                          }}
                         >
                           삭제
                         </button>
-                      </td>
-                    </tr>
-                  )
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
+                      </div>
+                    </td>
+                  </tr>
+                )
+              })
+            )}
+          </tbody>
+        </table>
       </div>
 
-      {/* 출고증 발행 및 조회 모달 */}
-      {isDeliveryModalOpen && selectedCompany && (
-        <div style={{
-          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
-          backgroundColor: 'rgba(15, 23, 42, 0.75)',
-          display: 'flex', justifyContent: 'center', alignItems: 'center',
-          zIndex: 2000, padding: '20px'
-        }}>
-          <div className="printable-delivery-area" style={{
-            backgroundColor: '#ffffff', borderRadius: '12px', width: '100%', maxWidth: '950px',
-            maxHeight: '92vh', overflowY: 'auto', padding: '28px', boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)'
-          }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', borderBottom: '2px solid #0F172A', paddingBottom: '12px' }}>
-              <h3 style={{ margin: 0, fontSize: '22px', color: '#0F172A', fontWeight: '800' }}>
-                출 고 증 (DELIVERY NOTE)
-              </h3>
-              <button className="no-print" onClick={() => setIsDeliveryModalOpen(false)} style={{ border: 'none', background: 'none', fontSize: '20px', color: '#64748B', cursor: 'pointer' }}>✕</button>
-            </div>
+      {viewingDeliveryItem &&
+        (() => {
+          const details = parseDeliveryDetails(viewingDeliveryItem.note)
+          const rawNote = viewingDeliveryItem.note || ''
+          const cleanNoteText = getCleanNote(rawNote)
+          const isPrinterVoucher = details?.kind === 'PRINTER'
 
-            <div style={{ backgroundColor: '#F8FAFC', padding: '16px', borderRadius: '8px', border: '1px solid #E2E8F0', marginBottom: '20px', display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px' }}>
-              <div>
-                <label style={{ fontSize: '11px', fontWeight: '700', color: '#64748B', display: 'block', marginBottom: '4px' }}>공급받는 자 (업체명)</label>
-                <div style={{ fontSize: '14px', fontWeight: '800', color: '#0F172A', padding: '8px 0' }}>{selectedCompany.name}</div>
-              </div>
-              <div>
-                <label style={{ fontSize: '11px', fontWeight: '700', color: '#64748B', display: 'block', marginBottom: '4px' }}>발행 일자</label>
-                <input type="date" value={deliveryDate} onChange={(e) => setDeliveryDate(e.target.value)} style={inputStyle} />
-              </div>
-              <div>
-                <label style={{ fontSize: '11px', fontWeight: '700', color: '#64748B', display: 'block', marginBottom: '4px' }}>발행자 (작성자)</label>
-                <div style={{ display: 'flex', gap: '6px' }}>
-                  <select value={deliveryIssuer} onChange={(e) => setDeliveryIssuer(e.target.value)} style={inputStyle}>
-                    {issuerOptions.map((opt, i) => <option key={i} value={opt}>{opt}</option>)}
-                  </select>
-                  {deliveryIssuer === '직접 입력' && (
-                    <input placeholder="이름" value={customIssuer} onChange={(e) => setCustomIssuer(e.target.value)} style={inputStyle} />
+          return (
+            <div
+              style={{
+                position: 'fixed',
+                top: 0,
+                left: 0,
+                right: 0,
+                bottom: 0,
+                backgroundColor: 'rgba(0,0,0,0.6)',
+                display: 'flex',
+                justifyContent: 'center',
+                alignItems: 'center',
+                zIndex: 1100,
+                padding: '20px',
+              }}
+            >
+              <div
+                id="printable-delivery-note"
+                style={{
+                  backgroundColor: '#ffffff',
+                  borderRadius: '16px',
+                  padding: '28px',
+                  width: '900px',
+                  maxWidth: '95vw',
+                  maxHeight: '90vh',
+                  overflowY: 'auto',
+                  boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)',
+                }}
+              >
+                <div
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    marginBottom: '20px',
+                    borderBottom: '2px solid #0F172A',
+                    paddingBottom: '12px',
+                  }}
+                >
+                  <h2 style={{ margin: 0, fontSize: '20px', color: '#0F172A', fontWeight: '900' }}>
+                    {isPrinterVoucher
+                      ? details.movementType === 'OUTBOUND_DEMO'
+                        ? '프린터 대여 출고증 (RENTAL NOTE)'
+                        : '프린터 출고증 (PRINTER DELIVERY NOTE)'
+                      : '출 고 증 (DELIVERY NOTE)'}
+                  </h2>
+                  <button
+                    type="button"
+                    onClick={() => setViewingDeliveryItem(null)}
+                    className="no-print"
+                    style={{
+                      border: 'none',
+                      background: 'none',
+                      fontSize: '20px',
+                      color: '#64748B',
+                      cursor: 'pointer',
+                      fontWeight: 'bold',
+                    }}
+                  >
+                    ✕
+                  </button>
+                </div>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                  <div
+                    style={{
+                      display: 'grid',
+                      gridTemplateColumns: '1.5fr 1fr 1fr',
+                      gap: '12px',
+                      backgroundColor: '#F8FAFC',
+                      padding: '14px',
+                      borderRadius: '12px',
+                      border: '1px solid #CBD5E1',
+                    }}
+                  >
+                    <div>
+                      <span
+                        style={{
+                          fontSize: '11px',
+                          fontWeight: '800',
+                          color: '#64748B',
+                          display: 'block',
+                          marginBottom: '4px',
+                        }}
+                      >
+                        공급받는 자 / 대여처
+                      </span>
+                      <strong style={{ fontSize: '13px', color: '#0F172A' }}>
+                        {viewingDeliveryItem.company_name}
+                      </strong>
+                    </div>
+                    <div>
+                      <span
+                        style={{
+                          fontSize: '11px',
+                          fontWeight: '800',
+                          color: '#64748B',
+                          display: 'block',
+                          marginBottom: '4px',
+                        }}
+                      >
+                        발행 일자
+                      </span>
+                      <strong style={{ fontSize: '13px', color: '#0F172A' }}>
+                        {viewingDeliveryItem.date}
+                      </strong>
+                    </div>
+                    <div>
+                      <span
+                        style={{
+                          fontSize: '11px',
+                          fontWeight: '800',
+                          color: '#64748B',
+                          display: 'block',
+                          marginBottom: '4px',
+                        }}
+                      >
+                        발행자 (작성자)
+                      </span>
+                      <strong style={{ fontSize: '13px', color: '#0F172A' }}>
+                        {viewingDeliveryItem.author || '-'}
+                      </strong>
+                    </div>
+                  </div>
+
+                  {details?.equipmentSns && details.equipmentSns.length > 0 && (
+                    <div
+                      style={{
+                        backgroundColor: '#F8FAFC',
+                        padding: '14px',
+                        borderRadius: '12px',
+                        border: '1px solid #CBD5E1',
+                      }}
+                    >
+                      <span
+                        style={{
+                          fontSize: '12px',
+                          fontWeight: '800',
+                          color: '#1E293B',
+                          display: 'block',
+                          marginBottom: '8px',
+                        }}
+                      >
+                        출고 프린터 S/N 목록 ({details.equipmentSns.length}대)
+                      </span>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                        {details.equipmentSns.map((eqSn, idx) => (
+                          <span
+                            key={idx}
+                            style={{
+                              backgroundColor: '#fff',
+                              padding: '6px 12px',
+                              borderRadius: '8px',
+                              border: '1px solid #CBD5E1',
+                              fontSize: '13px',
+                              fontWeight: '700',
+                              color: '#0F172A',
+                            }}
+                          >
+                            {eqSn}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
                   )}
+
+                  {isPrinterVoucher && Array.isArray(details?.printerItems) ? (
+                    <div>
+                      <h3
+                        style={{
+                          margin: '0 0 10px 0',
+                          fontSize: '14px',
+                          fontWeight: '800',
+                          color: '#1E293B',
+                        }}
+                      >
+                        출고 프린터 개체 명세
+                      </h3>
+                      <table
+                        style={{
+                          width: '100%',
+                          borderCollapse: 'collapse',
+                          textAlign: 'left',
+                          fontSize: '13px',
+                          border: '1px solid #CBD5E1',
+                        }}
+                      >
+                        <thead>
+                          <tr
+                            style={{
+                              backgroundColor: '#F1F5F9',
+                              borderBottom: '1px solid #CBD5E1',
+                              color: '#475569',
+                            }}
+                          >
+                            <th style={{ padding: '10px', width: '50px', textAlign: 'center' }}>
+                              NO
+                            </th>
+                            <th style={{ padding: '10px', width: '130px' }}>S/N</th>
+                            <th style={{ padding: '10px' }}>모델 / 시리즈</th>
+                            <th style={{ padding: '10px', width: '120px' }}>입고일자</th>
+                            <th style={{ padding: '10px', width: '130px' }}>재입고 구분</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {details.printerItems.map((pItem, idx) => (
+                            <tr key={idx} style={{ borderBottom: '1px solid #E2E8F0' }}>
+                              <td
+                                style={{
+                                  padding: '10px',
+                                  textAlign: 'center',
+                                  fontWeight: 'bold',
+                                  color: '#64748B',
+                                }}
+                              >
+                                {idx + 1}
+                              </td>
+                              <td style={{ padding: '10px', fontWeight: '800', color: '#0F172A' }}>
+                                {pItem.serialNumber}
+                              </td>
+                              <td style={{ padding: '10px', fontWeight: '700', color: '#1E293B' }}>
+                                {pItem.modelName || '-'}
+                              </td>
+                              <td style={{ padding: '10px', color: '#475569' }}>
+                                {pItem.inboundDate || '-'}
+                              </td>
+                              <td style={{ padding: '10px', fontWeight: '700', color: '#92400E' }}>
+                                {pItem.reinboundLabel || '일반 입고'}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <div>
+                      <h3
+                        style={{
+                          margin: '0 0 10px 0',
+                          fontSize: '14px',
+                          fontWeight: '800',
+                          color: '#1E293B',
+                        }}
+                      >
+                        출고 부품 품목 명세
+                      </h3>
+                      <table
+                        style={{
+                          width: '100%',
+                          borderCollapse: 'collapse',
+                          textAlign: 'left',
+                          fontSize: '13px',
+                          border: '1px solid #CBD5E1',
+                        }}
+                      >
+                        <thead>
+                          <tr
+                            style={{
+                              backgroundColor: '#F1F5F9',
+                              borderBottom: '1px solid #CBD5E1',
+                              color: '#475569',
+                            }}
+                          >
+                            <th
+                              style={{
+                                padding: '10px',
+                                width: '50px',
+                                textAlign: 'center',
+                                borderBottom: '1px solid #CBD5E1',
+                              }}
+                            >
+                              NO
+                            </th>
+                            <th
+                              style={{
+                                padding: '10px',
+                                width: '160px',
+                                borderBottom: '1px solid #CBD5E1',
+                              }}
+                            >
+                              부품 ID / 코드
+                            </th>
+                            <th
+                              style={{
+                                padding: '10px',
+                                width: '180px',
+                                borderBottom: '1px solid #CBD5E1',
+                              }}
+                            >
+                              부품 S/N
+                            </th>
+                            <th style={{ padding: '10px', borderBottom: '1px solid #CBD5E1' }}>
+                              품명 / 규격
+                            </th>
+                            <th
+                              style={{
+                                padding: '10px',
+                                width: '90px',
+                                textAlign: 'center',
+                                borderBottom: '1px solid #CBD5E1',
+                              }}
+                            >
+                              수량
+                            </th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {details?.items?.map((it, idx) => (
+                            <tr key={idx} style={{ borderBottom: '1px solid #E2E8F0' }}>
+                              <td
+                                style={{
+                                  padding: '10px',
+                                  textAlign: 'center',
+                                  fontWeight: 'bold',
+                                  color: '#64748B',
+                                }}
+                              >
+                                {idx + 1}
+                              </td>
+                              <td style={{ padding: '10px', fontWeight: '600', color: '#475569' }}>
+                                {it.code || '-'}
+                              </td>
+                              <td style={{ padding: '10px', fontWeight: '700', color: '#2563EB' }}>
+                                {it.selectedSn ? `${it.selectedSn}` : '해당없음'}
+                              </td>
+                              <td style={{ padding: '10px', fontWeight: '800', color: '#0F172A' }}>
+                                {it.name}
+                              </td>
+                              <td style={{ padding: '10px', textAlign: 'center', fontWeight: '800' }}>
+                                {it.quantity} 개
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+
+                  <div>
+                    <span
+                      style={{
+                        fontSize: '12px',
+                        fontWeight: '800',
+                        color: '#475569',
+                        display: 'block',
+                        marginBottom: '4px',
+                      }}
+                    >
+                      특이사항 및 작업 내용
+                    </span>
+                    <div
+                      style={{
+                        backgroundColor: '#F8FAFC',
+                        padding: '12px',
+                        borderRadius: '8px',
+                        border: '1px solid #CBD5E1',
+                        fontSize: '13px',
+                        color: '#334155',
+                        minHeight: '50px',
+                        whiteSpace: 'pre-wrap',
+                      }}
+                    >
+                      {cleanNoteText || '특이사항 없음'}
+                    </div>
+                  </div>
+
+                  <div
+                    className="no-print"
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      borderTop: '1px solid #E2E8F0',
+                      paddingTop: '16px',
+                    }}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => window.print()}
+                      style={{
+                        padding: '10px 18px',
+                        background: '#2563EB',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '8px',
+                        fontWeight: '700',
+                        cursor: 'pointer',
+                        fontSize: '13px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                      }}
+                    >
+                      🖨️ 출고증 인쇄 / PDF 저장
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setViewingDeliveryItem(null)}
+                      style={{
+                        padding: '10px 20px',
+                        border: '1px solid #CBD5E1',
+                        background: 'white',
+                        color: '#64748B',
+                        borderRadius: '8px',
+                        fontWeight: '600',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      닫기
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
-
-            <div style={{ border: '1px solid #0F172A', borderRadius: '4px', overflow: 'hidden', marginBottom: '20px' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
-                <thead>
-                  <tr style={{ backgroundColor: '#F8FAFC', borderBottom: '1px solid #CBD5E1' }}>
-                    <th style={{ padding: '8px', borderRight: '1px solid #E2E8F0', width: '45px', textAlign: 'center' }}>NO</th>
-                    <th style={{ padding: '8px', borderRight: '1px solid #E2E8F0', width: '160px' }}>부품 ID / 코드</th>
-                    <th style={{ padding: '8px', borderRight: '1px solid #E2E8F0', width: '130px' }}>부품 S/N</th>
-                    <th style={{ padding: '8px', borderRight: '1px solid #E2E8F0' }}>품명 / 규격</th>
-                    <th style={{ padding: '8px', width: '75px', textAlign: 'center' }}>수량</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {deliveryItems.map((item, idx) => (
-                    <tr key={idx} style={{ borderBottom: '1px solid #E2E8F0' }}>
-                      <td style={{ padding: '6px', textAlign: 'center', borderRight: '1px solid #E2E8F0', fontWeight: '700' }}>{idx + 1}</td>
-                      <td style={{ padding: '6px', borderRight: '1px solid #E2E8F0' }}>{item.partId || '-'}</td>
-                      <td style={{ padding: '6px', borderRight: '1px solid #E2E8F0' }}>{item.partSn || '-'}</td>
-                      <td style={{ padding: '6px', borderRight: '1px solid #E2E8F0' }}>{item.name || '-'}</td>
-                      <td style={{ padding: '6px', textAlign: 'center' }}>{item.qty}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-
-            <div className="no-print" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid #E2E8F0', paddingTop: '16px' }}>
-              <button onClick={() => window.print()} style={{ padding: '10px 18px', background: '#475569', color: 'white', border: 'none', borderRadius: '6px', fontWeight: '700', cursor: 'pointer', fontSize: '13px' }}>
-                바로 인쇄 / PDF
-              </button>
-              <div style={{ display: 'flex', gap: '8px' }}>
-                <button onClick={handleSendOutlookMail} style={{ padding: '10px 18px', background: '#0284C7', color: 'white', border: 'none', borderRadius: '6px', fontWeight: '700', cursor: 'pointer', fontSize: '13px' }}>
-                  Outlook 메일 전송
-                </button>
-                <button onClick={handleSaveDeliveryNote} style={{ padding: '10px 20px', background: '#10B981', color: 'white', border: 'none', borderRadius: '6px', fontWeight: '800', cursor: 'pointer', fontSize: '13px' }}>
-                  발행 완료 처리 및 저장
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {selectedReportImage && (
-        <div style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', backgroundColor: 'rgba(0, 0, 0, 0.85)', zIndex: 9999, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '20px', boxSizing: 'border-box' }}>
-          <button onClick={() => setSelectedReportImage(null)} style={{ position: 'absolute', top: '20px', right: '20px', backgroundColor: '#EF4444', color: 'white', border: 'none', borderRadius: '50%', width: '40px', height: '40px', fontSize: '18px', fontWeight: 'bold', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>✕</button>
-          <div style={{ width: '100%', maxWidth: '480px', maxHeight: '80vh', overflowY: 'auto', borderRadius: '12px', backgroundColor: 'white', padding: '12px' }}>
-            <img src={selectedReportImage} alt="서비스 리포트" style={{ width: '100%', height: 'auto', display: 'block', borderRadius: '8px' }} />
-          </div>
-        </div>
-      )}
+          )
+        })()}
     </div>
   )
 }
