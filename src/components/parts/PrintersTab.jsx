@@ -224,6 +224,12 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
         }
       })
 
+      normalizedModels.sort((a, b) => {
+        const mfgCmp = String(a.manufacturer || '').localeCompare(String(b.manufacturer || ''))
+        if (mfgCmp !== 0) return mfgCmp
+        return String(a.model_name || '').localeCompare(String(b.model_name || ''))
+      })
+
       setModels(normalizedModels)
       setUnits(unitRows || [])
       setAllMovements(allMoveRows || [])
