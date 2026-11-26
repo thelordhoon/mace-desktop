@@ -197,6 +197,14 @@ export default function DeliveryHistoryTab({ refreshParts }) {
     )
   }
 
+  const formatLotOrSnLabel = (item) => {
+    if (!item?.selectedSn) return '해당없음'
+    if (item.expiry) {
+      return `${item.selectedSn} (기한: ${item.expiry})`
+    }
+    return item.selectedSn
+  }
+
   const filteredHistory = historyList.filter((item) => {
     if (filterType !== 'ALL' && item.type !== filterType) return false
     if (!searchTerm.trim()) return true
@@ -628,7 +636,9 @@ export default function DeliveryHistoryTab({ refreshParts }) {
                           marginBottom: '8px',
                         }}
                       >
-                        출고 프린터 S/N 목록 ({details.equipmentSns.length}대)
+                        {details?.kind === 'CONSUMABLES_MULTI'
+                          ? `장비 S/N 목록 (${details.equipmentSns.length}건)`
+                          : `출고 프린터 S/N 목록 (${details.equipmentSns.length}대)`}
                       </span>
                       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
                         {details.equipmentSns.map((eqSn, idx) => (
@@ -770,11 +780,11 @@ export default function DeliveryHistoryTab({ refreshParts }) {
                             <th
                               style={{
                                 padding: '10px',
-                                width: '180px',
+                                width: '220px',
                                 borderBottom: '1px solid #CBD5E1',
                               }}
                             >
-                              부품 S/N
+                              부품 S/N / 로트
                             </th>
                             <th style={{ padding: '10px', borderBottom: '1px solid #CBD5E1' }}>
                               품명 / 규격
@@ -808,7 +818,7 @@ export default function DeliveryHistoryTab({ refreshParts }) {
                                 {it.code || '-'}
                               </td>
                               <td style={{ padding: '10px', fontWeight: '700', color: '#2563EB' }}>
-                                {it.selectedSn ? `${it.selectedSn}` : '해당없음'}
+                                {formatLotOrSnLabel(it)}
                               </td>
                               <td style={{ padding: '10px', fontWeight: '800', color: '#0F172A' }}>
                                 {it.name}

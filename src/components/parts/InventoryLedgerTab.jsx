@@ -228,6 +228,7 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
         inbound: inboundQty,
         outbound: outboundQty,
         current: currentQty,
+        lotsSumQty: currentQty,
         assetValue: totalAssetValue,
         histories: [],
         lots: [],
@@ -237,6 +238,50 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
     })
 
     return rows
+  }
+
+  const isHistoryMatchedToPart = (h, part, partCodeNorm, partNameNorm) => {
+    const hasPartId = h.part_id !== undefined && h.part_id !== null && String(h.part_id).trim() !== ''
+    if (hasPartId) {
+      return String(h.part_id) === String(part.id)
+    }
+
+    const summaryLower = h.summary ? String(h.summary).trim().toLowerCase() : ''
+    const detailItems = parseDeliveryDetailsItems(h.note)
+
+    if (detailItems.length > 0) {
+      const hasExplicitPartIdInDetails = detailItems.some(
+        (it) => it?.partId !== undefined && it?.partId !== null && String(it.partId).trim() !== ''
+      )
+      if (hasExplicitPartIdInDetails) {
+        return detailItems.some(
+          (it) =>
+            it?.partId !== undefined &&
+            it?.partId !== null &&
+            String(it.partId).trim() === String(part.id)
+        )
+      }
+
+      if (partCodeNorm) {
+        return detailItems.some(
+          (it) => it?.code && String(it.code).trim().toLowerCase() === partCodeNorm
+        )
+      }
+    }
+
+    if (partCodeNorm) {
+      const bracketMatch = summaryLower.match(/^\[([^\]]+)\]/)
+      if (bracketMatch) {
+        return bracketMatch[1].trim().toLowerCase() === partCodeNorm
+      }
+      return summaryLower.includes(`[${partCodeNorm}]`)
+    }
+
+    if (partNameNorm) {
+      return summaryLower === partNameNorm || summaryLower.startsWith(`${partNameNorm} (`)
+    }
+
+    return false
   }
 
   const fetchLedgerSummary = async () => {
@@ -279,6 +324,7 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
         const partLots = (lotsData || []).filter((l) => String(l.part_id) === String(part.id))
         const currentStock = Number(part.stock) || 0
         const carryOverStock = Number(part.carry_over_stock) || 0
+        const lotsSumQty = partLots.reduce((sum, l) => sum + (Number(l.current_qty) || 0), 0)
 
         let totalAssetValue = 0
         let remainingStockToCalc = currentStock
@@ -316,36 +362,9 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
         const partCodeNorm = part.code ? String(part.code).trim().toLowerCase() : ''
         const partNameNorm = part.name ? String(part.name).trim().toLowerCase() : ''
 
-        const partHistories = (historyData || []).filter((h) => {
-          if (h.part_id !== undefined && h.part_id !== null && String(h.part_id).trim() !== '') {
-            return String(h.part_id) === String(part.id)
-          }
-
-          if (h.summary) {
-            const summaryLower = String(h.summary).toLowerCase()
-            if (partCodeNorm && summaryLower.includes(`[${partCodeNorm}]`)) {
-              return true
-            }
-            if (partNameNorm && summaryLower.includes(partNameNorm)) {
-              return true
-            }
-          }
-
-          const detailItems = parseDeliveryDetailsItems(h.note)
-          if (detailItems.length > 0) {
-            const matchedInDetails = detailItems.some((it) => {
-              const itemCodeNorm = it?.code ? String(it.code).trim().toLowerCase() : ''
-              const itemNameNorm = it?.name ? String(it.name).trim().toLowerCase() : ''
-              return (
-                (partCodeNorm && itemCodeNorm && itemCodeNorm === partCodeNorm) ||
-                (partNameNorm && itemNameNorm && itemNameNorm === partNameNorm)
-              )
-            })
-            if (matchedInDetails) return true
-          }
-
-          return false
-        })
+        const partHistories = (historyData || []).filter((h) =>
+          isHistoryMatchedToPart(h, part, partCodeNorm, partNameNorm)
+        )
 
         let inboundQty = 0
         let outboundQty = 0
@@ -381,6 +400,7 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
           inbound: inboundQty,
           outbound: outboundQty,
           current: currentStock,
+          lotsSumQty,
           assetValue: totalAssetValue,
           histories: partHistories,
           lots: partLots,
@@ -526,6 +546,7 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
     document.body.appendChild(a)
     a.click()
     document.body.removeChild(a)
+    URL.revokeObjectURL(url)
   }
 
   const filteredLedger = ledgerData
@@ -1290,6 +1311,11 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
                         </td>
                         <td style={{ padding: '9px 12px', fontWeight: '700', color: '#0F172A' }}>
                           {row.name}
+                          {!row.isBalanced && !row.isPrinterGroup && (
+                            <div style={{ fontSize: '11px', color: '#DC2626', fontWeight: '600', marginTop: '2px' }}>
+                              로트잔량합계: {row.lotsSumQty}개 · 이력건수: {(row.histories || []).length}건
+                            </div>
+                          )}
                         </td>
                         <td style={{ padding: '9px 12px', textAlign: 'center' }}>{row.carryOver}</td>
                         <td style={{ padding: '9px 12px', textAlign: 'center', color: '#059669' }}>

@@ -80,6 +80,72 @@ export default function ConsumablesTab({ partsList, refreshParts, showAddForm, s
     return Number(p || 0)
   }
 
+  const handleDeleteLotItem = async (lotItem, lotIdx) => {
+    const lotLabel = lotItem.lot_number || lotItem.po_number || '공백'
+    if (!window.confirm(`Lot [${lotLabel}]을 삭제하시겠습니까?`)) return
+
+    try {
+      if (lotItem.id) {
+        const { error: lotDelByIdError } = await supabase
+          .from('part_stock_lots')
+          .delete()
+          .eq('id', lotItem.id)
+        if (lotDelByIdError) {
+          return alert('로트 테이블 삭제 실패: ' + lotDelByIdError.message)
+        }
+      } else {
+        let deleteQuery = supabase
+          .from('part_stock_lots')
+          .delete()
+          .eq('part_id', selectedExpiryPart.id)
+
+        if (lotItem.lot_number || lotItem.po_number) {
+          deleteQuery = deleteQuery.eq('po_number', lotItem.lot_number || lotItem.po_number)
+        }
+        if (lotItem.received_date || lotItem.import_date) {
+          deleteQuery = deleteQuery.eq('import_date', lotItem.received_date || lotItem.import_date)
+        }
+        const targetQty = Number(lotItem.qty ?? lotItem.initial_qty ?? 0)
+        if (targetQty > 0) {
+          deleteQuery = deleteQuery.eq('initial_qty', targetQty)
+        }
+
+        const { error: lotDelError } = await deleteQuery
+        if (lotDelError) {
+          return alert('로트 테이블 삭제 실패: ' + lotDelError.message)
+        }
+      }
+
+      const rawLots = typeof selectedExpiryPart.lots === 'string'
+        ? JSON.parse(selectedExpiryPart.lots || '[]')
+        : (selectedExpiryPart.lots || [])
+      const currentLots = Array.isArray(rawLots) ? rawLots : []
+
+      const updatedLots = currentLots.filter((_, i) => i !== lotIdx)
+      const calcStock = updatedLots.reduce((sum, item) => sum + Number(item.qty || 0), 0)
+
+      const { error: partUpdateError } = await supabase
+        .from('parts')
+        .update({
+          lots: JSON.stringify(updatedLots),
+          stock: calcStock
+        })
+        .eq('id', selectedExpiryPart.id)
+        .eq('code', selectedExpiryPart.code)
+
+      if (partUpdateError) {
+        return alert('품목 로트 동기화 실패: ' + partUpdateError.message)
+      }
+
+      setExpiryLotPriceInputs({})
+      setSelectedExpiryPart({ ...selectedExpiryPart, lots: updatedLots, stock: calcStock })
+      if (typeof refreshParts === 'function') refreshParts()
+    } catch (err) {
+      console.error('로트 삭제 중 오류:', err)
+      alert('로트 삭제 처리 중 오류가 발생했습니다.')
+    }
+  }
+
   const handleAddPart = async (e) => {
     e.preventDefault()
     if (!partName.trim() || !partCode.trim()) return alert('품명과 품번/코드를 입력해주세요!')
@@ -638,7 +704,7 @@ export default function ConsumablesTab({ partsList, refreshParts, showAddForm, s
         </div>
       )}
 
-      {/* 3. 유통기한 및 입고 로트 현황 모달 (💡 단가 입력 버그 완벽 수정) */}
+      {/* 3. 유통기한 및 입고 로트 현황 모달 */}
       {selectedExpiryPart && (
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }}>
           <div style={{ backgroundColor: '#ffffff', borderRadius: '16px', padding: '24px', width: '600px', maxHeight: '85vh', overflowY: 'auto', boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1)' }}>
@@ -656,8 +722,6 @@ export default function ConsumablesTab({ partsList, refreshParts, showAddForm, s
               ) : (
                 (typeof selectedExpiryPart.lots === 'string' ? JSON.parse(selectedExpiryPart.lots) : selectedExpiryPart.lots).map((l, idx) => {
                   const lotPrice = getLotPrice(l)
-                  
-                  // 💡 입력 중인 값이 있으면 그 값을 우선 보여주고, 없으면 기존 단가 표시 (0원인 경우 빈칸 유지하여 입력 편의성 제공)
                   const currentPriceInput = expiryLotPriceInputs[idx] !== undefined 
                     ? expiryLotPriceInputs[idx] 
                     : (lotPrice > 0 ? lotPrice : '')
@@ -668,25 +732,13 @@ export default function ConsumablesTab({ partsList, refreshParts, showAddForm, s
                         <div style={{ fontSize: '13px', fontWeight: '700', color: '#0F172A' }}>
                           Lot No: {l.lot_number || '(미지정)'} <span style={{ color: '#10B981', marginLeft: '8px' }}>수량: {l.qty}개</span>
                         </div>
-                        <button type="button" onClick={async () => {
-                          if (!window.confirm(`Lot [${l.lot_number || '공백'}]을 삭제하시겠습니까?`)) return
-                          let currentLots = typeof selectedExpiryPart.lots === 'string' ? JSON.parse(selectedExpiryPart.lots) : selectedExpiryPart.lots
-
-                          const updatedLots = currentLots.filter((_, i) => i !== idx)
-                          const calcStock = updatedLots.reduce((sum, item) => sum + Number(item.qty || 0), 0)
-
-                          const { error } = await supabase.from('parts').update({
-                            lots: JSON.stringify(updatedLots),
-                            stock: calcStock
-                          }).eq('id', selectedExpiryPart.id).eq('code', selectedExpiryPart.code)
-
-                          if (!error) {
-                            setSelectedExpiryPart({ ...selectedExpiryPart, lots: updatedLots, stock: calcStock })
-                            refreshParts()
-                          } else {
-                            alert('삭제 실패: ' + error.message)
-                          }
-                        }} style={{ border: 'none', background: '#FEE2E2', color: '#EF4444', padding: '4px 10px', borderRadius: '6px', fontSize: '11px', fontWeight: '700', cursor: 'pointer' }}>삭제</button>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteLotItem(l, idx)}
+                          style={{ border: 'none', background: '#FEE2E2', color: '#EF4444', padding: '4px 10px', borderRadius: '6px', fontSize: '11px', fontWeight: '700', cursor: 'pointer' }}
+                        >
+                          삭제
+                        </button>
                       </div>
 
                       <div style={{ fontSize: '12px', color: '#64748B' }}>
@@ -721,11 +773,15 @@ export default function ConsumablesTab({ partsList, refreshParts, showAddForm, s
 
                             if (!error) {
                               if (l.lot_number) {
-                                await supabase
+                                const { error: lotPriceErr } = await supabase
                                   .from('part_stock_lots')
                                   .update({ unit_price: newPrice })
                                   .eq('part_id', selectedExpiryPart.id)
                                   .eq('po_number', l.lot_number)
+                                if (lotPriceErr) {
+                                  alert('로트 테이블 단가 반영 실패: ' + lotPriceErr.message)
+                                  return
+                                }
                               }
 
                               alert(`Lot [${l.lot_number || '미지정'}]의 단가가 ${newPrice.toLocaleString()}원으로 저장되었습니다.`)
