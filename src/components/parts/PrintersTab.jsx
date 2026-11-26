@@ -88,7 +88,23 @@ const buildMemoWithReinboundTag = (cleanMemo, reinboundType) => {
   return base ? `${base} ${tag}` : tag
 }
 
-export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm }) {
+const resolveAuthorName = (user) => {
+  if (user?.full_name) return String(user.full_name).trim()
+  if (user?.name) return String(user.name).trim()
+  if (user?.author) return String(user.author).trim()
+  try {
+    const saved = JSON.parse(localStorage.getItem('mace_desk_user') || 'null')
+    if (saved?.full_name) return String(saved.full_name).trim()
+    if (saved?.name) return String(saved.name).trim()
+    if (saved?.author) return String(saved.author).trim()
+    if (saved?.username) return String(saved.username).trim()
+  } catch (e) {}
+  if (user?.username) return String(user.username).trim()
+  if (user?.email) return String(user.email).split('@')[0].trim()
+  return '배진철'
+}
+
+export default function PrintersTab({ user, refreshParts, showAddForm, setShowAddForm }) {
   const [models, setModels] = useState([])
   const [units, setUnits] = useState([])
   const [allMovements, setAllMovements] = useState([])
@@ -100,6 +116,8 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
   const [movementsLoading, setMovementsLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [errorMsg, setErrorMsg] = useState('')
+
+  const currentAuthor = useMemo(() => resolveAuthorName(user), [user])
 
   // 검색 및 상단 상태 뱃지 필터 상태
   const [searchTerm, setSearchTerm] = useState('')
@@ -207,7 +225,7 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
           .order('updated_at', { ascending: false }),
         supabase
           .from('printer_movements')
-          .select('id, printer_unit_id, movement_type, moved_at, note'),
+          .select('id, printer_unit_id, movement_type, moved_at, note, author'),
       ])
 
       if (modelErr) throw modelErr
@@ -546,6 +564,7 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
     setSaving(true)
     setErrorMsg('')
     try {
+      const authorName = resolveAuthorName(user)
       const isDemo = voucherForm.movement_type === 'OUTBOUND_DEMO'
       const nextStatus = isDemo ? 'DEMO' : 'SOLD'
       const parsedCost =
@@ -592,6 +611,7 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
         unit_cost: parsedCost,
         reference_type: 'MANUAL',
         moved_at: movedAtIso,
+        author: authorName,
         note: formattedNote,
       }))
 
@@ -647,6 +667,7 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
     setSaving(true)
     setErrorMsg('')
     try {
+      const authorName = resolveAuthorName(user)
       const returnLoc = returnForm.warehouse_location.trim() || '본사 창고'
       const movedAtIso = returnForm.return_date
         ? `${returnForm.return_date}T09:00:00.000Z`
@@ -663,6 +684,7 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
           customer_name: null,
           reference_type: 'MANUAL',
           moved_at: movedAtIso,
+          author: authorName,
           note: returnForm.note.trim() || '대여반납 재입고',
         },
       ])
@@ -762,6 +784,7 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
     setSavingEdit(true)
     setErrorMsg('')
     try {
+      const authorName = resolveAuthorName(user)
       const resolvedModelId = await resolveModelId(editForm.model_id)
 
       const { error } = await supabase
@@ -801,6 +824,7 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
             customer_name: null,
             reference_type: 'MANUAL',
             moved_at: movedAtIso,
+            author: authorName,
             note: isDemoReturn
               ? `[대여반납 재입고] ${cleanReinboundNote}`
               : `[반품 재입고] ${cleanReinboundNote}`,
@@ -833,6 +857,7 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
     setSaving(true)
     setErrorMsg('')
     try {
+      const authorName = resolveAuthorName(user)
       const resolvedModelId = await resolveModelId(newForm.model_id)
       const parsedCost =
         newForm.unit_cost === '' || newForm.unit_cost === null ? null : Number(newForm.unit_cost)
@@ -874,6 +899,7 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
           unit_cost: parsedCost,
           reference_type: 'MANUAL',
           moved_at: movedAtIso,
+          author: authorName,
           note: newForm.memo.trim() || '신규 프린터 입고',
         },
       ])
@@ -2064,6 +2090,7 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
                           <span>
                             {MOVEMENT_TYPE_META[m.movement_type] || m.movement_type} ·{' '}
                             {m.moved_at ? m.moved_at.slice(0, 10) : ''}
+                            {m.author ? ` · 작성자: ${m.author}` : ''}
                           </span>
 
                           {/* [임시 정리용] 이력 삭제 버튼: 정리 후 이 버튼 블록과 handleDeleteMovement만 지우면 됩니다 */}
@@ -2156,7 +2183,7 @@ export default function PrintersTab({ refreshParts, showAddForm, setShowAddForm 
                   📄 프린터 출고증 작성 (다중 S/N 선택)
                 </h3>
                 <p style={{ margin: '4px 0 0 0', fontSize: '12px', color: '#64748B' }}>
-                  출고할 S/N들을 선택하고 입고일자 및 재입고 이력 여부를 확인한 뒤 출고증을 저장합니다.
+                  출고할 S/N들을 선택하고 입고일자 및 재입고 이력 여부를 확인한 뒤 출고증을 저장합니다. (작성자: {currentAuthor})
                 </p>
               </div>
               <button
