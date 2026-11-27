@@ -1,5 +1,8 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useMemo } from 'react'
 import { supabase } from '../../supabaseClient'
+
+const STORAGE_CLOSED_RECORDS_KEY = 'mace_inventory_closed_records_v1'
+const STORAGE_CARRY_OVER_KEY = 'mace_inventory_carry_over_by_year_v1'
 
 const PRINTER_MOVEMENT_LABELS = {
   INBOUND: '프린터 입고',
@@ -11,24 +14,112 @@ const PRINTER_MOVEMENT_LABELS = {
   SCRAP: '폐기 처리',
 }
 
+const extractYearFromDateValue = (rawDate) => {
+  if (!rawDate) return null
+  const str = String(rawDate).trim()
+  const match = str.match(/^(\d{4})/)
+  return match ? match[1] : null
+}
+
+const loadJsonFromStorage = (key, fallbackValue) => {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return fallbackValue
+    const raw = window.localStorage.getItem(key)
+    if (!raw) return fallbackValue
+    const parsed = JSON.parse(raw)
+    return parsed && typeof parsed === 'object' ? parsed : fallbackValue
+  } catch (e) {
+    return fallbackValue
+  }
+}
+
+const buildAvailableYears = (closedRecords = {}, carryOverMap = {}, selectedYears = []) => {
+  const baseStartYear = 2026
+  const currentSystemYear = Math.max(baseStartYear, new Date().getFullYear())
+  const yearSet = new Set()
+
+  for (let y = baseStartYear; y <= currentSystemYear + 1; y += 1) {
+    yearSet.add(String(y))
+  }
+
+  Object.keys(closedRecords || {}).forEach((yr) => {
+    if (/^\d{4}$/.test(String(yr))) {
+      yearSet.add(String(yr))
+      yearSet.add(String(Number(yr) + 1))
+    }
+  })
+
+  Object.keys(carryOverMap || {}).forEach((yr) => {
+    if (/^\d{4}$/.test(String(yr))) {
+      yearSet.add(String(yr))
+    }
+  })
+
+  selectedYears.forEach((yr) => {
+    if (/^\d{4}$/.test(String(yr))) {
+      yearSet.add(String(yr))
+    }
+  })
+
+  return Array.from(yearSet).sort((a, b) => Number(a) - Number(b))
+}
+
 export default function InventoryLedgerTab({ partsList, refreshParts }) {
+  const [rawLedgerSource, setRawLedgerSource] = useState({
+    historyData: [],
+    lotsData: [],
+    printerUnitsData: [],
+    printerMovementsData: [],
+  })
   const [ledgerData, setLedgerData] = useState([])
   const [loading, setLoading] = useState(false)
   const [searchTerm, setSearchTerm] = useState('')
   const [selectedCategory, setSelectedCategory] = useState('ALL')
   const [hideZeroStock, setHideZeroStock] = useState(false)
+  const [activeYear, setActiveYear] = useState('2026')
 
   const [selectedItemHistory, setSelectedItemHistory] = useState(null)
   const [historyList, setHistoryList] = useState([])
 
-  // 12월 마감 결산 확인 모달 및 재확정/잠금 방어 상태
+  // 12월 마감 결산 확인 모달 상태
   const [showYearEndModal, setShowYearEndModal] = useState(false)
   const [closingYear, setClosingYear] = useState('2026')
   const [closingConfirmedNote, setClosingConfirmedNote] = useState('')
-  const [closedRecordsByYear, setClosedRecordsByYear] = useState({})
-  const [reopenMode, setReopenMode] = useState(false)
-  const [reopenReason, setReopenReason] = useState('')
-  const [reopenConfirmedCheck, setReopenConfirmedCheck] = useState(false)
+  const [closedRecordsByYear, setClosedRecordsByYear] = useState(() =>
+    loadJsonFromStorage(STORAGE_CLOSED_RECORDS_KEY, {})
+  )
+  const [carryOverByYear, setCarryOverByYear] = useState(() =>
+    loadJsonFromStorage(STORAGE_CARRY_OVER_KEY, {})
+  )
+  const [onlyUnbalancedInModal, setOnlyUnbalancedInModal] = useState(false)
+
+  const availableYears = useMemo(
+    () => buildAvailableYears(closedRecordsByYear, carryOverByYear, [activeYear, closingYear]),
+    [closedRecordsByYear, carryOverByYear, activeYear, closingYear]
+  )
+
+  useEffect(() => {
+    try {
+      if (typeof window !== 'undefined' && window.localStorage) {
+        window.localStorage.setItem(
+          STORAGE_CLOSED_RECORDS_KEY,
+          JSON.stringify(closedRecordsByYear)
+        )
+      }
+    } catch (e) {
+      console.error('마감 기록 저장 오류:', e)
+    }
+  }, [closedRecordsByYear])
+
+  useEffect(() => {
+    try {
+      if (typeof window !== 'undefined' && window.localStorage) {
+        window.localStorage.setItem(STORAGE_CARRY_OVER_KEY, JSON.stringify(carryOverByYear))
+      }
+    } catch (e) {
+      console.error('이월 재고 기록 저장 오류:', e)
+    }
+  }, [carryOverByYear])
 
   const cleanNoteText = (rawNote) => {
     if (!rawNote) return ''
@@ -115,7 +206,12 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
     return clean
   }
 
-  const buildPrinterLedgerRows = (printerUnits = [], printerMovements = []) => {
+  const buildPrinterLedgerRows = (
+    printerUnits = [],
+    printerMovements = [],
+    yearFilter = '2026',
+    yearCarryMap = {}
+  ) => {
     if (!Array.isArray(printerUnits) || printerUnits.length === 0) return []
 
     const unitById = new Map()
@@ -149,8 +245,11 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
     })
 
     const rows = []
+    const shouldFilterByYear = Number(yearFilter) > 2026
+    const savedYearCarryOver = yearCarryMap?.[yearFilter] || {}
 
     groups.forEach((grp) => {
+      const groupRowId = `printer-group-${grp.categoryLabel}`
       const inStockUnits = grp.units.filter((u) => u.status === 'IN_STOCK')
       const currentQty = inStockUnits.length
       const totalAssetValue = inStockUnits.reduce((sum, u) => {
@@ -158,7 +257,14 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
         return sum + (Number.isNaN(cost) ? 0 : cost)
       }, 0)
 
-      const inboundMovementRows = grp.movements
+      const scopedMovements = shouldFilterByYear
+        ? grp.movements.filter((mv) => {
+            const mvYear = extractYearFromDateValue(mv.moved_at || mv._unit?.inbound_date)
+            return mvYear === String(yearFilter)
+          })
+        : grp.movements
+
+      const inboundMovementRows = scopedMovements
         .filter((mv) => mv.movement_type === 'INBOUND')
         .map((mv) => {
           const u = mv._unit
@@ -187,7 +293,7 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
         })
         .sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0))
 
-      const outboundMovementRows = grp.movements
+      const outboundMovementRows = scopedMovements
         .filter((mv) =>
           ['OUTBOUND_SALE', 'OUTBOUND_DEMO', 'AS_SWAP', 'SCRAP'].includes(mv.movement_type)
         )
@@ -210,16 +316,20 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
         })
         .sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0))
 
-      const returnDemoCount = grp.movements.filter(
+      const returnDemoCount = scopedMovements.filter(
         (mv) => mv.movement_type === 'RETURN_DEMO'
       ).length
 
       const inboundQty = inboundMovementRows.length
       const outboundQty = Math.max(0, outboundMovementRows.length - returnDemoCount)
-      const carryOverQty = currentQty + outboundQty - inboundQty
+      const fallbackCarryOver = currentQty + outboundQty - inboundQty
+      const carryOverQty =
+        shouldFilterByYear && savedYearCarryOver[groupRowId] !== undefined
+          ? Number(savedYearCarryOver[groupRowId]) || 0
+          : fallbackCarryOver
 
       rows.push({
-        id: `printer-group-${grp.categoryLabel}`,
+        id: groupRowId,
         isPrinterGroup: true,
         code: grp.manufacturer.toUpperCase(),
         name: `${grp.manufacturer} 프린터 (본체)`,
@@ -284,6 +394,140 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
     return false
   }
 
+  const computeLedgerRows = (sourceData, yearFilter = '2026', yearCarryMap = {}) => {
+    const {
+      historyData = [],
+      lotsData = [],
+      printerUnitsData = [],
+      printerMovementsData = [],
+    } = sourceData || {}
+
+    const hasPrinterUnits = Array.isArray(printerUnitsData) && printerUnitsData.length > 0
+    const filteredPartsList = (partsList || []).filter((part) => {
+      if (!hasPrinterUnits) return true
+      const cat = String(part.category || '').trim()
+      return cat !== 'Leibinger 프린터' && cat !== '프린터'
+    })
+
+    const shouldFilterByYear = Number(yearFilter) > 2026
+    const savedYearCarryOver = yearCarryMap?.[yearFilter] || {}
+
+    const computedParts = filteredPartsList.map((part) => {
+      const partKey = String(part.id)
+      const partLots = (lotsData || []).filter((l) => String(l.part_id) === partKey)
+      const currentStock = Number(part.stock) || 0
+      const baseCarryOverStock = Number(part.carry_over_stock) || 0
+      const carryOverStock =
+        shouldFilterByYear && savedYearCarryOver[partKey] !== undefined
+          ? Number(savedYearCarryOver[partKey]) || 0
+          : baseCarryOverStock
+      const lotsSumQty = partLots.reduce((sum, l) => sum + (Number(l.current_qty) || 0), 0)
+
+      let totalAssetValue = 0
+      let remainingStockToCalc = currentStock
+      const validLots = partLots.filter((l) => (Number(l.current_qty) || 0) > 0)
+
+      if (validLots.length > 0 && remainingStockToCalc > 0) {
+        validLots.forEach((l) => {
+          if (remainingStockToCalc <= 0) return
+          const qty = Math.min(remainingStockToCalc, Number(l.current_qty) || 0)
+          const lotUnitPrice = Number(l.unit_price) || Number(part.unit_price) || 0
+          totalAssetValue += qty * lotUnitPrice
+          remainingStockToCalc -= qty
+        })
+      }
+
+      if (remainingStockToCalc > 0) {
+        if (part.is_serial_managed) {
+          const serialsArr = tryParseSerials(part.serials)
+          let snCalculated = 0
+          serialsArr.forEach((s) => {
+            if (snCalculated < remainingStockToCalc) {
+              totalAssetValue += Number(s.unit_price || part.unit_price || 0)
+              snCalculated += 1
+            }
+          })
+          if (snCalculated < remainingStockToCalc) {
+            totalAssetValue +=
+              (remainingStockToCalc - snCalculated) * (Number(part.unit_price) || 0)
+          }
+        } else {
+          totalAssetValue += remainingStockToCalc * (Number(part.unit_price) || 0)
+        }
+      }
+
+      const partCodeNorm = part.code ? String(part.code).trim().toLowerCase() : ''
+      const partNameNorm = part.name ? String(part.name).trim().toLowerCase() : ''
+
+      const matchedAllHistories = (historyData || []).filter((h) =>
+        isHistoryMatchedToPart(h, part, partCodeNorm, partNameNorm)
+      )
+
+      const partHistories = shouldFilterByYear
+        ? matchedAllHistories.filter((h) => {
+            const hYear = extractYearFromDateValue(h.date || h.created_at)
+            return hYear === String(yearFilter)
+          })
+        : matchedAllHistories
+
+      const scopedLots = shouldFilterByYear
+        ? partLots.filter((lot) => {
+            const lotYear = extractYearFromDateValue(lot.import_date || lot.created_at)
+            return lotYear === String(yearFilter)
+          })
+        : partLots
+
+      let inboundQty = 0
+      let outboundQty = 0
+
+      const lotInboundSum = scopedLots.reduce(
+        (sum, lot) => sum + (Number(lot.initial_qty) || 0),
+        0
+      )
+
+      const inboundHistorySum = partHistories.reduce((sum, h) => {
+        const isInbound = h.type === 'INBOUND' || h.company_name?.includes('입고')
+        if (!isInbound) return sum
+        const qty = extractQtyFromSummary(h.summary, part.name, h.note, part.code)
+        return sum + (qty > 0 ? qty : 1)
+      }, 0)
+
+      inboundQty = scopedLots.length > 0 ? lotInboundSum : inboundHistorySum
+
+      partHistories.forEach((h) => {
+        if (h.type === 'OUTBOUND' || h.company_name?.includes('출고')) {
+          const qty = extractQtyFromSummary(h.summary, part.name, h.note, part.code)
+          outboundQty += qty > 0 ? qty : 1
+        }
+      })
+
+      return {
+        id: part.id,
+        isPrinterGroup: false,
+        code: part.code || '-',
+        name: part.name,
+        category: part.category || '일반부품',
+        carryOver: carryOverStock,
+        inbound: inboundQty,
+        outbound: outboundQty,
+        current: currentStock,
+        lotsSumQty,
+        assetValue: totalAssetValue,
+        histories: partHistories,
+        lots: scopedLots,
+      }
+    })
+
+    const computedPrinters = buildPrinterLedgerRows(
+      printerUnitsData || [],
+      printerMovementsData || [],
+      yearFilter,
+      yearCarryMap
+    )
+
+    return [...computedPrinters, ...computedParts]
+  }
+
   const fetchLedgerSummary = async () => {
     setLoading(true)
     try {
@@ -313,103 +557,15 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
       if (printerUnitsErr) throw printerUnitsErr
       if (printerMovementsErr) throw printerMovementsErr
 
-      const hasPrinterUnits = Array.isArray(printerUnitsData) && printerUnitsData.length > 0
-      const filteredPartsList = (partsList || []).filter((part) => {
-        if (!hasPrinterUnits) return true
-        const cat = String(part.category || '').trim()
-        return cat !== 'Leibinger 프린터' && cat !== '프린터'
-      })
+      const nextSource = {
+        historyData: historyData || [],
+        lotsData: lotsData || [],
+        printerUnitsData: printerUnitsData || [],
+        printerMovementsData: printerMovementsData || [],
+      }
 
-      const computedParts = filteredPartsList.map((part) => {
-        const partLots = (lotsData || []).filter((l) => String(l.part_id) === String(part.id))
-        const currentStock = Number(part.stock) || 0
-        const carryOverStock = Number(part.carry_over_stock) || 0
-        const lotsSumQty = partLots.reduce((sum, l) => sum + (Number(l.current_qty) || 0), 0)
-
-        let totalAssetValue = 0
-        let remainingStockToCalc = currentStock
-        const validLots = partLots.filter((l) => (Number(l.current_qty) || 0) > 0)
-
-        if (validLots.length > 0 && remainingStockToCalc > 0) {
-          validLots.forEach((l) => {
-            if (remainingStockToCalc <= 0) return
-            const qty = Math.min(remainingStockToCalc, Number(l.current_qty) || 0)
-            const lotUnitPrice = Number(l.unit_price) || Number(part.unit_price) || 0
-            totalAssetValue += qty * lotUnitPrice
-            remainingStockToCalc -= qty
-          })
-        }
-
-        if (remainingStockToCalc > 0) {
-          if (part.is_serial_managed) {
-            const serialsArr = tryParseSerials(part.serials)
-            let snCalculated = 0
-            serialsArr.forEach((s) => {
-              if (snCalculated < remainingStockToCalc) {
-                totalAssetValue += Number(s.unit_price || part.unit_price || 0)
-                snCalculated += 1
-              }
-            })
-            if (snCalculated < remainingStockToCalc) {
-              totalAssetValue +=
-                (remainingStockToCalc - snCalculated) * (Number(part.unit_price) || 0)
-            }
-          } else {
-            totalAssetValue += remainingStockToCalc * (Number(part.unit_price) || 0)
-          }
-        }
-
-        const partCodeNorm = part.code ? String(part.code).trim().toLowerCase() : ''
-        const partNameNorm = part.name ? String(part.name).trim().toLowerCase() : ''
-
-        const partHistories = (historyData || []).filter((h) =>
-          isHistoryMatchedToPart(h, part, partCodeNorm, partNameNorm)
-        )
-
-        let inboundQty = 0
-        let outboundQty = 0
-
-        const lotInboundSum = partLots.reduce(
-          (sum, lot) => sum + (Number(lot.initial_qty) || 0),
-          0
-        )
-
-        const inboundHistorySum = partHistories.reduce((sum, h) => {
-          const isInbound = h.type === 'INBOUND' || h.company_name?.includes('입고')
-          if (!isInbound) return sum
-          const qty = extractQtyFromSummary(h.summary, part.name, h.note, part.code)
-          return sum + (qty > 0 ? qty : 1)
-        }, 0)
-
-        inboundQty = partLots.length > 0 ? lotInboundSum : inboundHistorySum
-
-        partHistories.forEach((h) => {
-          if (h.type === 'OUTBOUND' || h.company_name?.includes('출고')) {
-            const qty = extractQtyFromSummary(h.summary, part.name, h.note, part.code)
-            outboundQty += qty > 0 ? qty : 1
-          }
-        })
-
-        return {
-          id: part.id,
-          isPrinterGroup: false,
-          code: part.code || '-',
-          name: part.name,
-          category: part.category || '일반부품',
-          carryOver: carryOverStock,
-          inbound: inboundQty,
-          outbound: outboundQty,
-          current: currentStock,
-          lotsSumQty,
-          assetValue: totalAssetValue,
-          histories: partHistories,
-          lots: partLots,
-        }
-      })
-
-      const computedPrinters = buildPrinterLedgerRows(printerUnitsData || [], printerMovementsData || [])
-
-      setLedgerData([...computedPrinters, ...computedParts])
+      setRawLedgerSource(nextSource)
+      setLedgerData(computeLedgerRows(nextSource, activeYear, carryOverByYear))
     } catch (err) {
       console.error('수불부 데이터 집계 오류:', err)
     } finally {
@@ -427,6 +583,10 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
   useEffect(() => {
     fetchLedgerSummary()
   }, [partsList])
+
+  useEffect(() => {
+    setLedgerData(computeLedgerRows(rawLedgerSource, activeYear, carryOverByYear))
+  }, [activeYear, carryOverByYear, rawLedgerSource, partsList])
 
   const handleOpenDetailHistory = (item, type) => {
     setSelectedItemHistory({ name: item.name, code: item.code, type })
@@ -520,11 +680,15 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
     return `"${str.replace(/"/g, '""')}"`
   }
 
-  const handleExportExcel = () => {
+  const handleExportExcel = ({ excludeZero = false } = {}) => {
+    const exportRows = excludeZero
+      ? filteredLedger.filter((item) => (Number(item.current) || 0) > 0)
+      : filteredLedger
+
     let csv = '\uFEFF'
     csv += 'Ident No.,품명,구분,이월재고,입고수량,출고수량,현재고,재고금액(원)\n'
 
-    filteredLedger.forEach((item) => {
+    exportRows.forEach((item) => {
       csv +=
         [
           escapeCsvCell(item.code),
@@ -538,11 +702,15 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
         ].join(',') + '\n'
     })
 
+    const suffixTag = excludeZero ? '_재고0제외' : ''
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.setAttribute('download', `재고수불부_결산_${new Date().toISOString().split('T')[0]}.csv`)
+    a.setAttribute(
+      'download',
+      `재고수불부_${activeYear}년결산${suffixTag}_${new Date().toISOString().split('T')[0]}.csv`
+    )
     document.body.appendChild(a)
     a.click()
     document.body.removeChild(a)
@@ -588,38 +756,52 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
     }
   })
 
+  const modalDisplayRows = onlyUnbalancedInModal
+    ? closingCheckRows.filter((r) => !r.isBalanced)
+    : closingCheckRows
+
   const unbalancedCount = closingCheckRows.filter((r) => !r.isBalanced).length
 
   const currentYearRecord = closedRecordsByYear[closingYear] || null
   const isYearClosed = Boolean(currentYearRecord && currentYearRecord.status === 'CLOSED')
-  const hasPostCloseChange =
-    isYearClosed &&
-    (currentYearRecord.totalAssetValue !== totalSumAssetValue ||
-      currentYearRecord.itemCount !== closingCheckRows.length ||
-      currentYearRecord.unbalancedCount !== unbalancedCount)
 
   const handleOpenYearEndModal = () => {
-    setReopenMode(false)
-    setReopenReason('')
-    setReopenConfirmedCheck(false)
+    setClosingYear(activeYear)
+    setOnlyUnbalancedInModal(false)
     setShowYearEndModal(true)
   }
 
   const handleChangeClosingYear = (nextYear) => {
     setClosingYear(nextYear)
-    setReopenMode(false)
-    setReopenReason('')
-    setReopenConfirmedCheck(false)
+    setActiveYear(nextYear)
   }
 
-  const canConfirmClosing =
-    !isYearClosed || (reopenMode && reopenReason.trim().length >= 4 && reopenConfirmedCheck)
-
   const handleConfirmYearEnd = () => {
-    if (!canConfirmClosing) return
-
     const targetNextYear = String(Number(closingYear) + 1)
+    const alreadyClosedNotice = isYearClosed
+      ? `\n※ 이미 ${closingYear}년 마감 기록(${currentYearRecord.closedAt})이 있습니다. 현재 수치 기준으로 다시 확정하시겠습니까?`
+      : ''
+
+    const shouldProceed = window.confirm(
+      `${closingYear}년 12월 마감을 확정하시겠습니까?\n` +
+        `현재고가 ${targetNextYear}년 이월재고 기준으로 반영됩니다.` +
+        `\n(검토 품목: ${closingCheckRows.length}건 / 수식 불일치: ${unbalancedCount}건 / 총 재고금액: ${totalSumAssetValue.toLocaleString()}원)` +
+        alreadyClosedNotice
+    )
+
+    if (!shouldProceed) return
+
     const nowLabel = new Date().toLocaleString('ko-KR')
+
+    const nextYearCarryMap = {}
+    closingCheckRows.forEach((row) => {
+      nextYearCarryMap[String(row.id)] = Number(row.current) || 0
+    })
+
+    setCarryOverByYear((prev) => ({
+      ...prev,
+      [targetNextYear]: nextYearCarryMap,
+    }))
 
     setClosedRecordsByYear((prev) => ({
       ...prev,
@@ -629,7 +811,6 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
         targetYear: targetNextYear,
         closedAt: nowLabel,
         note: closingConfirmedNote.trim(),
-        reopenReason: reopenMode ? reopenReason.trim() : '',
         itemCount: closingCheckRows.length,
         unbalancedCount,
         totalAssetValue: totalSumAssetValue,
@@ -637,14 +818,9 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
     }))
 
     alert(
-      `${closingYear}년 12월 마감 검토가 기록되었습니다.\n` +
-        `차기 이월 대상: ${targetNextYear}년 | 불일치 항목: ${unbalancedCount}건 | 총 재고금액: ${totalSumAssetValue.toLocaleString()}원` +
-        (reopenMode ? `\n재확정 사유: ${reopenReason.trim()}` : '')
+      `${closingYear}년 12월 마감이 확정되었습니다.\n` +
+        `${targetNextYear}년 이월재고 기준이 반영되었습니다.`
     )
-
-    setReopenMode(false)
-    setReopenReason('')
-    setReopenConfirmedCheck(false)
   }
 
   const inputStyle = {
@@ -675,11 +851,23 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
             display: 'flex',
             gap: '8px',
             flex: 1,
-            maxWidth: '640px',
+            maxWidth: '760px',
             flexWrap: 'wrap',
             alignItems: 'center',
           }}
         >
+          <select
+            value={activeYear}
+            onChange={(e) => setActiveYear(e.target.value)}
+            style={{ ...inputStyle, width: '130px', fontWeight: '800', color: '#0F172A' }}
+          >
+            {availableYears.map((yr) => (
+              <option key={yr} value={yr}>
+                📆 {yr}년
+              </option>
+            ))}
+          </select>
+
           <select
             value={selectedCategory}
             onChange={(e) => setSelectedCategory(e.target.value)}
@@ -795,7 +983,7 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
           </button>
           <button
             type="button"
-            onClick={handleExportExcel}
+            onClick={() => handleExportExcel({ excludeZero: false })}
             style={{
               background: '#059669',
               color: '#fff',
@@ -1068,16 +1256,16 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
                   {isYearClosed ? (
                     <span
                       style={{
-                        backgroundColor: '#FEF3C7',
-                        color: '#92400E',
-                        border: '1px solid #F59E0B',
+                        backgroundColor: '#ECFDF5',
+                        color: '#065F46',
+                        border: '1px solid #6EE7B7',
                         padding: '3px 10px',
                         borderRadius: '999px',
                         fontSize: '12px',
                         fontWeight: '800',
                       }}
                     >
-                      🔒 {closingYear}년 마감 완료 (잠금)
+                      ✓ {closingYear}년 마감 기록됨 ({currentYearRecord.closedAt})
                     </span>
                   ) : (
                     <span
@@ -1136,10 +1324,13 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
                 <select
                   value={closingYear}
                   onChange={(e) => handleChangeClosingYear(e.target.value)}
-                  style={{ ...inputStyle, width: '200px', fontWeight: '800', backgroundColor: '#fff' }}
+                  style={{ ...inputStyle, width: '210px', fontWeight: '800', backgroundColor: '#fff' }}
                 >
-                  <option value="2026">2026년 결산 (→ 2027년 이월)</option>
-                  <option value="2027">2027년 결산 (→ 2028년 이월)</option>
+                  {availableYears.map((yr) => (
+                    <option key={yr} value={yr}>
+                      {yr}년 결산 (→ {Number(yr) + 1}년 이월)
+                    </option>
+                  ))}
                 </select>
               </div>
 
@@ -1157,111 +1348,33 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
                 수식 불일치: <strong>{unbalancedCount}</strong>건
               </div>
 
+              <label
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  fontSize: '12px',
+                  fontWeight: '700',
+                  color: '#334155',
+                  cursor: 'pointer',
+                  backgroundColor: '#fff',
+                  padding: '6px 10px',
+                  borderRadius: '8px',
+                  border: '1px solid #CBD5E1',
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={onlyUnbalancedInModal}
+                  onChange={(e) => setOnlyUnbalancedInModal(e.target.checked)}
+                />
+                수식 불일치만 보기
+              </label>
+
               <div style={{ marginLeft: 'auto', fontSize: '13px', fontWeight: '800', color: '#1E40AF' }}>
                 총 재고금액: {totalSumAssetValue.toLocaleString()} 원
               </div>
             </div>
-
-            {isYearClosed && (
-              <div
-                style={{
-                  backgroundColor: hasPostCloseChange ? '#FEF2F2' : '#FFFBEB',
-                  border: `1px solid ${hasPostCloseChange ? '#FCA5A5' : '#FCD34D'}`,
-                  borderRadius: '12px',
-                  padding: '12px 16px',
-                  marginBottom: '14px',
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  gap: '12px',
-                  flexWrap: 'wrap',
-                }}
-              >
-                <div style={{ fontSize: '12px', color: '#1E293B', lineHeight: '1.5' }}>
-                  <strong>마감 기록 ({currentYearRecord.closedAt}):</strong>{' '}
-                  {currentYearRecord.closingYear}년 → {currentYearRecord.targetYear}년 이월 기준
-                  (기록 당시 총액 {Number(currentYearRecord.totalAssetValue || 0).toLocaleString()}원,
-                  불일치 {currentYearRecord.unbalancedCount}건)
-                  {currentYearRecord.reopenReason && (
-                    <div>
-                      <strong>직전 재확정 사유:</strong> {currentYearRecord.reopenReason}
-                    </div>
-                  )}
-                  {hasPostCloseChange && (
-                    <div style={{ color: '#DC2626', fontWeight: '800', marginTop: '4px' }}>
-                      ⚠️ 마감 확정 이후 현재 집계 수치(총액 {totalSumAssetValue.toLocaleString()}원 /
-                      불일치 {unbalancedCount}건)가 변경되었습니다.
-                    </div>
-                  )}
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    setReopenMode((prev) => !prev)
-                    setReopenReason('')
-                    setReopenConfirmedCheck(false)
-                  }}
-                  style={{
-                    backgroundColor: reopenMode ? '#E2E8F0' : '#DC2626',
-                    color: reopenMode ? '#1E293B' : '#fff',
-                    border: 'none',
-                    padding: '8px 12px',
-                    borderRadius: '8px',
-                    fontSize: '12px',
-                    fontWeight: '800',
-                    cursor: 'pointer',
-                  }}
-                >
-                  {reopenMode ? '재확정 해제 취소' : '🔓 재확정 모드 열기'}
-                </button>
-              </div>
-            )}
-
-            {isYearClosed && reopenMode && (
-              <div
-                style={{
-                  backgroundColor: '#FFF1F2',
-                  border: '1px solid #FDA4AF',
-                  borderRadius: '12px',
-                  padding: '14px 16px',
-                  marginBottom: '14px',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: '10px',
-                }}
-              >
-                <div style={{ fontSize: '13px', fontWeight: '800', color: '#9F1239' }}>
-                  재확정(수정) 방어 절차: 이미 마감된 연도의 수치를 다시 확정하려면 사유를
-                  입력하고 최종 확인에 체크해 주세요.
-                </div>
-                <input
-                  type="text"
-                  placeholder="재확정 사유를 4자 이상 입력해 주세요 (예: 출고 누락 정정 후 재마감)"
-                  value={reopenReason}
-                  onChange={(e) => setReopenReason(e.target.value)}
-                  style={{ ...inputStyle, backgroundColor: '#fff' }}
-                />
-                <label
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '8px',
-                    fontSize: '12px',
-                    fontWeight: '700',
-                    color: '#881337',
-                    cursor: 'pointer',
-                  }}
-                >
-                  <input
-                    type="checkbox"
-                    checked={reopenConfirmedCheck}
-                    onChange={(e) => setReopenConfirmedCheck(e.target.checked)}
-                  />
-                  마감 수치를 다시 확정하는 것이 맞으며, 변동 내역을 검토했음을 확인합니다.
-                </label>
-              </div>
-            )}
 
             <div
               style={{
@@ -1301,77 +1414,94 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {closingCheckRows.map((row) => {
-                    const suffix = row.isPrinterGroup ? '대' : '개'
-                    return (
-                      <tr key={row.id} style={{ borderBottom: '1px solid #F1F5F9' }}>
-                        <td style={{ padding: '9px 12px' }}>
-                          <div style={{ fontWeight: '700', color: '#2563EB' }}>{row.code}</div>
-                          <div style={{ fontSize: '11px', color: '#64748B' }}>{row.category}</div>
-                        </td>
-                        <td style={{ padding: '9px 12px', fontWeight: '700', color: '#0F172A' }}>
-                          {row.name}
-                          {!row.isBalanced && !row.isPrinterGroup && (
-                            <div style={{ fontSize: '11px', color: '#DC2626', fontWeight: '600', marginTop: '2px' }}>
-                              로트잔량합계: {row.lotsSumQty}개 · 이력건수: {(row.histories || []).length}건
-                            </div>
-                          )}
-                        </td>
-                        <td style={{ padding: '9px 12px', textAlign: 'center' }}>{row.carryOver}</td>
-                        <td style={{ padding: '9px 12px', textAlign: 'center', color: '#059669' }}>
-                          +{row.inbound}
-                        </td>
-                        <td style={{ padding: '9px 12px', textAlign: 'center', color: '#2563EB' }}>
-                          -{row.outbound}
-                        </td>
-                        <td style={{ padding: '9px 12px', textAlign: 'center', fontWeight: '700' }}>
-                          {row.formulaCurrent} {suffix}
-                        </td>
-                        <td style={{ padding: '9px 12px', textAlign: 'center', fontWeight: '800' }}>
-                          {row.current} {suffix}
-                        </td>
-                        <td style={{ padding: '9px 12px', textAlign: 'center' }}>
-                          {row.isBalanced ? (
-                            <span
-                              style={{
-                                backgroundColor: '#DCFCE7',
-                                color: '#15803D',
-                                padding: '2px 8px',
-                                borderRadius: '6px',
-                                fontSize: '11px',
-                                fontWeight: '800',
-                              }}
-                            >
-                              일치
-                            </span>
-                          ) : (
-                            <span
-                              style={{
-                                backgroundColor: '#FEE2E2',
-                                color: '#DC2626',
-                                padding: '2px 8px',
-                                borderRadius: '6px',
-                                fontSize: '11px',
-                                fontWeight: '800',
-                              }}
-                            >
-                              차이 {row.diff > 0 ? `+${row.diff}` : row.diff}
-                            </span>
-                          )}
-                        </td>
-                        <td
-                          style={{
-                            padding: '9px 12px',
-                            textAlign: 'right',
-                            fontWeight: '700',
-                            color: '#059669',
-                          }}
-                        >
-                          {(row.assetValue || 0).toLocaleString()}원
-                        </td>
-                      </tr>
-                    )
-                  })}
+                  {modalDisplayRows.length === 0 ? (
+                    <tr>
+                      <td colSpan="9" style={{ padding: '28px', textAlign: 'center', color: '#94A3B8' }}>
+                        {onlyUnbalancedInModal
+                          ? '수식 불일치 항목이 없습니다.'
+                          : '점검 대상 품목이 없습니다.'}
+                      </td>
+                    </tr>
+                  ) : (
+                    modalDisplayRows.map((row) => {
+                      const suffix = row.isPrinterGroup ? '대' : '개'
+                      return (
+                        <tr key={row.id} style={{ borderBottom: '1px solid #F1F5F9' }}>
+                          <td style={{ padding: '9px 12px' }}>
+                            <div style={{ fontWeight: '700', color: '#2563EB' }}>{row.code}</div>
+                            <div style={{ fontSize: '11px', color: '#64748B' }}>{row.category}</div>
+                          </td>
+                          <td style={{ padding: '9px 12px', fontWeight: '700', color: '#0F172A' }}>
+                            {row.name}
+                            {!row.isBalanced && !row.isPrinterGroup && (
+                              <div
+                                style={{
+                                  fontSize: '11px',
+                                  color: '#DC2626',
+                                  fontWeight: '600',
+                                  marginTop: '2px',
+                                }}
+                              >
+                                로트잔량합계: {row.lotsSumQty}개 · 이력건수: {(row.histories || []).length}건
+                              </div>
+                            )}
+                          </td>
+                          <td style={{ padding: '9px 12px', textAlign: 'center' }}>{row.carryOver}</td>
+                          <td style={{ padding: '9px 12px', textAlign: 'center', color: '#059669' }}>
+                            +{row.inbound}
+                          </td>
+                          <td style={{ padding: '9px 12px', textAlign: 'center', color: '#2563EB' }}>
+                            -{row.outbound}
+                          </td>
+                          <td style={{ padding: '9px 12px', textAlign: 'center', fontWeight: '700' }}>
+                            {row.formulaCurrent} {suffix}
+                          </td>
+                          <td style={{ padding: '9px 12px', textAlign: 'center', fontWeight: '800' }}>
+                            {row.current} {suffix}
+                          </td>
+                          <td style={{ padding: '9px 12px', textAlign: 'center' }}>
+                            {row.isBalanced ? (
+                              <span
+                                style={{
+                                  backgroundColor: '#DCFCE7',
+                                  color: '#15803D',
+                                  padding: '2px 8px',
+                                  borderRadius: '6px',
+                                  fontSize: '11px',
+                                  fontWeight: '800',
+                                }}
+                              >
+                                일치
+                              </span>
+                            ) : (
+                              <span
+                                style={{
+                                  backgroundColor: '#FEE2E2',
+                                  color: '#DC2626',
+                                  padding: '2px 8px',
+                                  borderRadius: '6px',
+                                  fontSize: '11px',
+                                  fontWeight: '800',
+                                }}
+                              >
+                                차이 {row.diff > 0 ? `+${row.diff}` : row.diff}
+                              </span>
+                            )}
+                          </td>
+                          <td
+                            style={{
+                              padding: '9px 12px',
+                              textAlign: 'right',
+                              fontWeight: '700',
+                              color: '#059669',
+                            }}
+                          >
+                            {(row.assetValue || 0).toLocaleString()}원
+                          </td>
+                        </tr>
+                      )
+                    })
+                  )}
                 </tbody>
               </table>
             </div>
@@ -1393,11 +1523,7 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
                 placeholder="예: 12월 실물 재고 및 단가 확인 완료"
                 value={closingConfirmedNote}
                 onChange={(e) => setClosingConfirmedNote(e.target.value)}
-                disabled={isYearClosed && !reopenMode}
-                style={{
-                  ...inputStyle,
-                  backgroundColor: isYearClosed && !reopenMode ? '#F1F5F9' : '#F8FAFC',
-                }}
+                style={inputStyle}
               />
             </div>
 
@@ -1412,22 +1538,40 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
                 flexWrap: 'wrap',
               }}
             >
-              <button
-                type="button"
-                onClick={handleExportExcel}
-                style={{
-                  background: '#059669',
-                  color: '#fff',
-                  border: 'none',
-                  padding: '9px 16px',
-                  borderRadius: '8px',
-                  fontSize: '13px',
-                  fontWeight: '700',
-                  cursor: 'pointer',
-                }}
-              >
-                📊 결산 시트 CSV 다운로드
-              </button>
+              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                <button
+                  type="button"
+                  onClick={() => handleExportExcel({ excludeZero: false })}
+                  style={{
+                    background: '#059669',
+                    color: '#fff',
+                    border: 'none',
+                    padding: '9px 16px',
+                    borderRadius: '8px',
+                    fontSize: '13px',
+                    fontWeight: '700',
+                    cursor: 'pointer',
+                  }}
+                >
+                  📊 결산 시트 CSV 다운로드
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleExportExcel({ excludeZero: true })}
+                  style={{
+                    background: '#ECFDF5',
+                    color: '#065F46',
+                    border: '1px solid #6EE7B7',
+                    padding: '9px 14px',
+                    borderRadius: '8px',
+                    fontSize: '13px',
+                    fontWeight: '700',
+                    cursor: 'pointer',
+                  }}
+                >
+                  재고 0 제외 CSV 다운로드
+                </button>
+              </div>
 
               <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
                 <button
@@ -1446,23 +1590,18 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
                 </button>
                 <button
                   type="button"
-                  disabled={!canConfirmClosing}
                   onClick={handleConfirmYearEnd}
                   style={{
                     padding: '9px 18px',
-                    background: canConfirmClosing ? '#2563EB' : '#94A3B8',
+                    background: '#2563EB',
                     color: '#fff',
                     border: 'none',
                     borderRadius: '8px',
                     fontWeight: '800',
-                    cursor: canConfirmClosing ? 'pointer' : 'not-allowed',
+                    cursor: 'pointer',
                   }}
                 >
-                  {isYearClosed
-                    ? reopenMode
-                      ? '재확정 저장'
-                      : '마감 잠금됨'
-                    : '검토 확인 완료'}
+                  검토 확인 완료
                 </button>
               </div>
             </div>
