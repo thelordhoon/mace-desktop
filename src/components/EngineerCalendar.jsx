@@ -110,19 +110,19 @@ export default function EngineerCalendar({ user, isMobileView = false, companies
   }
 
   const fetchSchedules = async () => {
-    let firstDay, lastDay
+    let year, month
     if (isMobileView) {
       const parts = mobileSelectedDateStr.split('-')
-      const year = Number(parts[0])
-      const month = Number(parts[1])
-      firstDay = `${year}-${String(month).padStart(2, '0')}-01`
-      lastDay = new Date(year, month, 0).toISOString().substring(0, 10)
+      year = Number(parts[0])
+      month = Number(parts[1])
     } else {
-      const year = currentDate.getFullYear()
-      const month = currentDate.getMonth() + 1
-      firstDay = `${year}-${String(month).padStart(2, '0')}-01`
-      lastDay = new Date(year, month, 0).toISOString().substring(0, 10)
+      year = currentDate.getFullYear()
+      month = currentDate.getMonth() + 1
     }
+
+    const firstDay = `${year}-${String(month).padStart(2, '0')}-01`
+    const lastDayDate = new Date(year, month, 0)
+    const lastDay = `${lastDayDate.getFullYear()}-${String(lastDayDate.getMonth() + 1).padStart(2, '0')}-${String(lastDayDate.getDate()).padStart(2, '0')}`
 
     const { data, error } = await supabase
       .from('engineer_schedules')
