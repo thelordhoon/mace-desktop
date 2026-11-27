@@ -3,6 +3,8 @@ import { supabase } from '../../supabaseClient'
 
 const STORAGE_CLOSED_RECORDS_KEY = 'mace_inventory_closed_records_v1'
 const STORAGE_CARRY_OVER_KEY = 'mace_inventory_carry_over_by_year_v1'
+const TABLE_CLOSINGS = 'inventory_year_end_closings'
+const TABLE_CARRY_OVERS = 'inventory_year_carry_overs'
 
 const PRINTER_MOVEMENT_LABELS = {
   INBOUND: '프린터 입고',
@@ -64,6 +66,15 @@ const buildAvailableYears = (closedRecords = {}, carryOverMap = {}, selectedYear
   return Array.from(yearSet).sort((a, b) => Number(a) - Number(b))
 }
 
+const formatClosedAtLabel = (rawValue) => {
+  if (!rawValue) return ''
+  const parsed = new Date(rawValue)
+  if (!Number.isNaN(parsed.getTime())) {
+    return parsed.toLocaleString('ko-KR')
+  }
+  return String(rawValue)
+}
+
 export default function InventoryLedgerTab({ partsList, refreshParts }) {
   const [rawLedgerSource, setRawLedgerSource] = useState({
     historyData: [],
@@ -73,6 +84,7 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
   })
   const [ledgerData, setLedgerData] = useState([])
   const [loading, setLoading] = useState(false)
+  const [savingClosing, setSavingClosing] = useState(false)
   const [searchTerm, setSearchTerm] = useState('')
   const [selectedCategory, setSelectedCategory] = useState('ALL')
   const [hideZeroStock, setHideZeroStock] = useState(false)
@@ -107,7 +119,7 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
         )
       }
     } catch (e) {
-      console.error('마감 기록 저장 오류:', e)
+      console.error('마감 기록 로컬 백업 저장 오류:', e)
     }
   }, [closedRecordsByYear])
 
@@ -117,9 +129,49 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
         window.localStorage.setItem(STORAGE_CARRY_OVER_KEY, JSON.stringify(carryOverByYear))
       }
     } catch (e) {
-      console.error('이월 재고 기록 저장 오류:', e)
+      console.error('이월 재고 로컬 백업 저장 오류:', e)
     }
   }, [carryOverByYear])
+
+  const fetchClosingAndCarryOverFromDb = async () => {
+    const [{ data: closingsRows, error: closingsErr }, { data: carryRows, error: carryErr }] =
+      await Promise.all([
+        supabase.from(TABLE_CLOSINGS).select('*'),
+        supabase.from(TABLE_CARRY_OVERS).select('*'),
+      ])
+
+    if (closingsErr) throw closingsErr
+    if (carryErr) throw carryErr
+
+    const nextClosedMap = {}
+    ;(closingsRows || []).forEach((row) => {
+      if (!row?.closing_year) return
+      const yr = String(row.closing_year)
+      nextClosedMap[yr] = {
+        status: row.status || 'CLOSED',
+        closingYear: yr,
+        targetYear: row.target_year ? String(row.target_year) : String(Number(yr) + 1),
+        closedAt: formatClosedAtLabel(row.closed_at || row.updated_at),
+        note: row.note || '',
+        itemCount: Number(row.item_count) || 0,
+        unbalancedCount: Number(row.unbalanced_count) || 0,
+        totalAssetValue: Number(row.total_asset_value) || 0,
+      }
+    })
+
+    const nextCarryMap = {}
+    ;(carryRows || []).forEach((row) => {
+      if (!row?.target_year || !row?.row_key) return
+      const yr = String(row.target_year)
+      const key = String(row.row_key)
+      if (!nextCarryMap[yr]) nextCarryMap[yr] = {}
+      nextCarryMap[yr][key] = Number(row.carry_over_qty) || 0
+    })
+
+    setClosedRecordsByYear(nextClosedMap)
+    setCarryOverByYear(nextCarryMap)
+    return { nextClosedMap, nextCarryMap }
+  }
 
   const cleanNoteText = (rawNote) => {
     if (!rawNote) return ''
@@ -557,6 +609,14 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
       if (printerUnitsErr) throw printerUnitsErr
       if (printerMovementsErr) throw printerMovementsErr
 
+      let effectiveCarryMap = carryOverByYear
+      try {
+        const dbResult = await fetchClosingAndCarryOverFromDb()
+        effectiveCarryMap = dbResult.nextCarryMap
+      } catch (dbErr) {
+        console.warn('마감/이월 DB 조회 폴백(localStorage 사용):', dbErr)
+      }
+
       const nextSource = {
         historyData: historyData || [],
         lotsData: lotsData || [],
@@ -565,7 +625,7 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
       }
 
       setRawLedgerSource(nextSource)
-      setLedgerData(computeLedgerRows(nextSource, activeYear, carryOverByYear))
+      setLedgerData(computeLedgerRows(nextSource, activeYear, effectiveCarryMap))
     } catch (err) {
       console.error('수불부 데이터 집계 오류:', err)
     } finally {
@@ -776,7 +836,9 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
     setActiveYear(nextYear)
   }
 
-  const handleConfirmYearEnd = () => {
+  const handleConfirmYearEnd = async () => {
+    if (savingClosing) return
+
     const targetNextYear = String(Number(closingYear) + 1)
     const alreadyClosedNotice = isYearClosed
       ? `\n※ 이미 ${closingYear}년 마감 기록(${currentYearRecord.closedAt})이 있습니다. 현재 수치 기준으로 다시 확정하시겠습니까?`
@@ -791,36 +853,101 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
 
     if (!shouldProceed) return
 
-    const nowLabel = new Date().toLocaleString('ko-KR')
+    setSavingClosing(true)
+    const nowIso = new Date().toISOString()
+    const nowLabel = formatClosedAtLabel(nowIso)
+    const trimmedNote = closingConfirmedNote.trim()
 
     const nextYearCarryMap = {}
-    closingCheckRows.forEach((row) => {
-      nextYearCarryMap[String(row.id)] = Number(row.current) || 0
+    const carryRowsPayload = closingCheckRows.map((row) => {
+      const rowKey = String(row.id)
+      const qty = Number(row.current) || 0
+      nextYearCarryMap[rowKey] = qty
+      return {
+        target_year: targetNextYear,
+        row_key: rowKey,
+        carry_over_qty: qty,
+        source_closing_year: closingYear,
+        updated_at: nowIso,
+      }
     })
 
-    setCarryOverByYear((prev) => ({
-      ...prev,
-      [targetNextYear]: nextYearCarryMap,
-    }))
+    const closingPayload = {
+      closing_year: closingYear,
+      target_year: targetNextYear,
+      status: 'CLOSED',
+      closed_at: nowIso,
+      note: trimmedNote,
+      item_count: closingCheckRows.length,
+      unbalanced_count: unbalancedCount,
+      total_asset_value: totalSumAssetValue,
+      updated_at: nowIso,
+    }
 
-    setClosedRecordsByYear((prev) => ({
-      ...prev,
-      [closingYear]: {
-        status: 'CLOSED',
-        closingYear,
-        targetYear: targetNextYear,
-        closedAt: nowLabel,
-        note: closingConfirmedNote.trim(),
-        itemCount: closingCheckRows.length,
-        unbalancedCount,
-        totalAssetValue: totalSumAssetValue,
-      },
-    }))
+    try {
+      const { error: closingErr } = await supabase
+        .from(TABLE_CLOSINGS)
+        .upsert(closingPayload, { onConflict: 'closing_year' })
 
-    alert(
-      `${closingYear}년 12월 마감이 확정되었습니다.\n` +
-        `${targetNextYear}년 이월재고 기준이 반영되었습니다.`
-    )
+      if (closingErr) throw closingErr
+
+      if (carryRowsPayload.length > 0) {
+        const { error: carryErr } = await supabase
+          .from(TABLE_CARRY_OVERS)
+          .upsert(carryRowsPayload, { onConflict: 'target_year,row_key' })
+
+        if (carryErr) throw carryErr
+      }
+
+      setCarryOverByYear((prev) => ({
+        ...prev,
+        [targetNextYear]: nextYearCarryMap,
+      }))
+
+      setClosedRecordsByYear((prev) => ({
+        ...prev,
+        [closingYear]: {
+          status: 'CLOSED',
+          closingYear,
+          targetYear: targetNextYear,
+          closedAt: nowLabel,
+          note: trimmedNote,
+          itemCount: closingCheckRows.length,
+          unbalancedCount,
+          totalAssetValue: totalSumAssetValue,
+        },
+      }))
+
+      alert(
+        `${closingYear}년 12월 마감이 DB에 확정 저장되었습니다.\n` +
+          `${targetNextYear}년 이월재고 기준이 다른 PC에서도 동일하게 반영됩니다.`
+      )
+    } catch (err) {
+      console.error('마감 DB 저장 오류:', err)
+      setCarryOverByYear((prev) => ({
+        ...prev,
+        [targetNextYear]: nextYearCarryMap,
+      }))
+      setClosedRecordsByYear((prev) => ({
+        ...prev,
+        [closingYear]: {
+          status: 'CLOSED',
+          closingYear,
+          targetYear: targetNextYear,
+          closedAt: nowLabel,
+          note: trimmedNote,
+          itemCount: closingCheckRows.length,
+          unbalancedCount,
+          totalAssetValue: totalSumAssetValue,
+        },
+      }))
+      alert(
+        `Supabase 테이블 저장 중 오류가 발생해 현재 브라우저에만 임시 저장되었습니다.\n` +
+          `(${TABLE_CLOSINGS}, ${TABLE_CARRY_OVERS} 테이블 생성 및 권한을 확인해 주세요.)`
+      )
+    } finally {
+      setSavingClosing(false)
+    }
   }
 
   const inputStyle = {
@@ -1590,18 +1717,19 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
                 </button>
                 <button
                   type="button"
+                  disabled={savingClosing}
                   onClick={handleConfirmYearEnd}
                   style={{
                     padding: '9px 18px',
-                    background: '#2563EB',
+                    background: savingClosing ? '#93C5FD' : '#2563EB',
                     color: '#fff',
                     border: 'none',
                     borderRadius: '8px',
                     fontWeight: '800',
-                    cursor: 'pointer',
+                    cursor: savingClosing ? 'not-allowed' : 'pointer',
                   }}
                 >
-                  검토 확인 완료
+                  {savingClosing ? '저장 중...' : '검토 확인 완료'}
                 </button>
               </div>
             </div>
