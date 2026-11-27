@@ -846,7 +846,7 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
 
     const shouldProceed = window.confirm(
       `${closingYear}년 12월 마감을 확정하시겠습니까?\n` +
-        `현재고가 ${targetNextYear}년 이월재고 기준으로 반영됩니다.` +
+        `현재고가 ${targetNextYear}년 이월재고 기준으로 반영되며 화면이 ${targetNextYear}년으로 전환됩니다.` +
         `\n(검토 품목: ${closingCheckRows.length}건 / 수식 불일치: ${unbalancedCount}건 / 총 재고금액: ${totalSumAssetValue.toLocaleString()}원)` +
         alreadyClosedNotice
     )
@@ -918,9 +918,13 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
         },
       }))
 
+      setClosingYear(targetNextYear)
+      setActiveYear(targetNextYear)
+      setShowYearEndModal(false)
+
       alert(
         `${closingYear}년 12월 마감이 DB에 확정 저장되었습니다.\n` +
-          `${targetNextYear}년 이월재고 기준이 다른 PC에서도 동일하게 반영됩니다.`
+          `${targetNextYear}년 이월재고 기준이 반영되었고 화면이 ${targetNextYear}년으로 전환되었습니다.`
       )
     } catch (err) {
       console.error('마감 DB 저장 오류:', err)
@@ -941,6 +945,9 @@ export default function InventoryLedgerTab({ partsList, refreshParts }) {
           totalAssetValue: totalSumAssetValue,
         },
       }))
+      setClosingYear(targetNextYear)
+      setActiveYear(targetNextYear)
+      setShowYearEndModal(false)
       alert(
         `Supabase 테이블 저장 중 오류가 발생해 현재 브라우저에만 임시 저장되었습니다.\n` +
           `(${TABLE_CLOSINGS}, ${TABLE_CARRY_OVERS} 테이블 생성 및 권한을 확인해 주세요.)`
